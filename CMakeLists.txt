@@ -50,6 +50,7 @@ if(REFLGEN_BUILD_TESTS)
         tests/utility_tests.cpp
         tests/object_tests.cpp
         tests/pointer_tests.cpp
+        tests/cycle_tests.cpp
         tests/json_tests.cpp
         tests/binary_tests.cpp)
     # C++23 전용 표준 타입(std::expected 등)은 23 빌드에서만 시험한다.

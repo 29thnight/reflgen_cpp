@@ -191,7 +191,7 @@ void read_object(reader& in, T& value)
         {
             if (!seen[index])
             {
-                throw serialization_error("missing required field").with_parent(serialized_key(field));
+                throw serialization_error("missing required field").with_child(serialized_key(field));
             }
         }
         ++index;

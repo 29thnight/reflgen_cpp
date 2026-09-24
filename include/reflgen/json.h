@@ -14,10 +14,10 @@
 namespace reflgen::json
 {
 template<class T>
-std::string to_string(const T& value, std::size_t indent = 0)
+std::string to_string(const T& value, std::size_t indent = 0, std::size_t max_depth = writer::default_max_depth)
 {
     std::string text;
-    writer out(text, indent);
+    writer out(text, indent, max_depth);
     serialize(out, value);
     return text;
 }

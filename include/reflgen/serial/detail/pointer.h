@@ -11,11 +11,13 @@
 // 라이브러리의 writer 는 언제나 그 순서로 쓴다.
 //
 // shared_ptr 의 공유 관계(같은 객체를 두 포인터가 가리킴)는 보존하지 않는다 —
-// 읽으면 사본 둘이 된다.
+// 읽으면 사본 둘이 된다. 순환(A→B→A)은 적을 방법이 없으므로 쓰는 시점에
+// serialization_error 로 막는다(cycle.h).
 #include "reflgen/core/schema.h"
 #include "reflgen/core/type_id.h"
 #include "reflgen/runtime/registry.h"
 #include "reflgen/runtime/type_descriptor.h"
+#include "reflgen/serial/detail/cycle.h"
 #include "reflgen/serial/detail/path.h"
 #include "reflgen/serial/error.h"
 #include "reflgen/serial/reader.h"
@@ -132,8 +134,11 @@ void write_pointer(writer& out, const Pointer& value)
     if (!value)
     {
         out.write_null();
+        return;
     }
-    else if constexpr (std::is_polymorphic_v<element>)
+
+    const indirection_guard guard(identity_address(*value));
+    if constexpr (std::is_polymorphic_v<element>)
     {
         write_polymorphic(out, *value);
     }

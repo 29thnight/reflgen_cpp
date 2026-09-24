@@ -121,6 +121,9 @@ reflgen::binary::to_bytes(value)        / reflgen::binary::from_bytes<T>(bytes)
 - 실패는 `reflgen::serialization_error` 이고, `path()` 에 실패 지점이 JSON Pointer 로 담긴다
   (`"/inventory/1/count"`). 입력 위치(줄·열 / 바이트 오프셋)는 메시지에 있다.
 - 정수는 대상 타입 범위를 검사한다 — 300 이 `uint8_t` 로 조용히 잘리지 않는다.
+- 순환 참조(`shared_ptr` A→B→A, 자기 자신을 가리키는 `reference_wrapper`)는 쓰는 시점에
+  `serialization_error("cyclic reference")` 로 멈춘다. 같은 객체를 두 경로에서 가리키는 공유는 순환이
+  아니라서 각 경로에 값으로 적힌다.
 
 ### 지원 타입
 
@@ -179,7 +182,9 @@ reader: peek, read_*, begin_array → while(next_element) … → end_array,
 
 - `begin_*` 의 크기는 쓰기에서는 정확한 값, 읽기에서는 힌트(reserve 용)다. 신뢰할 수 없는 입력의 크기는
   남은 입력 길이로 상한을 검사해 넘긴다.
-- 중첩 깊이 상한을 둔다(JSON·바이너리 백엔드 기본 512).
+- 중첩 깊이 상한을 둔다. JSON·바이너리 백엔드는 reader·writer 모두 기본 512 이고 생성자 인자
+  (`to_string(value, indent, max_depth)` 등)로 바꾼다. writer 상한은 순환이 아닌 아주 깊은 구조가
+  stack overflow 대신 오류로 끝나게 한다.
 
 [json/](include/reflgen/json) 과 [binary/](include/reflgen/binary) 가 참고 구현이다.
 
@@ -224,7 +229,9 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 - 컴파일러가 만든 타입 이름은 표준 라이브러리 타입에서 구현마다 다르다(MSVC 는 기본 템플릿 인자를 적는다).
   파일에 남는 다형 태그는 `.named()` 로 못 박을 것.
 - `variant` 는 인덱스로 적는다 — 대안의 순서가 파일 형식의 일부다.
-- `shared_ptr` 의 공유 관계는 보존하지 않는다(읽으면 사본이 된다).
+- `shared_ptr` 의 공유 관계는 보존하지 않는다(읽으면 사본이 된다). 순환은 오류로 막는다.
+- raw pointer·`weak_ptr` 는 직렬화하지 않는다(소유인지 참조인지 알 수 없다). ID·handle 로 적으려면
+  `reflgen::serializer<T*>` 를 특수화한다.
 - `default_registry()` 는 모듈(DLL)마다 하나다.
 - 자동 이름 추출은 `std::source_location` 이 템플릿 인자를 포함한 시그니처를 주는 구현에서 된다
   (MSVC STL, libstdc++). 그렇지 않은 구현(libc++)에서는 `.named()` 또는 코드 생성기가 필요하다 —

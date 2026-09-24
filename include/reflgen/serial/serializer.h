@@ -17,6 +17,7 @@
 //   서술된 클래스, 그리고 serializer<T> 를 특수화한 모든 타입
 #include "reflgen/serial/container_traits.h"
 #include "reflgen/serial/detail/container.h"
+#include "reflgen/serial/detail/cycle.h"
 #include "reflgen/serial/detail/object.h"
 #include "reflgen/serial/detail/scalar.h"
 #include "reflgen/serial/detail/text.h"
@@ -142,6 +143,7 @@ struct serializer
         }
         else if constexpr (kind == category::reference)
         {
+            const detail::indirection_guard guard(detail::identity_address(value.get()));
             serialize(out, value.get());
         }
         else if constexpr (kind == category::bytes)

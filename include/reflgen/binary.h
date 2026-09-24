@@ -14,10 +14,10 @@
 namespace reflgen::binary
 {
 template<class T>
-std::vector<std::byte> to_bytes(const T& value)
+std::vector<std::byte> to_bytes(const T& value, std::size_t max_depth = writer::default_max_depth)
 {
     std::vector<std::byte> bytes;
-    writer out(bytes);
+    writer out(bytes, max_depth);
     serialize(out, value);
     return bytes;
 }

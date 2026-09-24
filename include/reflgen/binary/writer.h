@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -18,7 +19,13 @@ namespace reflgen::binary
 class writer final : public reflgen::writer
 {
   public:
-    explicit writer(std::vector<std::byte>& output) : output_(output) {}
+    // reader 와 같은 상한이다 — 그보다 깊게 쓰면 기본 설정의 reader 가 어차피 거부한다.
+    static constexpr std::size_t default_max_depth = 512;
+
+    explicit writer(std::vector<std::byte>& output, std::size_t max_depth = default_max_depth)
+        : output_(output), max_depth_(max_depth)
+    {
+    }
 
     void write_null() override
     {
@@ -75,6 +82,7 @@ class writer final : public reflgen::writer
 
     void begin_array(std::size_t size) override
     {
+        check_depth();
         begin_value();
         put_tag(tag::array);
         put_varint(size);
@@ -92,6 +100,7 @@ class writer final : public reflgen::writer
 
     void begin_object(std::size_t size) override
     {
+        check_depth();
         begin_value();
         put_tag(tag::object);
         put_varint(size);
@@ -132,6 +141,16 @@ class writer final : public reflgen::writer
         std::size_t remaining;
         bool awaiting_value;
     };
+
+    // 순환이 아니어도 아주 깊은 구조(수만 단계 연결 리스트)는 쓰는 재귀가 stack 을 넘친다.
+    // 그 전에 오류로 끝낸다.
+    void check_depth() const
+    {
+        if (stack_.size() >= max_depth_)
+        {
+            throw serialization_error("binary writer: nesting is deeper than " + std::to_string(max_depth_));
+        }
+    }
 
     void begin_value()
     {
@@ -192,6 +211,7 @@ class writer final : public reflgen::writer
     }
 
     std::vector<std::byte>& output_;
+    std::size_t max_depth_;
     std::vector<frame> stack_;
     bool root_started_ = false;
 };
