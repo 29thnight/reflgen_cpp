@@ -1,0 +1,29 @@
+# reflgen 포매팅 규약 — CreatorEngine 의 .clang-format 을 그대로 가져왔다.
+#
+# 이름 짓기는 STL 컨벤션(snake_case, 멤버 후치 `_`, 템플릿 매개변수 PascalCase)을
+# 따르고, 중괄호 개행·공백·들여쓰기는 이 파일이 정한다. 값을 고치면 두 저장소가
+# 갈라지므로 CreatorEngine 쪽 결정을 먼저 바꾼 뒤 옮겨 온다.
+#
+# 원 저장소가 이 값을 고른 근거(실측 48개 파일, 변경 줄 최소 조합)는
+# CreatorEngine docs/design/CodingConventions.md §7.1 에 있다.
+Language: Cpp
+BasedOnStyle: Microsoft
+
+# Microsoft 기본은 Right(`T *p`)다. `T* p` 로 뒤집는다.
+PointerAlignment: Left
+
+# 주석이 한글이다. clang-format 은 한글의 2열 폭을 세지 못해 재배치를 허용하면
+# 주석이 어긋난 채 다시 접힌다.
+ReflowComments: false
+
+# include 순서는 사람이 정한다 — 재정렬은 포매팅이 아니라 코드 변경이다.
+SortIncludes: Never
+
+# 한 줄짜리 클래스 내 인라인 함수는 그대로 둔다.
+AllowShortFunctionsOnASingleLine: Inline
+
+# template 선언 뒤에서 항상 줄을 바꾼다.
+BreakTemplateDeclarations: Yes
+
+# `template<class T>` — template 뒤에 공백을 두지 않는다.
+SpaceAfterTemplateKeyword: false

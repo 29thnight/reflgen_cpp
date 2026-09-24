@@ -1,0 +1,49 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "REFLGEN_BUILD_TESTS": "ON",
+        "REFLGEN_BUILD_EXAMPLES": "ON"
+      }
+    },
+    {
+      "name": "msvc-cpp20",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "cl", "REFLGEN_TEST_CXX_STANDARD": "20" }
+    },
+    {
+      "name": "msvc-cpp23",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "cl", "REFLGEN_TEST_CXX_STANDARD": "23" }
+    },
+    {
+      "name": "clang-cl-cpp20",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang-cl", "REFLGEN_TEST_CXX_STANDARD": "20" }
+    },
+    {
+      "name": "clang-cl-cpp23",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang-cl", "REFLGEN_TEST_CXX_STANDARD": "23" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "msvc-cpp20", "configurePreset": "msvc-cpp20" },
+    { "name": "msvc-cpp23", "configurePreset": "msvc-cpp23" },
+    { "name": "clang-cl-cpp20", "configurePreset": "clang-cl-cpp20" },
+    { "name": "clang-cl-cpp23", "configurePreset": "clang-cl-cpp23" }
+  ],
+  "testPresets": [
+    { "name": "msvc-cpp20", "configurePreset": "msvc-cpp20", "output": { "outputOnFailure": true } },
+    { "name": "msvc-cpp23", "configurePreset": "msvc-cpp23", "output": { "outputOnFailure": true } },
+    { "name": "clang-cl-cpp20", "configurePreset": "clang-cl-cpp20", "output": { "outputOnFailure": true } },
+    { "name": "clang-cl-cpp23", "configurePreset": "clang-cl-cpp23", "output": { "outputOnFailure": true } }
+  ]
+}
