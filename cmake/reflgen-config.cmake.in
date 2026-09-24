@@ -1,4 +1,11 @@
 @PACKAGE_INIT@
 
 include("${CMAKE_CURRENT_LIST_DIR}/reflgen-targets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/reflgen.cmake")
+
+# 함께 설치된 생성기가 있으면 reflgen_generate() 가 그것을 쓴다.
+if(NOT REFLGEN_EXECUTABLE)
+    find_program(REFLGEN_EXECUTABLE reflgen HINTS "${PACKAGE_PREFIX_DIR}/bin" NO_DEFAULT_PATH)
+endif()
+
 check_required_components(reflgen)

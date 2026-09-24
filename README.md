@@ -103,6 +103,81 @@ struct tooltip
 `reflgen::enum_entries<E>`, `enum_name(e)`, `enum_cast<E>("name")`. 기본은 값 범위 [-128, 128] 스캔이며
 `enum_range<E>` 특수화로 넓히거나, `reflection<E>` 로 정확한 표를 준다(비트 플래그 등).
 
+## 코드 생성기 (reflgen)
+
+손으로 `reflect()` 를 쓰는 대신 attribute 만 달면, 빌드 때 생성기가 서술을 만든다. 매크로는 없다 —
+`[[…]]` 는 표준 attribute 문법이고, 컴파일러는 모르는 attribute 를 무시한다(경고는 `reflgen_generate()` 가 끈다).
+
+```cpp
+// player.h
+#pragma once
+#include "reflgen/reflgen.h"
+
+namespace game
+{
+constexpr int max_level = 99;
+
+enum class [[reflgen::reflect]] element { fire, water, wind = 1 << 10 };   // 스캔 범위 밖 값도 정확한 표
+
+class [[reflgen::reflect("game.player")]] player : public entity             // 인자 = 등록 키·다형 태그
+{
+    friend struct reflgen::access;                                           // private 멤버를 반영하려면
+
+  public:
+    static constexpr float max_hp = 999.0f;
+
+    [[reflgen::range(1, max_level)]] int level = 1;                          // 이름공간의 이름도,
+    [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]] float hp = 100.0f; // 클래스 멤버 이름도 그대로
+    [[reflgen::ignore]] int cache = 0;                                       // 반영에서 제외
+    [[reflgen::transient]] int frame = 0;                                    // 반영하되 저장하지 않음
+    [[reflgen::reflect]] void level_up(int amount);                          // 메서드는 표시한 것만
+
+  private:
+    int secret_ = 7;                                                         // 표시가 없어도 반영된다
+};
+} // namespace game
+
+#include "player.reflgen.h"                                                  // 끝에 생성 파일을 포함
+```
+
+```cmake
+reflgen_generate(my_game
+    HEADERS include/game/player.h include/game/item.h
+    MODULE game                       # 등록 함수: reflgen::generated::register_game()
+    ATTRIBUTE_SCOPES game)            # reflgen 외에 옮길 attribute 이름공간
+```
+
+- **반영 범위**: `[[reflgen::reflect]]` 클래스의 non-static data member 전부(C++26 native reflection 과 같은 결과).
+  `[[reflgen::ignore]]` 로 뺀다. 메서드는 `[[reflgen::reflect]]` 를 단 것만. `public` 부모는 `base<>` 로 이어진다.
+- **attribute 옮기기**: `reflgen::` 과 `ATTRIBUTE_SCOPES` 의 이름공간만 스키마로 간다. 인자 없는
+  attribute(`[[reflgen::transient]]`)는 표지 타입으로 보고 `{}` 를 붙인다. 선언 맨 앞의 attribute 는 그 선언의
+  모든 멤버에, 이름 뒤의 attribute(`int x [[reflgen::ignore]], y;`)는 그 멤버에만 붙는다.
+- **인자의 이름**: 클래스 안에서 쓴 것처럼 풀린다. 생성 코드는 클래스 밖에 있으므로, 자기 클래스(부모 포함)와
+  감싸는 클래스의 멤버 이름은 생성기가 `::game::player::max_hp` 처럼 한정하고, 이름공간의 이름은
+  `using namespace` 로 보이게 한다. 인자 안의 주석은 옮기지 않는다.
+- **오류 위치**: attribute 인자에 오타가 있으면 컴파일 오류가 생성 파일이 아니라 원본 header 의 그 줄을
+  가리킨다(생성 코드가 `#line` 으로 원본을 가리킨다).
+- **등록**: 다형 포인터로 읽고 쓸 타입은 시작할 때 `reflgen::generated::register_<module>()` 를 한 번 부른다.
+- **빌드 연동**: 생성물은 구성(config)마다 `<OUTPUT_DIRECTORY>/<config>/` 에 따로 둔다. HEADERS 가 include 하는
+  파일이 바뀌어도 다시 생성한다(depfile). 파싱 표준은 `CXX_STANDARD` 와 `cxx_std_NN` compile feature 중 높은
+  것이다. 생성 디렉터리는 `BUILD_INTERFACE` 로만 include 경로에 붙는다 — 설치(install)할 라이브러리라면 생성
+  header 도 직접 설치한다. CMake 3.25 이상.
+- **요구 사항**: libclang. Visual Studio 는 동봉본(`VC/Tools/Llvm`)을 자동으로 찾는다. 그 밖은
+  `REFLGEN_LIBCLANG_DIR` 로 준다. C API header 는 `third_party/clang-c`(LLVM 22.1.3, Apache-2.0 WITH LLVM-exception).
+
+진단은 MSVC 형식(`file(line,col): error RG0002: …`)이라 VS Error List 에서 원본으로 바로 간다.
+
+| 코드 | 뜻 |
+|---|---|
+| RG0001 | 입력·옵션 오류(없는 header, 같은 header 두 번 등) |
+| RG0002 | 반영할 private 멤버가 있는데 `friend struct reflgen::access;` 가 없다 |
+| RG0003 | header 가 자기 생성 파일을 include 하지 않는다 |
+| RG0004 | 반영할 수 없는 멤버(bit-field, 참조, 익명 union, static 멤버, 생성자·소멸자) |
+| RG0005 | 지원하지 않는 선언(클래스·멤버 함수 template, union, 익명 이름공간) |
+| RG0006 | 오버로드된 메서드 |
+| RG0007 | 생성 파일 이름 충돌(같은 이름의 header 둘) |
+| RG0100 | Clang 이 보고한 컴파일 오류 |
+
 ## 직렬화
 
 ```cpp
@@ -233,6 +308,10 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 - raw pointer·`weak_ptr` 는 직렬화하지 않는다(소유인지 참조인지 알 수 없다). ID·handle 로 적으려면
   `reflgen::serializer<T*>` 를 특수화한다.
 - `default_registry()` 는 모듈(DLL)마다 하나다.
+- 생성기는 클래스 template·멤버 함수 template·오버로드된 메서드·열거자 attribute·union 을 다루지 않는다(진단으로
+  알린다). 이름 없는 매개변수는 빈 이름으로 남는다.
+- attribute 인자의 이름을 감싸는 이름공간들에서 찾을 때는 `using namespace` 를 바깥부터 모두 여는 방식이라,
+  바깥과 안쪽 이름공간에 같은 이름이 있으면 모호하다 — 그때는 한정해서 쓴다.
 - 자동 이름 추출은 `std::source_location` 이 템플릿 인자를 포함한 시그니처를 주는 구현에서 된다
   (MSVC STL, libstdc++). 그렇지 않은 구현(libc++)에서는 `.named()` 또는 코드 생성기가 필요하다 —
   `reflgen::name_extraction_supported` 로 확인한다. GCC·libc++ 는 아직 CI 로 검증하지 않았다.
@@ -243,8 +322,8 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 
 ## 로드맵
 
-1. **코드 생성기 (reflgen-cli)** — Clang 기반. `[[reflgen::…]]` 어트리뷰트를 읽어 `reflection<T>` 특수화와
-   모듈 등록 함수를 만든다. MSBuild/CMake 연동.
+1. **코드 생성기** — 첫 판 완료(CMake 연동). 남은 것: MSBuild(.props/.targets) 연동, 클래스 template,
+   오버로드된 메서드, 열거자 attribute.
 2. **Visual Studio 확장** — 저장 시 생성, Error List 진단, 어트리뷰트 자동완성, C++26 이행 codemod.
 3. **C++26 네이티브 백엔드** — `std::meta::nonstatic_data_members_of` + `annotations_of` 로 `schema_of<T>`
    를 만든다. 질의·직렬화 API 는 바뀌지 않는다.

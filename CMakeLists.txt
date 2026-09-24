@@ -7,7 +7,11 @@ project(reflgen
 
 option(REFLGEN_BUILD_TESTS "Build the reflgen test suite" ${PROJECT_IS_TOP_LEVEL})
 option(REFLGEN_BUILD_EXAMPLES "Build the reflgen examples" ${PROJECT_IS_TOP_LEVEL})
+option(REFLGEN_BUILD_GENERATOR "Build the reflgen code generator (requires libclang)" ${PROJECT_IS_TOP_LEVEL})
 set(REFLGEN_TEST_CXX_STANDARD 20 CACHE STRING "C++ standard used to build tests and examples (20, 23)")
+
+# reflgen_generate() — [[reflgen::…]] attribute 에서 reflection 코드를 만든다.
+include(cmake/reflgen.cmake)
 
 # 헤더 전용 라이브러리. C++20 이 하한이다.
 add_library(reflgen INTERFACE)
@@ -34,6 +38,10 @@ function(reflgen_configure_target target)
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
 endfunction()
+
+if(REFLGEN_BUILD_GENERATOR)
+    add_subdirectory(generator)
+endif()
 
 if(REFLGEN_BUILD_TESTS)
     enable_testing()
@@ -64,6 +72,40 @@ if(REFLGEN_BUILD_TESTS)
     target_link_libraries(reflgen_tests PRIVATE reflgen::reflgen)
     reflgen_configure_target(reflgen_tests)
     add_test(NAME reflgen_tests COMMAND reflgen_tests)
+
+    # 생성기 시험 — libclang 이 있어 생성기가 빌드될 때만.
+    if(TARGET reflgen_cli)
+        set(reflgen_harness_sources tests/harness.cpp)
+        if(MSVC)
+            list(APPEND reflgen_harness_sources tests/msvc_crt.cpp)
+        endif()
+
+        add_executable(reflgen_generator_tests generator/tests/attribute_scan_tests.cpp ${reflgen_harness_sources})
+        target_include_directories(reflgen_generator_tests PRIVATE tests)
+        target_link_libraries(reflgen_generator_tests PRIVATE reflgen_generator_core reflgen::reflgen)
+        reflgen_configure_target(reflgen_generator_tests)
+        add_test(NAME reflgen_generator_tests COMMAND reflgen_generator_tests)
+
+        # end-to-end: attribute 만 단 header → 생성 → 컴파일 → 실행.
+        add_executable(reflgen_generated_tests tests/generated/generated_tests.cpp ${reflgen_harness_sources})
+        target_include_directories(reflgen_generated_tests PRIVATE tests tests/generated)
+        target_link_libraries(reflgen_generated_tests PRIVATE reflgen::reflgen)
+        reflgen_configure_target(reflgen_generated_tests)
+        reflgen_generate(reflgen_generated_tests
+            MODULE generated_tests
+            HEADERS tests/generated/game_types.h
+            ATTRIBUTE_SCOPES generated_tests)
+        add_test(NAME reflgen_generated_tests COMMAND reflgen_generated_tests)
+
+        # 잘못 쓴 header 에 대한 진단(코드·위치·실패 종료).
+        add_test(NAME reflgen_generator_diagnostics
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DHEADER=${PROJECT_SOURCE_DIR}/tests/generated/bad_types.h"
+                "-DINCLUDE=${PROJECT_SOURCE_DIR}/include"
+                "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/reflgen/diagnostics"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_diagnostics.cmake")
+    endif()
 endif()
 
 if(REFLGEN_BUILD_EXAMPLES)
@@ -76,6 +118,13 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 install(TARGETS reflgen EXPORT reflgen-targets)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES cmake/reflgen.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/reflgen)
+if(TARGET reflgen_cli)
+    install(TARGETS reflgen_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(REFLGEN_LIBCLANG_DLL)
+        install(FILES "${REFLGEN_LIBCLANG_DLL}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+endif()
 install(EXPORT reflgen-targets
     NAMESPACE reflgen::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/reflgen)
