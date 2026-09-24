@@ -1,6 +1,6 @@
 #pragma once
 // 생성기 진단 시험용 — 일부러 잘못 쓴 선언들. 컴파일하지 않고 생성기에만 준다.
-// 생성 파일을 include 하지 않은 것도 의도다(RG0003).
+// 진단의 줄·열 번호가 시험 기대값이다 — 줄을 더하거나 빼면 check_diagnostics.cmake 도 고친다.
 #include "reflgen/reflgen.h"
 
 namespace bad

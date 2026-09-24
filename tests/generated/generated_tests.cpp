@@ -3,7 +3,6 @@
 #include "game_types.h"
 #include "harness.h"
 #include "reflgen/json.h"
-#include "reflgen_generated_tests.h"
 #include <memory>
 #include <string>
 #include <string_view>

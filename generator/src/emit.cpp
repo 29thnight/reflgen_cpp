@@ -208,12 +208,18 @@ namespace reflgen::generator
         return out.take();
     }
 
-    std::string emit_module_header(const std::string& module_name)
+    std::string emit_module_header(const std::string& module_name, const std::vector<std::string>& generated_paths)
     {
         text_builder out;
         out.line(banner);
+        out.line("// Force-included into every translation unit of module '" + module_name +
+                 "' by the build system; source headers never include it.");
         out.line("#pragma once");
         out.line("#include \"reflgen/runtime/registry.h\"");
+        for (const std::string& path : generated_paths)
+        {
+            out.line("#include \"" + path + "\"");
+        }
         out.line();
         out.line("namespace reflgen::generated");
         out.line("{");
@@ -225,16 +231,12 @@ namespace reflgen::generator
         return out.take();
     }
 
-    std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers,
-                                   const std::vector<std::string>& generated_names)
+    std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers)
     {
         text_builder out;
         out.line(banner);
+        // 주입 header 가 생성 파일을 모두 include 한다. 강제 include 를 받지 않는 빌드에서도 컴파일되게 직접 부른다.
         out.line("#include \"reflgen_" + module_name + ".h\"");
-        for (const std::string& name : generated_names)
-        {
-            out.line("#include \"" + name + "\"");
-        }
         out.line();
         out.line("namespace reflgen::generated");
         out.line("{");

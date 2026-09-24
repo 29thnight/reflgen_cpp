@@ -9,6 +9,7 @@ namespace
 {
     using reflgen::generator::argument_text;
     using reflgen::generator::attribute_group;
+    using reflgen::generator::declares_reflection;
     using reflgen::generator::groups_between;
     using reflgen::generator::groups_run_at;
     using reflgen::generator::next_token_offset;
@@ -192,5 +193,22 @@ namespace
         // 주석이 빠지고, '::' '.' '->' 뒤의 이름은 그대로다.
         check_equal(rebuilt, std::string("0, ::game::t::max_hp , limits::cap, ::game::t::cfg.value, other->x, "
                                          "::game::t::f( 1 ,2 )"));
+    });
+
+    const test discovery("discover: headers that declare reflection", [] {
+        check(declares_reflection("struct [[reflgen::reflect]] a {};"));
+        check(declares_reflection("struct [[ reflgen :: reflect ( \"game.a\" ) ]] a {};"));
+        check(declares_reflection("enum class [[nodiscard, reflgen::reflect]] e { x };"));
+        check(declares_reflection("struct [[using reflgen: range(0, 1), reflect]] a {};"));
+        check(declares_reflection("struct a {};\nclass\n[[reflgen::reflect]]\nb {};"));
+    });
+
+    const test discovery_rejects("discover: headers that do not declare reflection", [] {
+        check(!declares_reflection("#include \"reflgen/reflgen.h\"\nstruct a { static consteval auto reflect(); };"));
+        check(!declares_reflection("struct [[reflgen::reflected]] a {};"));
+        check(!declares_reflection("struct [[reflgen::transient]] a {};"));
+        check(!declares_reflection("struct [[other::reflect]] a {};"));
+        check(!declares_reflection("struct [[using other: reflect]] a {};"));
+        check(!declares_reflection("struct [[reflgen::reflect a {};")); // 닫히지 않은 그룹
     });
 } // namespace

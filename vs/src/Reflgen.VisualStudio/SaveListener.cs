@@ -2,76 +2,33 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.VisualStudio;
-using Microsoft.VisualStudio.Editor;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
-using Microsoft.VisualStudio.Text;
-using Microsoft.VisualStudio.TextManager.Interop;
 
 namespace Reflgen.VisualStudio
 {
-    // 저장을 지켜본다.
-    //   저장 직전: [[reflgen::reflect]] 가 있는데 생성 파일 include 가 없으면 파일 끝에 넣는다 — 저장되는
-    //              내용에 함께 들어가도록 버퍼를 고친다.
-    //   저장 직후: header 를 프로젝트에 등록(ReflgenGenerate=true)하고 그 프로젝트의 생성을 예약한다.
+    // 저장을 지켜본다. [[reflgen::reflect]] 가 있는(또는 있었던) header 가 저장되면 그 프로젝트의 생성을
+    // 예약한다 — IntelliSense 와 Error List 가 빌드를 기다리지 않고 새 서술을 본다. header 의 내용과
+    // 프로젝트 파일은 건드리지 않는다.
     internal sealed class SaveListener : IVsRunningDocTableEvents3
     {
         private readonly IVsRunningDocumentTable _documents;
-        private readonly IVsEditorAdaptersFactoryService _adapters;
         private readonly ProjectBridge _projects;
         private readonly GenerationRunner _runner;
         private readonly DiagnosticsReporter _reporter;
         private readonly ReflgenOptionsPage _options;
 
-        public SaveListener(IVsRunningDocumentTable documents, IVsEditorAdaptersFactoryService adapters,
-                            ProjectBridge projects, GenerationRunner runner, DiagnosticsReporter reporter,
-                            ReflgenOptionsPage options)
+        public SaveListener(IVsRunningDocumentTable documents, ProjectBridge projects, GenerationRunner runner,
+                            DiagnosticsReporter reporter, ReflgenOptionsPage options)
         {
             _documents = documents;
-            _adapters = adapters;
             _projects = projects;
             _runner = runner;
             _reporter = reporter;
             _options = options;
         }
 
-        public int OnBeforeSave(uint docCookie)
-        {
-            ThreadHelper.ThrowIfNotOnUIThread();
-            if (!_options.AddIncludeOnSave)
-            {
-                return VSConstants.S_OK;
-            }
-            IntPtr documentData = IntPtr.Zero;
-            try
-            {
-                if (_documents.GetDocumentInfo(docCookie, out _, out _, out _, out string path, out _, out _,
-                                               out documentData) != VSConstants.S_OK ||
-                    !ReflectedHeader.IsHeaderPath(path) || documentData == IntPtr.Zero ||
-                    Marshal.GetObjectForIUnknown(documentData) is not IVsTextBuffer textBuffer)
-                {
-                    return VSConstants.S_OK;
-                }
-                ITextBuffer? buffer = _adapters.GetDataBuffer(textBuffer);
-                TextInsertion? insertion =
-                    buffer == null ? null : ReflectedHeader.IncludeInsertion(buffer.CurrentSnapshot.GetText(), path);
-                if (buffer != null && insertion != null)
-                {
-                    using ITextEdit edit = buffer.CreateEdit();
-                    edit.Insert(insertion.Position, insertion.Text);
-                    edit.Apply();
-                    _reporter.Log($"{Path.GetFileName(path)}: added #include \"{ReflectedHeader.GeneratedHeaderName(path)}\".");
-                }
-            }
-            finally
-            {
-                if (documentData != IntPtr.Zero)
-                {
-                    Marshal.Release(documentData);
-                }
-            }
-            return VSConstants.S_OK;
-        }
+        public int OnBeforeSave(uint docCookie) => VSConstants.S_OK;
 
         public int OnAfterSave(uint docCookie)
         {
@@ -80,11 +37,16 @@ namespace Reflgen.VisualStudio
             try
             {
                 if (_documents.GetDocumentInfo(docCookie, out _, out _, out _, out string path,
-                                               out IVsHierarchy hierarchy, out uint itemId, out documentData) ==
+                                               out IVsHierarchy hierarchy, out _, out documentData) ==
                     VSConstants.S_OK)
                 {
-                    OnHeaderSaved(path, hierarchy, itemId);
+                    OnHeaderSaved(path, hierarchy);
                 }
+            }
+            // RDT 이벤트에서 새어 나간 예외는 VS 가 말없이 버린다 — 여기가 경계이므로 무엇이든 Output 창에 남긴다.
+            catch (Exception exception)
+            {
+                _reporter.Log($"save handling failed: {exception.GetType().Name}: {exception.Message}");
             }
             finally
             {
@@ -96,36 +58,34 @@ namespace Reflgen.VisualStudio
             return VSConstants.S_OK;
         }
 
-        private void OnHeaderSaved(string path, IVsHierarchy? hierarchy, uint itemId)
+        private void OnHeaderSaved(string path, IVsHierarchy? hierarchy)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             if (hierarchy == null || !ReflectedHeader.IsHeaderPath(path) || !File.Exists(path))
             {
                 return;
             }
+            // 반영을 모두 지운 header 도 다시 생성해야 옛 서술이 주입 header 에서 빠진다.
             bool declares = ReflectedHeader.DeclaresReflection(File.ReadAllText(path));
-            bool registered = _projects.IsRegistered(hierarchy, itemId);
-            if (!declares && !registered)
+            if (!declares && !_projects.WasGenerated(hierarchy, path))
             {
                 return;
             }
-            ProjectTarget? target = _projects.TargetOf(hierarchy);
+            // 여기서부터는 반영하는 header 다 — 멈추는 곳마다 Output 창에 이유를 남긴다(조용히 넘기지 않는다).
+            string name = Path.GetFileName(path);
+            ProjectTarget? target = _projects.TargetOf(hierarchy, out string problem);
             if (target == null)
             {
+                _reporter.Log($"{name}: skipped; {problem}.");
                 return;
             }
             if (!_projects.UsesReflgen(hierarchy))
             {
+                _reporter.Log($"{name}: skipped; {target.DisplayName} does not import reflgen.targets.");
                 ReportMissingImport(target, path);
                 return;
             }
-            if (declares && !registered && _options.RegisterOnSave && _projects.Register(hierarchy, itemId))
-            {
-                registered = true;
-                _reporter.Log($"{Path.GetFileName(path)}: registered in {target.DisplayName} (ReflgenGenerate=true).");
-            }
-            // 등록된 header 는 반영을 모두 지웠어도 다시 생성해야 옛 서술이 남지 않는다.
-            if (registered && _options.GenerateOnSave)
+            if (_options.GenerateOnSave)
             {
                 _runner.Schedule(target);
             }

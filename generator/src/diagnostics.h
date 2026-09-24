@@ -5,7 +5,7 @@
 // 번호는 한 번 정하면 바꾸지 않는다(문서·검색의 기준이 된다):
 //   RG0001  입력·옵션 오류          RG0100  Clang 이 보고한 컴파일 오류
 //   RG0002  private 멤버에 friend 없음
-//   RG0003  header 가 생성 파일을 include 하지 않음
+//   RG0003  (폐지) header 가 생성 파일을 include 하지 않음 — 이제 빌드가 강제 include 한다
 //   RG0004  반영할 수 없는 멤버(bit-field, 참조, 익명 union 등)
 //   RG0005  지원하지 않는 선언(클래스 template, 익명 이름공간)
 //   RG0006  오버로드된 메서드

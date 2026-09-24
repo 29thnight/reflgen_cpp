@@ -25,8 +25,7 @@ set(expected
     "bad_types\\.h\\(53,32\\): warning RG0005: unions are not supported"
     "bad_types\\.h\\(60,30\\): warning RG0004: constructors and destructors"
     "bad_types\\.h\\(63,35\\): warning RG0005: member function template 'accept'"
-    "bad_types\\.h\\(65,51\\): warning RG0004: static data member 'limit'"
-    "bad_types\\.h\\(1,1\\): warning RG0003: .*bad_types\\.reflgen\\.h")
+    "bad_types\\.h\\(65,51\\): warning RG0004: static data member 'limit'")
 foreach(pattern IN LISTS expected)
     if(NOT output MATCHES "${pattern}")
         message(FATAL_ERROR "missing diagnostic matching '${pattern}' in:\n${output}")

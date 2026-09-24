@@ -61,6 +61,11 @@ namespace reflgen::generator
     // ASCII C++ 식별자인가 — module 이름, 한정할 멤버 이름을 가린다.
     bool is_identifier(std::string_view text) noexcept;
 
+    // header 원문에 [[reflgen::reflect]] (또는 [[using reflgen: reflect]])가 있는가 — 프로젝트의 header 전부를
+    // 받았을 때(--discover) 파싱할 것을 고르는, 파싱 없는 빠른 검사다. 주석·문자열 안의 표기도 참이 되지만
+    // 그 header 를 한 번 더 파싱할 뿐 생성 결과는 같다.
+    bool declares_reflection(std::string_view text);
+
     // 아래는 파일 전체의 token·그룹(offset 순)에서 선언 하나의 몫을 고르는 도구다.
 
     // offset 에서 시작하는 token 의 바로 다음 token 이 시작하는 곳. 없으면 nullopt.

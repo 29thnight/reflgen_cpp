@@ -505,11 +505,10 @@ namespace reflgen::generator
 
         // 빌드 시스템은 표준을 여러 곳(CXX_STANDARD, compile features, 사용자 인자)에서 가져와 -std= 를
         // 여러 번 줄 수 있다. CMake 가 target 의 표준을 그중 최댓값으로 정하듯 가장 높은 것 하나만 남긴다.
-        std::vector<std::string> clang_arguments_for(const extract_options& options, const std::string& stub_directory)
+        std::vector<std::string> clang_arguments_for(const extract_options& options)
         {
             // -fparse-all-comments: 카탈로그가 `//` 주석도 attribute 설명으로 쓴다(기본은 doc 주석만 붙는다).
-            std::vector<std::string> arguments = {"-x", "c++", "-Wno-unknown-attributes", "-fparse-all-comments",
-                                                  "-I" + stub_directory};
+            std::vector<std::string> arguments = {"-x", "c++", "-Wno-unknown-attributes", "-fparse-all-comments"};
             std::string standard = "-std=c++20";
             bool has_standard = false;
             for (const std::string& argument : options.clang_arguments)
@@ -526,23 +525,6 @@ namespace reflgen::generator
             }
             arguments.push_back(standard);
             return arguments;
-        }
-
-        // 생성 파일은 빈 stub 으로 대신한 채 파싱한다. 옛 생성물이 지금의 header 와 어긋나면 파싱이 깨져
-        // 다시 생성할 수 없게 되는 것(닭과 달걀)을 막고, 처음 실행이라 파일이 아직 없어도 include 가
-        // 풀린다. stub 디렉터리는 include 경로 맨 앞이라 진짜 생성물보다 먼저 찾아진다.
-        // 이미 깨져 본 길: 메모리상 빈 파일(unsaved file)로 대신하면 Windows 에서 include 탐색이 그 가상
-        // 파일을 찾지 못했다('file not found').
-        std::string write_stubs(const extract_options& options)
-        {
-            const std::string stub_directory = options.output_directory + "/.reflgen-stubs";
-            std::filesystem::create_directories(stub_directory);
-            for (const std::string& header : options.headers)
-            {
-                std::ofstream stub(std::filesystem::path(stub_directory + "/" + generated_header_name(header)),
-                                   std::ios::binary | std::ios::trunc);
-            }
-            return stub_directory;
         }
     } // namespace
 
@@ -563,11 +545,9 @@ namespace reflgen::generator
             }
         }
 
-        // 모든 header 를 include 하는 가상의 TU 하나로 한 번에 파싱한다. 이 주 파일은 stub 디렉터리에
-        // 둔다 — MSVC 호환 모드의 clang 은 "…" include 를 -I 보다 먼저 include 스택에 있는 모든 파일의
-        // 디렉터리에서 찾아서, 주 파일이 출력 디렉터리에 있으면 stub 대신 옛 생성 파일이 잡힌다.
-        const std::string stub_directory = write_stubs(options);
-        const std::string main_path = stub_directory + "/reflgen_" + options.module_name + ".parse.cpp";
+        // 모든 header 를 include 하는 가상의 TU 하나로 한 번에 파싱한다(메모리에만 있는 파일). 원본 header 는
+        // 생성 파일을 include 하지 않으므로 생성 결과가 파싱에 끼지 않는다.
+        const std::string main_path = options.output_directory + "/reflgen_" + options.module_name + ".parse.cpp";
         std::string main_text;
         for (const std::string& header : options.headers)
         {
@@ -576,7 +556,7 @@ namespace reflgen::generator
         std::vector<CXUnsavedFile> unsaved;
         unsaved.push_back({main_path.c_str(), main_text.c_str(), static_cast<unsigned long>(main_text.size())});
 
-        const std::vector<std::string> arguments = clang_arguments_for(options, stub_directory);
+        const std::vector<std::string> arguments = clang_arguments_for(options);
         std::vector<const char*> argv;
         for (const std::string& argument : arguments)
         {
@@ -608,16 +588,13 @@ namespace reflgen::generator
         };
         extract_result result{walker.take(), included_files(unit.get()),
                               collect_attribute_catalog(unit.get(), scopes, declares)};
-        // stub 은 실행마다 새로 쓰이므로 의존에 넣으면 빌드가 매번 다시 돈다. 이 실행의 출력이 의존에
-        // 끼면 빌드 도구가 순환 의존으로 멈춘다.
-        std::set<std::string> outputs;
+        // 메모리에만 있는 주 파일은 디스크에 없다. 이 실행의 출력이 의존에 끼면 빌드 도구가 순환 의존으로 멈춘다.
+        std::set<std::string> outputs = {main_path};
         for (const std::string& header : options.headers)
         {
             outputs.insert(options.output_directory + "/" + generated_header_name(header));
         }
-        std::erase_if(result.dependencies, [&](const std::string& path) {
-            return path.starts_with(stub_directory + "/") || outputs.contains(path);
-        });
+        std::erase_if(result.dependencies, [&](const std::string& path) { return outputs.contains(path); });
         return result;
     }
 } // namespace reflgen::generator

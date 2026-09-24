@@ -1,6 +1,7 @@
 #include "attribute_scan.h"
 #include <algorithm>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -8,6 +9,27 @@ namespace reflgen::generator
 {
     namespace
     {
+        bool is_identifier_character(char c) noexcept
+        {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        }
+
+        // word 가 앞뒤로 식별자 문자 없이 나오는가("reflect" 는 되고 "reflected" 는 안 된다).
+        bool contains_word(std::string_view text, std::string_view word) noexcept
+        {
+            for (std::size_t at = text.find(word); at != std::string_view::npos; at = text.find(word, at + 1))
+            {
+                const std::size_t end = at + word.size();
+                const bool starts = at == 0 || !is_identifier_character(text[at - 1]);
+                const bool ends = end == text.size() || !is_identifier_character(text[end]);
+                if (starts && ends)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         bool is(const token& item, std::string_view spelling)
         {
             return item.kind == token_kind::punctuation && item.spelling == spelling;
@@ -160,15 +182,38 @@ namespace reflgen::generator
         {
             return false;
         }
-        for (const char c : text)
+        return std::all_of(text.begin(), text.end(), is_identifier_character);
+    }
+
+    bool declares_reflection(std::string_view text)
+    {
+        constexpr std::string_view using_reflgen = "usingreflgen:";
+        for (std::size_t open = text.find("[["); open != std::string_view::npos; open = text.find("[[", open + 2))
         {
-            const bool valid = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-            if (!valid)
+            const std::size_t close = text.find("]]", open + 2);
+            if (close == std::string_view::npos)
             {
                 return false;
             }
+            // 공백을 뺀 목록 — "reflgen :: reflect" 도 "reflgen::reflect" 가 된다.
+            std::string list;
+            for (const char c : text.substr(open + 2, close - open - 2))
+            {
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n' && c != '\f' && c != '\v')
+                {
+                    list += c;
+                }
+            }
+            const std::string_view compact = list;
+            const bool found = compact.starts_with(using_reflgen)
+                                   ? contains_word(compact.substr(using_reflgen.size()), "reflect")
+                                   : contains_word(compact, "reflgen::reflect");
+            if (found)
+            {
+                return true;
+            }
         }
-        return true;
+        return false;
     }
 
     std::optional<std::size_t> next_token_offset(std::span<const token> tokens, std::size_t offset)

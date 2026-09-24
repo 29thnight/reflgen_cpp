@@ -5,54 +5,46 @@ using System.Text.RegularExpressions;
 
 namespace Reflgen.VisualStudio
 {
-    // 텍스트 버퍼의 Position 에 Text 를 넣는다.
-    public sealed record TextInsertion(int Position, string Text);
-
-    // reflgen 이 다루는 header 인지, 생성 파일을 include 하는지를 텍스트로 가린다.
+    // reflgen 이 다루는 header 인지를 텍스트로 가린다. header 는 생성 파일을 include 하지 않는다 — 빌드가
+    // 생성물을 묶은 주입 header 를 모든 번역 단위에 강제 include 한다.
     public static class ReflectedHeader
     {
         private static readonly string[] HeaderExtensions = { ".h", ".hh", ".hpp", ".hxx", ".h++" };
 
-        // [[reflgen::reflect]], [[nodiscard, reflgen::reflect("x")]], [[using reflgen: reflect]]
-        private static readonly Regex ReflectAttribute = new Regex(
-            @"\[\[(?:\s*using\s+reflgen\s*:[^\]]*?\breflect\b|[^\]]*?\breflgen\s*::\s*reflect\b)",
-            RegexOptions.CultureInvariant);
+        // "[[" 부터 처음 나오는 "]]" 까지가 attribute 목록 하나다 — 닫히지 않은 목록은 세지 않는다.
+        private static readonly Regex AttributeList =
+            new Regex(@"\[\[(.*?)\]\]", RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        private static readonly Regex Whitespace = new Regex(@"\s+", RegexOptions.CultureInvariant);
+        // 공백을 뺀 목록에서: [[reflgen::reflect]], [[nodiscard, reflgen::reflect("x")]]
+        private static readonly Regex ScopedReflect =
+            new Regex(@"(?<![A-Za-z0-9_])reflgen::reflect(?![A-Za-z0-9_])", RegexOptions.CultureInvariant);
+        // [[using reflgen: reflect]]
+        private static readonly Regex UsingReflect =
+            new Regex(@"^usingreflgen:.*(?<![A-Za-z0-9_])reflect(?![A-Za-z0-9_])", RegexOptions.CultureInvariant);
 
         public static bool IsHeaderPath(string path) =>
             HeaderExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
-        // 생성기와 같은 규칙: player.h → player.reflgen.h
+        // 생성기와 같은 규칙: player.h → player.reflgen.h (빌드 중간 산출물 디렉터리에 생긴다)
         public static string GeneratedHeaderName(string headerPath) =>
             Path.GetFileNameWithoutExtension(headerPath) + ".reflgen.h";
 
-        // 주석·문자열 안의 표기는 세지 않는다. 메서드에만 reflect 를 단 header 도 참이 되지만, 메서드
-        // reflect 는 reflect 클래스 안에서만 뜻이 있으니 실제로는 같은 뜻이다.
-        public static bool DeclaresReflection(string text) =>
-            ReflectAttribute.IsMatch(CodeText.Blank(text, blankLiterals: true));
-
-        // 대소문자는 가리지 않는다(Windows 에서는 같은 파일이다). 주석 처리된 include 는 세지 않는다.
-        public static bool IncludesGenerated(string text, string generatedName)
+        // 생성기가 --discover 로 header 를 고르는 규칙(attribute_scan.cpp 의 declares_reflection)과 같다. 다른 점은
+        // 하나 — 여기서는 주석·문자열 안의 표기를 세지 않는다(생성기는 그런 header 도 파싱해 보고 아무것도 만들지
+        // 않는다). 메서드에만 reflect 를 단 header 도 참이 되지만, 메서드 reflect 는 reflect 클래스 안에서만 뜻이
+        // 있으니 실제로는 같은 뜻이다.
+        public static bool DeclaresReflection(string text)
         {
-            var include = new Regex(@"^[ \t]*#[ \t]*include[ \t]*[""<](?:[^"">\r\n]*[/\\])?" +
-                                        Regex.Escape(generatedName) + @"["">]",
-                                    RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            return include.IsMatch(CodeText.Blank(text, blankLiterals: false));
-        }
-
-        // 반영을 선언했는데 생성 파일을 include 하지 않으면 파일 끝에 넣을 것. 할 일이 없으면 null.
-        // 개행 문자는 파일이 쓰는 것을 따르고, 앞 코드와는 빈 줄 하나로 띄운다.
-        public static TextInsertion? IncludeInsertion(string text, string headerPath)
-        {
-            string name = GeneratedHeaderName(headerPath);
-            if (!DeclaresReflection(text) || IncludesGenerated(text, name))
+            foreach (Match match in AttributeList.Matches(CodeText.Blank(text, blankLiterals: true)))
             {
-                return null;
+                string list = Whitespace.Replace(match.Groups[1].Value, string.Empty);
+                if (list.StartsWith("usingreflgen:", StringComparison.Ordinal) ? UsingReflect.IsMatch(list)
+                                                                                 : ScopedReflect.IsMatch(list))
+                {
+                    return true;
+                }
             }
-            string newline = text.Contains("\r\n") ? "\r\n" : "\n";
-            string separator = text.EndsWith(newline + newline, StringComparison.Ordinal) ? string.Empty
-                               : text.EndsWith(newline, StringComparison.Ordinal)            ? newline
-                                                                                             : newline + newline;
-            return new TextInsertion(text.Length, separator + "#include \"" + name + "\"" + newline);
+            return false;
         }
     }
 }

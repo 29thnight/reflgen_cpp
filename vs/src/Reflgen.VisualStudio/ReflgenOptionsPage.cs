@@ -7,19 +7,14 @@ namespace Reflgen.VisualStudio
     public sealed class ReflgenOptionsPage : DialogPage
     {
         [Category("On save")]
-        [DisplayName("Add the generated include")]
-        [Description("When a header with [[reflgen::reflect]] is saved, append #include \"<name>.reflgen.h\" if it is missing.")]
-        public bool AddIncludeOnSave { get; set; } = true;
-
-        [Category("On save")]
-        [DisplayName("Register the header in the project")]
-        [Description("When a header with [[reflgen::reflect]] is saved, mark its ClInclude item with ReflgenGenerate=true.")]
-        public bool RegisterOnSave { get; set; } = true;
-
-        [Category("On save")]
         [DisplayName("Generate reflection")]
-        [Description("Run the project's ReflgenGenerate target after a registered header is saved and show its diagnostics in the Error List.")]
+        [Description("Run the project's ReflgenGenerate target after a header with [[reflgen::reflect]] is saved (and once when a never-generated project opens) and show its diagnostics in the Error List. Headers and project files are never modified.")]
         public bool GenerateOnSave { get; set; } = true;
+
+        [Category("On save")]
+        [DisplayName("Refresh IntelliSense")]
+        [Description("When generation changed the generated code, run Project > Rescan Solution so the editor sees it. IntelliSense does not notice changes to force-included files outside the project on its own.")]
+        public bool RefreshIntelliSense { get; set; } = true;
 
         [Category("MSBuild")]
         [DisplayName("MSBuild.exe path")]

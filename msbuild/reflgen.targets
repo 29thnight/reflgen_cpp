@@ -5,9 +5,12 @@
   프로젝트 끝(Microsoft.Cpp.targets 다음)이나 Directory.Build.targets 에서 가져온다:
     <Import Project="path\to\reflgen\msbuild\reflgen.targets" />
 
-  반영할 header 는 ClInclude 항목에 ReflgenGenerate 를 단다. VS 확장(reflgen for Visual Studio)은
-  [[reflgen::reflect]] 가 있는 header 를 저장할 때 이것을 자동으로 단다.
-    <ClInclude Include="player.h"><ReflgenGenerate>true</ReflgenGenerate></ClInclude>
+  사용자 코드와 프로젝트에는 아무것도 더하지 않는다. header 에 attribute 만 달면 된다:
+    struct [[reflgen::reflect("game.player")]] player { [[reflgen::range(0, 100)]] int hp = 100; };
+  빌드는 프로젝트의 header(ClInclude) 가운데 [[reflgen::reflect]] 가 있는 것을 찾아 생성하고, 생성물을 묶은
+  주입 header($(IntDir)reflgen\reflgen_<module>.h)를 모든 번역 단위에 강제 include(/FI)한다. 생성물은
+  .obj·.pch 처럼 빌드 중간 산출물이다. 이 프로젝트 밖(다른 .vcxproj)에서 그 타입의 reflection 을 쓰려면
+  그 프로젝트도 이 파일을 가져오고 header 를 ClInclude 로 둔다.
 
   속성(모두 선택):
     ReflgenExecutable        reflgen.exe 경로. 설치 배치(<prefix>\bin)면 자동으로 찾는다.
@@ -39,16 +42,22 @@
     <!-- VS 확장이 자동완성에 읽는 카탈로그. -->
     <ReflgenCatalogFile>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).attributes.tsv</ReflgenCatalogFile>
 
+    <!-- 생성물을 모두 묶은 주입 header 와 등록 함수 정의. -->
+    <_ReflgenInjection>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).h</_ReflgenInjection>
     <_ReflgenModuleSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).cpp</_ReflgenModuleSource>
     <_ReflgenArgumentsFile>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).args</_ReflgenArgumentsFile>
     <_ReflgenResponseFile>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).rsp</_ReflgenResponseFile>
     <_ReflgenDependencyList>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).dependencies</_ReflgenDependencyList>
     <_ReflgenStamp>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).stamp</_ReflgenStamp>
+
+    <!-- 컴파일 입력을 정할 때 주입한다. IntelliSense 의 design-time build(GetClCommandLines)도 이 목록을
+         거치므로 편집기와 빌드가 같은 강제 include 를 본다. -->
+    <ComputeCompileInputsTargets>$(ComputeCompileInputsTargets);_ReflgenInject</ComputeCompileInputsTargets>
   </PropertyGroup>
 
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(ReflgenOutputDirectory);$(ReflgenIncludeDirectory)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(ReflgenIncludeDirectory)</AdditionalIncludeDirectories>
       <!-- [[reflgen::…]] 는 컴파일러에게 모르는 attribute 다(C5030, -Wunknown-attributes). -->
       <DisableSpecificWarnings>%(DisableSpecificWarnings);5030</DisableSpecificWarnings>
       <AdditionalOptions Condition="'$(PlatformToolset)' == 'ClangCL'">%(AdditionalOptions) -Wno-unknown-attributes</AdditionalOptions>
@@ -62,16 +71,35 @@
           Condition="'$(DesignTimeBuild)' != 'true'"
           DependsOnTargets="_ReflgenComputeInputs;_ReflgenWriteArguments;_ReflgenRun" />
 
+  <!-- 모든 번역 단위에 주입 header 를 강제 include 한다. 미리 컴파일된 header 를 쓰는(/Yu·/Yc) 파일은 그
+       header 를 먼저 강제 include 한다 — /Yu 는 pch header 앞에 온 것을 건너뛰므로 주입 header 가 먼저 오면
+       사라진다. 아직 생성하기 전이면(처음 여는 프로젝트의 IntelliSense) 빈 주입 header 를 둔다 — 빌드에서는
+       ReflgenGenerate 가 컴파일 전에 채운다. -->
+  <Target Name="_ReflgenInject" Condition="'@(ClInclude)' != ''">
+    <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="!Exists('$(_ReflgenInjection)')" />
+    <WriteLinesToFile File="$(_ReflgenInjection)" Lines="#pragma once" Condition="!Exists('$(_ReflgenInjection)')" />
+    <ItemGroup>
+      <ClCompile Condition="('%(ClCompile.PrecompiledHeader)' == 'Use' or '%(ClCompile.PrecompiledHeader)' == 'Create') and '%(ClCompile.PrecompiledHeaderFile)' != ''">
+        <ForcedIncludeFiles>%(ClCompile.PrecompiledHeaderFile);%(ClCompile.ForcedIncludeFiles);$(_ReflgenInjection)</ForcedIncludeFiles>
+      </ClCompile>
+      <ClCompile Condition="('%(ClCompile.PrecompiledHeader)' != 'Use' and '%(ClCompile.PrecompiledHeader)' != 'Create') or '%(ClCompile.PrecompiledHeaderFile)' == ''">
+        <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenInjection)</ForcedIncludeFiles>
+      </ClCompile>
+    </ItemGroup>
+  </Target>
+
   <Target Name="_ReflgenComputeInputs">
     <Error Condition="'$(_ReflgenImportedTooEarly)' == 'true'"
            Code="RG0001"
            Text="reflgen: reflgen.targets was imported before IntDir is defined; import it after Microsoft.Cpp.targets (or from Directory.Build.targets), or set ReflgenOutputDirectory" />
+    <!-- 프로젝트의 header 전부가 후보다. [[reflgen::reflect]] 가 있는 것만 생성기가 고른다(discover 옵션). -->
     <ItemGroup>
-      <_ReflgenHeader Include="@(ClInclude->WithMetadataValue('ReflgenGenerate', 'true')->'%(FullPath)')" />
+      <_ReflgenHeader Include="@(ClInclude->'%(FullPath)')" />
     </ItemGroup>
 
     <!-- 생성된 등록 함수도 컴파일한다. 미리 컴파일된 header 는 쓰지 않는다(생성 파일은 pch.h 를 모른다).
-         강제 include(/FI)는 남긴다 — 사용자 header 가 그것이 주는 설정에 기댈 수 있다. -->
+         이 항목은 _ReflgenInject 뒤에 생기므로 주입 header 를 강제 include 받지 않는다 — 스스로 include 한다.
+         사용자의 강제 include(/FI)는 남긴다 — 사용자 header 가 그것이 주는 설정에 기댈 수 있다. -->
     <ItemGroup Condition="'@(_ReflgenHeader)' != ''">
       <ClCompile Include="$(_ReflgenModuleSource)">
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -120,6 +148,7 @@
       <_ReflgenCommandLine Include="--output;$(ReflgenOutputDirectory.TrimEnd('\'))" />
       <_ReflgenCommandLine Include="--clang-args-file;$(_ReflgenArgumentsFile)" />
       <_ReflgenCommandLine Include="--dependency-list;$(_ReflgenDependencyList)" />
+      <_ReflgenCommandLine Include="--discover" />
     </ItemGroup>
     <PropertyGroup>
       <_ReflgenScopeText>@(_ReflgenAttributeScope->'--attribute-scope;%(Identity)')</_ReflgenScopeText>

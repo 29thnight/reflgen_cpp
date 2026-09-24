@@ -22,6 +22,16 @@ if(NOT result EQUAL 0)
 endif()
 message(STATUS "${output}")
 
+# 등록 없이 찾았는가 — [[reflgen::reflect]] 가 있는 header 만 생성되고, 나머지(plain.h, pch.h)는 건너뛴다.
+if(NOT EXISTS "${WORK}/obj/reflgen/game_types.reflgen.h")
+    message(FATAL_ERROR "game_types.h was not discovered:\n${first_output}")
+endif()
+foreach(skipped IN ITEMS plain pch)
+    if(EXISTS "${WORK}/obj/reflgen/${skipped}.reflgen.h")
+        message(FATAL_ERROR "${skipped}.h does not declare reflection but was generated")
+    endif()
+endforeach()
+
 # 다시 빌드하면 생성기가 돌지 않아야 한다. 생성할 때만 찍히는 reflgen 메시지로 가린다(MSBuild 자체의
 # "target 을 건너뜀" 메시지는 지역화된다).
 if(NOT first_output MATCHES "reflgen: generating reflection")

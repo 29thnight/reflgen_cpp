@@ -68,8 +68,8 @@ namespace Reflgen.VisualStudio.Tests
             {
                 "C:/work/한글 폴더/bad_types.h(9,28): error RG0002: 'bad::hidden_without_friend' reflects the " +
                     "non-public member 'secret_'; add `friend struct reflgen::access;` to the class [C:\\work\\e2e.vcxproj]",
-                "C:/work/한글 폴더/bad_types.h(1,1): warning RG0003: this header does not include \"bad_types.reflgen.h\"" +
-                    " [C:\\work\\e2e.vcxproj]",
+                "C:/work/한글 폴더/bad_types.h(16,13): warning RG0004: bit-field 'bits' cannot be reflected; add " +
+                    "[[reflgen::ignore]] [C:\\work\\e2e.vcxproj]",
                 "C:\\reflgen\\msbuild\\reflgen.targets(141,5): error MSB3073: \"\"C:\\bin\\reflgen.exe\" " +
                     "@\"C:\\work\\x64\\Debug\\reflgen\\reflgen_e2e.rsp\"\" 명령이 종료되었습니다(코드: 1). [C:\\work\\e2e.vcxproj]",
             };
@@ -80,7 +80,7 @@ namespace Reflgen.VisualStudio.Tests
             Assert.Equal("C:/work/한글 폴더/bad_types.h", diagnostics[0].File);
             Assert.EndsWith("to the class", diagnostics[0].Message);
             Assert.Equal(DiagnosticSeverity.Warning, diagnostics[1].Severity);
-            Assert.Equal("RG0003", diagnostics[1].Code);
+            Assert.Equal("RG0004", diagnostics[1].Code);
         }
 
         [Fact]

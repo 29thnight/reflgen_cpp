@@ -118,6 +118,13 @@ if(REFLGEN_BUILD_TESTS)
                     "@tests/generated/response_with_bom.rsp"
             WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
+        # 프로젝트의 header 전부를 후보로 받았을 때(--discover, MSBuild 가 쓴다).
+        add_test(NAME reflgen_generator_discover
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/discover"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_discover.cmake")
+
         # 한글·공백이 든 경로.
         add_test(NAME reflgen_generator_unicode_paths
             COMMAND "${CMAKE_COMMAND}"
@@ -127,7 +134,8 @@ if(REFLGEN_BUILD_TESTS)
                 "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/unicode"
                 -P "${PROJECT_SOURCE_DIR}/tests/generated/check_unicode_paths.cmake")
 
-        # MSBuild 연동 — msbuild/reflgen.targets 를 가져온 .vcxproj 가 생성·컴파일·등록하고 최신 상태를 지키는가.
+        # MSBuild 연동 — msbuild/reflgen.targets 를 가져온 .vcxproj 가 header 를 찾아 생성·주입·컴파일하고
+        # 최신 상태를 지키는가(미리 컴파일된 header 를 쓰는 프로젝트).
         find_program(REFLGEN_MSBUILD_EXECUTABLE NAMES MSBuild msbuild)
         if(WIN32 AND REFLGEN_MSBUILD_EXECUTABLE)
             add_test(NAME reflgen_msbuild_integration

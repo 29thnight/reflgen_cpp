@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MSBuild 연동 시험 — msbuild/reflgen.targets 만 가져온 평범한 .vcxproj 가 생성·컴파일·등록까지
-     하는가. run_msbuild_test.cmake 가 ReflgenExecutable·OutDir·IntDir 를 넘겨 빌드한다. -->
+<!-- MSBuild 연동 시험 — msbuild/reflgen.targets 만 가져온 평범한 .vcxproj 가, 등록이나 include 없이 header 를
+     찾아 생성·주입·컴파일까지 하는가. 미리 컴파일된 header(/Yu)를 쓰는 프로젝트다 — 주입이 pch 뒤에 와야 한다.
+     run_msbuild_test.cmake 가 ReflgenExecutable·OutDir·IntDir 를 넘겨 빌드한다. -->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -36,6 +37,8 @@
       <TreatWarningAsError>true</TreatWarningAsError>
       <AdditionalOptions>/utf-8 /permissive- /Zc:__cplusplus %(AdditionalOptions)</AdditionalOptions>
       <AdditionalIncludeDirectories>..\generated;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -43,11 +46,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="pch.cpp">
+      <PrecompiledHeader>Create</PrecompiledHeader>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\generated\game_types.h">
-      <ReflgenGenerate>true</ReflgenGenerate>
-    </ClInclude>
+    <ClInclude Include="..\generated\game_types.h" />
+    <ClInclude Include="pch.h" />
+    <ClInclude Include="plain.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="..\..\msbuild\reflgen.targets" />

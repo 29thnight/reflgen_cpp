@@ -4,9 +4,6 @@ namespace Reflgen.VisualStudio.Tests
 {
     public sealed class ReflectedHeaderTests
     {
-        private const string Player =
-            "#pragma once\n#include \"reflgen/reflgen.h\"\n\nstruct [[reflgen::reflect]] player\n{\n    int hp = 0;\n};\n";
-
         [Theory]
         [InlineData("struct [[reflgen::reflect]] player {};")]
         [InlineData("class [[nodiscard, reflgen::reflect(\"game.player\")]] player {};")]
@@ -30,62 +27,11 @@ namespace Reflgen.VisualStudio.Tests
         [InlineData("struct [[mygame::reflect]] player {};")]
         [InlineData("auto text = R\"([[reflgen::reflect]])\";")]
         [InlineData("auto text = R\"x(\n)\" [[reflgen::reflect]]\n)x\";")]
+        [InlineData("struct [[reflgen::reflect a {};")] // 닫히지 않은 목록 — 생성기도 세지 않는다
+        [InlineData("struct [[using other: reflect]] player {};")]
         public void DeclaresReflection_IgnoresCommentsLiteralsAndOtherNames(string text)
         {
             Assert.False(ReflectedHeader.DeclaresReflection(text));
-        }
-
-        [Theory]
-        [InlineData("#include \"player.reflgen.h\"")]
-        [InlineData("  #  include <generated/Player.Reflgen.h>")]
-        public void IncludesGenerated_MatchesRegardlessOfCaseAndDirectory(string text)
-        {
-            Assert.True(ReflectedHeader.IncludesGenerated(text, "player.reflgen.h"));
-        }
-
-        [Theory]
-        [InlineData("// #include \"player.reflgen.h\"")]
-        [InlineData("#include \"other_player.reflgen.h\"")]
-        [InlineData("#include \"player.reflgen.hpp\"")]
-        public void IncludesGenerated_RejectsCommentsAndOtherFiles(string text)
-        {
-            Assert.False(ReflectedHeader.IncludesGenerated(text, "player.reflgen.h"));
-        }
-
-        [Fact]
-        public void IncludeInsertion_AppendsAfterABlankLine()
-        {
-            TextInsertion? insertion = ReflectedHeader.IncludeInsertion(Player, @"C:\game\player.h");
-
-            Assert.NotNull(insertion);
-            Assert.Equal(Player.Length, insertion!.Position);
-            Assert.Equal("\n#include \"player.reflgen.h\"\n", insertion.Text);
-        }
-
-        [Fact]
-        public void IncludeInsertion_KeepsWindowsLineEndingsAndMissingFinalNewline()
-        {
-            string text = Player.Replace("\n", "\r\n").TrimEnd();
-
-            TextInsertion? insertion = ReflectedHeader.IncludeInsertion(text, "player.hpp");
-
-            Assert.Equal("\r\n\r\n#include \"player.reflgen.h\"\r\n", insertion!.Text);
-        }
-
-        [Fact]
-        public void IncludeInsertion_DoesNotAddASecondBlankLine()
-        {
-            TextInsertion? insertion = ReflectedHeader.IncludeInsertion(Player + "\n", "player.h");
-
-            Assert.Equal("#include \"player.reflgen.h\"\n", insertion!.Text);
-        }
-
-        [Fact]
-        public void IncludeInsertion_DoesNothingWhenIncludedOrNotReflected()
-        {
-            Assert.Null(ReflectedHeader.IncludeInsertion(Player + "\n#include \"player.reflgen.h\"\n", "player.h"));
-            Assert.Null(ReflectedHeader.IncludeInsertion("struct plain {};\n", "plain.h"));
-            Assert.Null(ReflectedHeader.IncludeInsertion(string.Empty, "empty.h"));
         }
 
         [Theory]

@@ -108,6 +108,11 @@ struct tooltip
 손으로 `reflect()` 를 쓰는 대신 attribute 만 달면, 빌드 때 생성기가 서술을 만든다. 매크로는 없다 —
 `[[…]]` 는 표준 attribute 문법이고, 컴파일러는 모르는 attribute 를 무시한다(경고는 `reflgen_generate()` 가 끈다).
 
+**사용자 코드에는 흔적이 남지 않는다.** header 는 생성 파일을 include 하지 않고(`.generated.h` 도,
+`GENERATED_BODY()` 도 없다), 프로젝트에 등록할 것도 없다. 생성물은 `.obj`·`.pch` 처럼 빌드 중간 산출물
+디렉터리에만 생기고, 빌드가 그것을 묶은 주입 header(`reflgen_<module>.h`)를 모든 번역 단위에 강제
+include(`/FI`, `-include`)한다.
+
 ```cpp
 // player.h
 #pragma once
@@ -136,8 +141,6 @@ namespace game
         int secret_ = 7;                                                           // 표시가 없어도 반영된다
     };
 } // namespace game
-
-#include "player.reflgen.h"                                                        // 끝에 생성 파일을 포함
 ```
 
 ```cmake
@@ -158,10 +161,14 @@ reflgen_generate(my_game
 - **오류 위치**: attribute 인자에 오타가 있으면 컴파일 오류가 생성 파일이 아니라 원본 header 의 그 줄을
   가리킨다(생성 코드가 `#line` 으로 원본을 가리킨다).
 - **등록**: 다형 포인터로 읽고 쓸 타입은 시작할 때 `reflgen::generated::register_<module>()` 를 한 번 부른다.
+  선언은 주입 header 에 있으므로 include 할 것이 없다.
 - **빌드 연동**: 생성물은 구성(config)마다 `<OUTPUT_DIRECTORY>/<config>/` 에 따로 둔다. HEADERS 가 include 하는
   파일이 바뀌어도 다시 생성한다(depfile). 파싱 표준은 `CXX_STANDARD` 와 `cxx_std_NN` compile feature 중 높은
-  것이다. 생성 디렉터리는 `BUILD_INTERFACE` 로만 include 경로에 붙는다 — 설치(install)할 라이브러리라면 생성
-  header 도 직접 설치한다. CMake 3.25 이상.
+  것이다. 주입(강제 include)은 target 과 그것을 링크하는 target 에 `PUBLIC`·`BUILD_INTERFACE` 로 간다 — header 가
+  생성 파일을 include 하지 않으므로 reflection 은 강제 include 로만 소비자에게 닿는다. 설치(install)할
+  라이브러리의 소비자에게는 전해지지 않는다. CMake 3.25 이상.
+- **비용**: 주입 header 가 반영 대상 header 를 모두 include 하므로, 그 target 의 모든 번역 단위가 그것들을
+  읽는다. 미리 컴파일된 header 로 줄인다.
 - **요구 사항**: libclang. Visual Studio 는 동봉본(`VC/Tools/Llvm`)을 자동으로 찾는다. 그 밖은
   `REFLGEN_LIBCLANG_DIR` 로 준다. C API header 는 `third_party/clang-c`(LLVM 22.1.3, Apache-2.0 WITH LLVM-exception).
 
@@ -187,7 +194,6 @@ namespace editor
 |---|---|
 | RG0001 | 입력·옵션 오류(없는 header, 같은 header 두 번 등) |
 | RG0002 | 반영할 private 멤버가 있는데 `friend struct reflgen::access;` 가 없다 |
-| RG0003 | header 가 자기 생성 파일을 include 하지 않는다 |
 | RG0004 | 반영할 수 없는 멤버(bit-field, 참조, 익명 union, static 멤버, 생성자·소멸자) |
 | RG0005 | 지원하지 않는 선언(클래스·멤버 함수 template, union, 익명 이름공간) |
 | RG0006 | 오버로드된 메서드 |
@@ -196,8 +202,8 @@ namespace editor
 
 ### MSBuild(.vcxproj) 연동
 
-프로젝트 끝(`Microsoft.Cpp.targets` 다음)이나 `Directory.Build.targets` 에서 가져오고, 반영할 header 에
-`ReflgenGenerate` 를 단다(아래 VS 확장이 저장할 때 자동으로 단다).
+프로젝트 끝(`Microsoft.Cpp.targets` 다음)이나 `Directory.Build.targets` 에서 가져온다. 그것뿐이다 — header 를
+등록하거나 표시할 것은 없다.
 
 ```xml
 <Import Project="path\to\reflgen\msbuild\reflgen.targets" />
@@ -205,15 +211,18 @@ namespace editor
   <ReflgenExecutable>path\to\reflgen.exe</ReflgenExecutable>  <!-- 설치 배치(<prefix>\bin)면 생략 -->
   <ReflgenAttributeScopes>editor</ReflgenAttributeScopes>
 </PropertyGroup>
-<ItemGroup>
-  <ClInclude Include="player.h"><ReflgenGenerate>true</ReflgenGenerate></ClInclude>
-</ItemGroup>
 ```
 
-- 컴파일 전에 `ReflgenGenerate` target 이 돈다. 생성물은 `$(IntDir)reflgen\`(구성마다 따로)이고, include 경로에
-  자동으로 붙는다. 생성된 등록 함수(`reflgen_<module>.cpp`)도 컴파일 목록에 들어간다(미리 컴파일된 header 없이).
+- **찾기**: 프로젝트의 header(`ClInclude`) 전부가 후보이고, 생성기가 `[[reflgen::reflect]]` 가 있는 것만 파싱한다
+  (`--discover`). 반영을 지운 header 의 옛 생성 파일은 지운다.
+- **주입**: 컴파일 전에 `ReflgenGenerate` target 이 `$(IntDir)reflgen\`(구성마다 따로)에 생성하고, 모든
+  `ClCompile` 에 `reflgen_<module>.h` 를 강제 include 한다. 미리 컴파일된 header 를 쓰는(`/Yu`·`/Yc`) 파일은 pch
+  header 를 먼저 강제 include 한다(`/Yu` 는 pch 앞에 온 것을 건너뛴다). IntelliSense(design-time build)도 같은
+  강제 include 를 본다. 생성된 등록 함수(`reflgen_<module>.cpp`)도 컴파일 목록에 들어간다(미리 컴파일된 header 없이).
 - 파싱 설정은 프로젝트의 ClCompile 설정 그대로다 — include 경로, 전처리 정의, `LanguageStandard`, 시스템 include.
-- 입력 header, 그것이 include 하는 파일(지난 실행이 읽은 목록), 생성기, 설정 중 하나가 바뀔 때만 다시 돈다.
+- 프로젝트의 header, 그것들이 include 하는 파일(지난 실행이 읽은 목록), 생성기, 설정 중 하나가 바뀔 때만 다시 돈다.
+- 다른 .vcxproj 가 이 프로젝트의 header 로 reflection 을 쓰려면 그 프로젝트도 `reflgen.targets` 를 가져오고 그
+  header 를 `ClInclude` 로 둔다(주입은 프로젝트마다다).
 - `C5030`(모르는 attribute) 경고를 끄고, ClangCL 도구 집합에는 `-Wno-unknown-attributes` 를 준다.
 
 | 속성 | 기본값 |
@@ -233,17 +242,20 @@ VS 2022(17.x)·2026(18.x), x64. `vs/` 를 빌드해 나온 `Reflgen.VisualStudio
 dotnet test vs\tests\Reflgen.VisualStudio.Core.Tests
 ```
 
-`reflgen.targets` 를 가져온 .vcxproj 에서:
+`reflgen.targets` 를 가져온 .vcxproj 에서 쓴다. 확장은 header 와 프로젝트 파일을 고치지 않는다.
 
-- **자동 include** — `[[reflgen::reflect]]` 가 있는 header 를 저장하면, `#include "<name>.reflgen.h"` 가 없을 때
-  파일 끝에 넣는다(저장되는 내용에 함께 들어간다).
-- **자동 등록** — 그 header 의 ClInclude 에 `ReflgenGenerate=true` 를 달고 프로젝트 파일을 저장한다.
-- **저장 시 생성** — 등록된 header 를 저장하면 그 프로젝트의 `ReflgenGenerate` 만 별도 MSBuild 프로세스로 돌려 RG
-  진단을 Error List 에 올린다. VS 빌드가 도는 중이면 건너뛴다(그 빌드가 생성한다). 과정은 Output 창 "reflgen".
+- **저장 시 생성** — `[[reflgen::reflect]]` 가 있는(또는 지운) header 를 저장하면 그 프로젝트의 `ReflgenGenerate`
+  만 별도 MSBuild 프로세스로 돌려 RG 진단을 Error List 에 올린다. VS 빌드가 도는 중이면 건너뛴다(그 빌드가
+  생성한다). 과정은 Output 창 "reflgen".
+- **처음 열 때 생성** — 한 번도 생성하지 않은 프로젝트는 열 때 생성한다. 그러지 않으면 IntelliSense 가 빈 주입
+  header 를 보고 reflection 을 쓰는 코드에 빨간 줄을 긋는다.
+- **IntelliSense 새로 고침** — IntelliSense 는 프로젝트 밖(`$(IntDir)`)의 강제 include 파일이 바뀐 것을 스스로
+  알아채지 못한다. 생성 코드가 바뀌면 확장이 "검색 데이터베이스 새로 고침"(Project > Rescan Solution)을 부른다.
+  큰 솔루션에서는 이것이 무거울 수 있어 끌 수 있다.
 - **attribute 자동완성** — `[[` 나 `,` 뒤에서 attribute 이름공간을, `reflgen::` 뒤에서 attribute 와 생성자
   시그니처·설명을 제안한다. 목록은 생성기의 카탈로그에서 오며(위 `[[reflgen::attribute]]` 참고), 아직 생성하지
   않았으면 기본 attribute 만 나온다.
-- 설정: Tools > Options > reflgen > General(각 동작 켜고 끄기, MSBuild.exe 경로).
+- 설정: Tools > Options > reflgen > General(생성, IntelliSense 새로 고침 켜고 끄기, MSBuild.exe 경로).
 
 | 코드 | 뜻 |
 |---|---|
@@ -402,7 +414,8 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 
 1. **코드 생성기** — CMake·MSBuild 연동 완료. 남은 것: 클래스 template, 오버로드된 메서드, 열거자 attribute,
    NuGet 패키지(.vcxproj 가 import 없이 쓰게).
-2. **Visual Studio 확장** — 첫 판 완료(저장 시 생성·Error List·자동완성·자동 등록). 남은 것: CMake(폴더 열기)
+2. **Visual Studio 확장** — 첫 판 완료(저장·열기 시 생성, Error List, IntelliSense 새로 고침, 자동완성).
+   남은 것: 솔루션 전체가 아니라 바뀐 번역 단위만 IntelliSense 를 새로 고치기, CMake(폴더 열기)
    지원, C++26 이행 codemod, Marketplace 배포.
 3. **C++26 네이티브 백엔드** — `std::meta::nonstatic_data_members_of` + `annotations_of` 로 `schema_of<T>`
    를 만든다. 질의·직렬화 API 는 바뀌지 않는다.

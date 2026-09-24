@@ -105,5 +105,3 @@ namespace generated_tests
         int value = 0;
     };
 } // namespace generated_tests
-
-#include "game_types.reflgen.h"

@@ -29,6 +29,9 @@ namespace Reflgen.VisualStudio
         private readonly Dictionary<string, CancellationTokenSource> _pending =
             new Dictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _oneAtATime = new SemaphoreSlim(1, 1);
+        // UI 스레드에서만 만진다. 생성 코드가 바뀐 생성이 있었으면, 기다리는 생성이 모두 끝난 뒤 한 번만 새로 고친다
+        // (솔루션을 열 때 여러 프로젝트가 잇달아 생성된다).
+        private bool _generatedCodeChanged;
 
         public GenerationRunner(JoinableTaskFactory joinableTasks, ProjectBridge projects, DiagnosticsReporter reporter,
                                 ReflgenOptionsPage options)
@@ -83,7 +86,25 @@ namespace Reflgen.VisualStudio
                     _pending.Remove(target.ProjectFile);
                 }
                 cancellation.Dispose(); // Schedule 은 _pending 에 있는 것만 취소하므로 이제 아무도 쓰지 않는다
+                if (_pending.Count == 0 && _generatedCodeChanged)
+                {
+                    _generatedCodeChanged = false;
+                    RefreshIntelliSense();
+                }
             }
+        }
+
+        private void RefreshIntelliSense()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (!_options.RefreshIntelliSense)
+            {
+                return;
+            }
+            _reporter.Log(_projects.RefreshIntelliSense(out string problem)
+                              ? "The generated code changed; refreshing IntelliSense (Project > Rescan Solution)."
+                              : $"The generated code changed but IntelliSense could not be refreshed; {problem}. " +
+                                    "Use Project > Rescan Solution.");
         }
 
         private async Task GenerateAsync(ProjectTarget target, CancellationToken token)
@@ -102,14 +123,18 @@ namespace Reflgen.VisualStudio
                 return;
             }
             string? solution = _projects.SolutionFile();
+            string? outputDirectory = _projects.OutputDirectory(target.Hierarchy);
             _reporter.Log($"{target.DisplayName} ({target.Configuration}|{target.Platform}): generating...");
 
             await TaskScheduler.Default;
+            GeneratedCodeSnapshot before = GeneratedCodeSnapshot.Take(outputDirectory);
             MSBuildResult result = await RunMSBuildAsync(msbuild, target, solution, token);
+            bool changed = GeneratedCodeSnapshot.Take(outputDirectory).Differs(before);
 
             await _joinableTasks.SwitchToMainThreadAsync(token);
             ReportResult(target, result);
             CatalogStore.Instance.SetFiles(_projects.CatalogFiles());
+            _generatedCodeChanged |= changed;
         }
 
         private void ReportResult(ProjectTarget target, MSBuildResult result)

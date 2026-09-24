@@ -6,9 +6,10 @@
 #       [ATTRIBUTE_SCOPES game editor]     # reflgen 외에 스키마로 옮길 attribute 이름공간
 #       [OUTPUT_DIRECTORY dir])            # 구성(config)마다 그 아래 <config>/ 에 만든다
 #
-# 각 header 는 끝에서 자기 생성 파일을 include 한다:  #include "player.reflgen.h"
-# 생성은 컴파일 전에 돌고, header 나 그것이 include 하는 파일이 바뀌면 다시 돈다(depfile).
-# 생성 디렉터리는 target 의 include 경로에 PUBLIC(BUILD_INTERFACE)으로 더해진다.
+# header 는 아무것도 include 하지 않는다 — attribute 만 단다. 생성물을 묶은 주입 header
+# (<OUTPUT_DIRECTORY>/<config>/reflgen_<module>.h)를 target 과 그것을 링크하는 target 의 모든 번역 단위에
+# 강제 include(/FI, -include)한다(PUBLIC, BUILD_INTERFACE). 생성은 컴파일 전에 돌고, header 나 그것이
+# include 하는 파일이 바뀌면 다시 돈다(depfile).
 #
 # 생성기 실행 파일은 이 저장소 안에서 빌드하면 reflgen::cli target 이고, 아니면
 # REFLGEN_EXECUTABLE 로 경로를 준다.
@@ -53,7 +54,8 @@ function(reflgen_generate target)
         list(APPEND headers "${absolute}")
         list(APPEND outputs "${output_directory}/${stem}.reflgen.h")
     endforeach()
-    list(APPEND outputs "${output_directory}/reflgen_${module}.h" "${output_directory}/reflgen_${module}.cpp")
+    set(injection "${output_directory}/reflgen_${module}.h")
+    list(APPEND outputs "${injection}" "${output_directory}/reflgen_${module}.cpp")
 
     # 컴파일에 쓰는 include 경로·정의·표준을 생성기의 파싱에도 그대로 준다. 목록은 generator
     # expression 이라 구성(configure) 뒤에야 정해지므로 파일로 넘긴다. 표준은 CXX_STANDARD 와
@@ -88,13 +90,15 @@ $<$<IN_LIST:cxx_std_26,${features}>:-std=c++26\n>")
         VERBATIM)
 
     target_sources(${target} PRIVATE ${outputs})
-    target_include_directories(${target} PUBLIC "$<BUILD_INTERFACE:${output_directory}>")
     # [[reflgen::…]] 는 컴파일러에게 모르는 attribute 다 — 경고(/W4·-Werror 에서 오류)를 끈다.
-    # 이 header 를 쓰는 모든 target 에 필요하므로 PUBLIC 이다.
+    # 이 header 를 쓰는 모든 target 에 필요하므로 PUBLIC 이다. 주입 header 도 같은 이유로 PUBLIC 이다 —
+    # header 가 생성 파일을 include 하지 않으므로 reflection 은 강제 include 로만 소비자에게 간다.
+    # -include 는 붙여 쓴다 — 떼어 쓰면 CMake 가 같은 옵션 조각을 하나로 합쳐 버린다.
     target_compile_options(${target} PUBLIC
         "$<$<CXX_COMPILER_ID:MSVC>:/wd5030>"
         "$<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-attributes>"
-        "$<$<CXX_COMPILER_ID:GNU>:-Wno-attributes>")
+        "$<$<CXX_COMPILER_ID:GNU>:-Wno-attributes>"
+        "$<BUILD_INTERFACE:$<IF:$<STREQUAL:$<CXX_COMPILER_FRONTEND_VARIANT>,MSVC>,/FI${injection},-include${injection}>>")
 endfunction()
 
 cmake_policy(POP)

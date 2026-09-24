@@ -1,9 +1,8 @@
-// MSBuild 연동 시험 — reflgen.targets 가 생성한 서술로 직렬화와 등록이 되는가.
+// MSBuild 연동 시험 — reflgen.targets 가 생성한 서술로 직렬화와 등록이 되는가. game_types.h 도 이 파일도 생성
+// 파일을 include 하지 않는다 — 주입 header 가 강제 include 로 들어온다(등록 함수 선언도 거기 있다).
+#include "pch.h"
 #include "game_types.h"
 #include "reflgen/json.h"
-#include "reflgen_msbuild_test.h"
-#include <cstdio>
-#include <string>
 
 int main()
 {
