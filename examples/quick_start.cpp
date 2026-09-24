@@ -11,88 +11,88 @@
 
 namespace game
 {
-// 사용자 정의 속성 — 생성자가 constexpr 인 구조체면 무엇이든 된다.
-struct tooltip
-{
-    std::string_view text;
-
-    constexpr explicit tooltip(std::string_view value) : text(value) {}
-};
-
-enum class rarity
-{
-    common,
-    rare,
-    legendary
-};
-
-struct item
-{
-    std::string name;
-    rarity grade = rarity::common;
-    int count = 1;
-
-    static consteval auto reflect()
+    // 사용자 정의 속성 — 생성자가 constexpr 인 구조체면 무엇이든 된다.
+    struct tooltip
     {
-        // clang-format off
-        return reflgen::schema<item>(
-            reflgen::field<&item::name>,
-            reflgen::field<&item::grade>,
-            reflgen::field<&item::count>.with(reflgen::range(1, 99), tooltip("stack size")));
-        // clang-format on
-    }
-};
+        std::string_view text;
 
-struct component
-{
-    virtual ~component() = default;
-    bool enabled = true;
+        constexpr explicit tooltip(std::string_view value) : text(value) {}
+    };
 
-    static consteval auto reflect()
+    enum class rarity
     {
-        return reflgen::schema<component>(reflgen::field<&component::enabled>).named("game.component");
-    }
-};
+        common,
+        rare,
+        legendary
+    };
 
-struct health : component
-{
-    float current = 100.0f;
-
-    static consteval auto reflect()
+    struct item
     {
-        return reflgen::schema<health>(reflgen::base<component>,
-                                       reflgen::field<&health::current>.with(reflgen::range(0.0f, 100.0f)))
-            .named("game.health");
-    }
-};
+        std::string name;
+        rarity grade = rarity::common;
+        int count = 1;
 
-class player
-{
-    friend struct reflgen::access;
+        static consteval auto reflect()
+        {
+            // clang-format off
+            return reflgen::schema<item>(
+                reflgen::field<&item::name>,
+                reflgen::field<&item::grade>,
+                reflgen::field<&item::count>.with(reflgen::range(1, 99), tooltip("stack size")));
+            // clang-format on
+        }
+    };
 
-  public:
-    std::string name = "hero";
-    std::vector<item> inventory;
-    std::map<std::string, int> stats;
-    std::optional<std::string> guild;
-    std::vector<std::unique_ptr<component>> components;
-
-  private:
-    int session_ = 0; // 저장하지 않는다
-
-    static consteval auto reflect()
+    struct component
     {
-        // clang-format off
-        return reflgen::schema<player>(
-            reflgen::field<&player::name>,
-            reflgen::field<&player::inventory>,
-            reflgen::field<&player::stats>,
-            reflgen::field<&player::guild>,
-            reflgen::field<&player::components>,
-            reflgen::field<&player::session_>.with(reflgen::transient()));
-        // clang-format on
-    }
-};
+        virtual ~component() = default;
+        bool enabled = true;
+
+        static consteval auto reflect()
+        {
+            return reflgen::schema<component>(reflgen::field<&component::enabled>).named("game.component");
+        }
+    };
+
+    struct health : component
+    {
+        float current = 100.0f;
+
+        static consteval auto reflect()
+        {
+            return reflgen::schema<health>(reflgen::base<component>,
+                                           reflgen::field<&health::current>.with(reflgen::range(0.0f, 100.0f)))
+                .named("game.health");
+        }
+    };
+
+    class player
+    {
+        friend struct reflgen::access;
+
+      public:
+        std::string name = "hero";
+        std::vector<item> inventory;
+        std::map<std::string, int> stats;
+        std::optional<std::string> guild;
+        std::vector<std::unique_ptr<component>> components;
+
+      private:
+        int session_ = 0; // 저장하지 않는다
+
+        static consteval auto reflect()
+        {
+            // clang-format off
+            return reflgen::schema<player>(
+                reflgen::field<&player::name>,
+                reflgen::field<&player::inventory>,
+                reflgen::field<&player::stats>,
+                reflgen::field<&player::guild>,
+                reflgen::field<&player::components>,
+                reflgen::field<&player::session_>.with(reflgen::transient()));
+            // clang-format on
+        }
+    };
 } // namespace game
 
 int main()

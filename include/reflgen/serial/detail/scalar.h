@@ -19,143 +19,144 @@
 
 namespace reflgen::detail
 {
-template<class T>
-[[noreturn]] void throw_out_of_range(std::string value)
-{
-    throw serialization_error("value " + value + " is out of range for " + std::string(type_name_of<T>()));
-}
-
-template<class T>
-void write_integer(writer& out, T value)
-{
-    if constexpr (std::is_signed_v<T>)
+    template<class T>
+    [[noreturn]] void throw_out_of_range(std::string value)
     {
-        out.write_int(static_cast<std::int64_t>(value));
+        throw serialization_error("value " + value + " is out of range for " + std::string(type_name_of<T>()));
     }
-    else
-    {
-        out.write_uint(static_cast<std::uint64_t>(value));
-    }
-}
 
-template<class T>
-T read_integer(reader& in)
-{
-    if constexpr (std::is_same_v<T, bool>)
+    template<class T>
+    void write_integer(writer& out, T value)
     {
-        const std::uint64_t value = in.read_uint();
-        if (value > 1)
+        if constexpr (std::is_signed_v<T>)
         {
-            throw_out_of_range<T>(std::to_string(value));
+            out.write_int(static_cast<std::int64_t>(value));
         }
-        return value != 0;
-    }
-    else if constexpr (std::is_signed_v<T>)
-    {
-        const std::int64_t value = in.read_int();
-        if (value < static_cast<std::int64_t>((std::numeric_limits<T>::min)()) ||
-            value > static_cast<std::int64_t>((std::numeric_limits<T>::max)()))
+        else
         {
-            throw_out_of_range<T>(std::to_string(value));
+            out.write_uint(static_cast<std::uint64_t>(value));
+        }
+    }
+
+    template<class T>
+    T read_integer(reader& in)
+    {
+        if constexpr (std::is_same_v<T, bool>)
+        {
+            const std::uint64_t value = in.read_uint();
+            if (value > 1)
+            {
+                throw_out_of_range<T>(std::to_string(value));
+            }
+            return value != 0;
+        }
+        else if constexpr (std::is_signed_v<T>)
+        {
+            const std::int64_t value = in.read_int();
+            if (value < static_cast<std::int64_t>((std::numeric_limits<T>::min)()) ||
+                value > static_cast<std::int64_t>((std::numeric_limits<T>::max)()))
+            {
+                throw_out_of_range<T>(std::to_string(value));
+            }
+            return static_cast<T>(value);
+        }
+        else
+        {
+            const std::uint64_t value = in.read_uint();
+            if (value > static_cast<std::uint64_t>((std::numeric_limits<T>::max)()))
+            {
+                throw_out_of_range<T>(std::to_string(value));
+            }
+            return static_cast<T>(value);
+        }
+    }
+
+    template<class T>
+    T read_floating(reader& in)
+    {
+        const double value = in.read_float();
+        if constexpr (std::numeric_limits<T>::max() < std::numeric_limits<double>::max())
+        {
+            // 무한·NaN 은 그대로 둔다(바이너리 포맷은 담을 수 있다). 유한값이 넘치는 것만 막는다.
+            if (std::isfinite(value) && std::fabs(value) > static_cast<double>((std::numeric_limits<T>::max)()))
+            {
+                throw_out_of_range<T>(std::to_string(value));
+            }
         }
         return static_cast<T>(value);
     }
-    else
-    {
-        const std::uint64_t value = in.read_uint();
-        if (value > static_cast<std::uint64_t>((std::numeric_limits<T>::max)()))
-        {
-            throw_out_of_range<T>(std::to_string(value));
-        }
-        return static_cast<T>(value);
-    }
-}
 
-template<class T>
-T read_floating(reader& in)
-{
-    const double value = in.read_float();
-    if constexpr (std::numeric_limits<T>::max() < std::numeric_limits<double>::max())
+    // 문자 하나는 길이 1인 문자열로 적는다 — 정수로 적으면 'A' 가 65 로 남아 파일을
+    // 읽는 사람이 곤란하다. signed char / unsigned char 는 문자가 아니라 정수로 본다.
+    template<class C>
+    void write_character(writer& out, C value)
     {
-        // 무한·NaN 은 그대로 둔다(바이너리 포맷은 담을 수 있다). 유한값이 넘치는 것만 막는다.
-        if (std::isfinite(value) && std::fabs(value) > static_cast<double>((std::numeric_limits<T>::max)()))
+        if constexpr (sizeof(C) == 1)
         {
-            throw_out_of_range<T>(std::to_string(value));
+            const char text = static_cast<char>(value);
+            out.write_string(std::string_view(&text, 1));
+        }
+        else
+        {
+            std::string text;
+            append_utf8(text, static_cast<char32_t>(value));
+            out.write_string(text);
         }
     }
-    return static_cast<T>(value);
-}
 
-// 문자 하나는 길이 1인 문자열로 적는다 — 정수로 적으면 'A' 가 65 로 남아 파일을
-// 읽는 사람이 곤란하다. signed char / unsigned char 는 문자가 아니라 정수로 본다.
-template<class C>
-void write_character(writer& out, C value)
-{
-    if constexpr (sizeof(C) == 1)
+    template<class C>
+    C read_character(reader& in)
     {
-        const char text = static_cast<char>(value);
-        out.write_string(std::string_view(&text, 1));
-    }
-    else
-    {
-        std::string text;
-        append_utf8(text, static_cast<char32_t>(value));
-        out.write_string(text);
-    }
-}
-
-template<class C>
-C read_character(reader& in)
-{
-    const std::string text = in.read_string();
-    if constexpr (sizeof(C) == 1)
-    {
-        if (text.size() != 1)
+        const std::string text = in.read_string();
+        if constexpr (sizeof(C) == 1)
         {
-            throw serialization_error("expected a single character, got a string of length " +
-                                      std::to_string(text.size()));
+            if (text.size() != 1)
+            {
+                throw serialization_error("expected a single character, got a string of length " +
+                                          std::to_string(text.size()));
+            }
+            return static_cast<C>(text.front());
         }
-        return static_cast<C>(text.front());
-    }
-    else
-    {
-        const std::basic_string<C> units = from_utf8<C>(text);
-        if (units.size() != 1)
+        else
         {
-            throw serialization_error("expected a single character representable in " + std::string(type_name_of<C>()));
+            const std::basic_string<C> units = from_utf8<C>(text);
+            if (units.size() != 1)
+            {
+                throw serialization_error("expected a single character representable in " +
+                                          std::string(type_name_of<C>()));
+            }
+            return units.front();
         }
-        return units.front();
     }
-}
 
-// 이름이 있는 값은 이름으로, 없는 값(비트 플래그 조합, 스캔 범위 밖)은 기저 정수로
-// 적는다. 읽을 때는 둘 다 받는다 — 열거자를 새로 추가하기 전에 쓴 파일도 읽힌다.
-template<class E>
-void write_enum(writer& out, E value)
-{
-    const std::string_view name = enum_name(value);
-    if (!name.empty())
+    // 이름이 있는 값은 이름으로, 없는 값(비트 플래그 조합, 스캔 범위 밖)은 기저 정수로
+    // 적는다. 읽을 때는 둘 다 받는다 — 열거자를 새로 추가하기 전에 쓴 파일도 읽힌다.
+    template<class E>
+    void write_enum(writer& out, E value)
     {
-        out.write_string(name);
-    }
-    else
-    {
-        write_integer(out, static_cast<std::underlying_type_t<E>>(value));
-    }
-}
-
-template<class E>
-E read_enum(reader& in)
-{
-    if (in.peek() == value_kind::string)
-    {
-        const std::string name = in.read_string();
-        if (const auto value = enum_cast<E>(name))
+        const std::string_view name = enum_name(value);
+        if (!name.empty())
         {
-            return *value;
+            out.write_string(name);
         }
-        throw serialization_error("unknown enumerator '" + name + "' for " + std::string(type_name_of<E>()));
+        else
+        {
+            write_integer(out, static_cast<std::underlying_type_t<E>>(value));
+        }
     }
-    return static_cast<E>(read_integer<std::underlying_type_t<E>>(in));
-}
+
+    template<class E>
+    E read_enum(reader& in)
+    {
+        if (in.peek() == value_kind::string)
+        {
+            const std::string name = in.read_string();
+            if (const auto value = enum_cast<E>(name))
+            {
+                return *value;
+            }
+            throw serialization_error("unknown enumerator '" + name + "' for " + std::string(type_name_of<E>()));
+        }
+        return static_cast<E>(read_integer<std::underlying_type_t<E>>(in));
+    }
 } // namespace reflgen::detail

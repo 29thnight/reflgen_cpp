@@ -4,23 +4,23 @@
 // 보여야 한다.
 namespace reflgen
 {
-class writer;
-class reader;
+    class writer;
+    class reader;
 
-// 사용자 정의 직렬화의 확장 지점. std::hash·std::formatter 처럼 특수화한다:
-//
-//   template<>
-//   struct reflgen::serializer<my_type>
-//   {
-//       static void write(reflgen::writer& out, const my_type& value);
-//       static void read(reflgen::reader& in, my_type& value);
-//   };
-template<class T>
-struct serializer;
+    // 사용자 정의 직렬화의 확장 지점. std::hash·std::formatter 처럼 특수화한다:
+    //
+    //   template<>
+    //   struct reflgen::serializer<my_type>
+    //   {
+    //       static void write(reflgen::writer& out, const my_type& value);
+    //       static void read(reflgen::reader& in, my_type& value);
+    //   };
+    template<class T>
+    struct serializer;
 
-template<class T>
-void serialize(writer& out, const T& value);
+    template<class T>
+    void serialize(writer& out, const T& value);
 
-template<class T>
-void deserialize(reader& in, T& value);
+    template<class T>
+    void deserialize(reader& in, T& value);
 } // namespace reflgen

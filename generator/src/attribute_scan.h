@@ -21,68 +21,68 @@
 
 namespace reflgen::generator
 {
-enum class token_kind
-{
-    punctuation,
-    keyword,
-    identifier,
-    literal,
-    comment,
-};
+    enum class token_kind
+    {
+        punctuation,
+        keyword,
+        identifier,
+        literal,
+        comment,
+    };
 
-struct token
-{
-    token_kind kind = token_kind::punctuation;
-    std::string spelling;
-    std::size_t begin = 0; // 파일 안 byte offset
-    std::size_t end = 0;
-};
+    struct token
+    {
+        token_kind kind = token_kind::punctuation;
+        std::string spelling;
+        std::size_t begin = 0; // 파일 안 byte offset
+        std::size_t end = 0;
+    };
 
-struct scanned_attribute
-{
-    std::string scope; // "reflgen", "mygame" — 이름공간이 없으면 빈 문자열
-    std::string name;
-    bool has_arguments = false;
-    std::size_t arguments_begin = 0; // 여는 괄호 바로 뒤
-    std::size_t arguments_end = 0;   // 닫는 괄호 바로 앞
-    std::size_t begin = 0;           // attribute 이름의 시작(진단 위치)
-};
+    struct scanned_attribute
+    {
+        std::string scope; // "reflgen", "mygame" — 이름공간이 없으면 빈 문자열
+        std::string name;
+        bool has_arguments = false;
+        std::size_t arguments_begin = 0; // 여는 괄호 바로 뒤
+        std::size_t arguments_end = 0;   // 닫는 괄호 바로 앞
+        std::size_t begin = 0;           // attribute 이름의 시작(진단 위치)
+    };
 
-struct attribute_group
-{
-    std::size_t begin = 0; // 첫 '[' 의 offset
-    std::size_t end = 0;   // 마지막 ']' 의 끝 offset
-    std::vector<scanned_attribute> attributes;
-};
+    struct attribute_group
+    {
+        std::size_t begin = 0; // 첫 '[' 의 offset
+        std::size_t end = 0;   // 마지막 ']' 의 끝 offset
+        std::vector<scanned_attribute> attributes;
+    };
 
-// 모양이 맞지 않는 [[…]] 는 건너뛴다(배열 첨자처럼 우연히 '[[' 가 된 경우).
-std::vector<attribute_group> scan_attribute_groups(std::span<const token> tokens);
+    // 모양이 맞지 않는 [[…]] 는 건너뛴다(배열 첨자처럼 우연히 '[[' 가 된 경우).
+    std::vector<attribute_group> scan_attribute_groups(std::span<const token> tokens);
 
-// ASCII C++ 식별자인가 — module 이름, 한정할 멤버 이름을 가린다.
-bool is_identifier(std::string_view text) noexcept;
+    // ASCII C++ 식별자인가 — module 이름, 한정할 멤버 이름을 가린다.
+    bool is_identifier(std::string_view text) noexcept;
 
-// 아래는 파일 전체의 token·그룹(offset 순)에서 선언 하나의 몫을 고르는 도구다.
+    // 아래는 파일 전체의 token·그룹(offset 순)에서 선언 하나의 몫을 고르는 도구다.
 
-// offset 에서 시작하는 token 의 바로 다음 token 이 시작하는 곳. 없으면 nullopt.
-std::optional<std::size_t> next_token_offset(std::span<const token> tokens, std::size_t offset);
+    // offset 에서 시작하는 token 의 바로 다음 token 이 시작하는 곳. 없으면 nullopt.
+    std::optional<std::size_t> next_token_offset(std::span<const token> tokens, std::size_t offset);
 
-// offset 에서 시작해 빈틈없이 이어진 그룹들. 선언 맨 앞의 attribute(그 선언의 모든 declarator 에
-// 붙는다)와 declarator 이름 바로 뒤의 attribute(그 declarator 에만 붙는다)가 이 모양이다 —
-// `int a [[x]], b;` 에서 [[x]] 는 a 의 것이지 b 의 것이 아니다.
-std::vector<attribute_group> groups_run_at(std::span<const token> tokens, std::span<const attribute_group> groups,
-                                           std::size_t offset);
+    // offset 에서 시작해 빈틈없이 이어진 그룹들. 선언 맨 앞의 attribute(그 선언의 모든 declarator 에
+    // 붙는다)와 declarator 이름 바로 뒤의 attribute(그 declarator 에만 붙는다)가 이 모양이다 —
+    // `int a [[x]], b;` 에서 [[x]] 는 a 의 것이지 b 의 것이 아니다.
+    std::vector<attribute_group> groups_run_at(std::span<const token> tokens, std::span<const attribute_group> groups,
+                                               std::size_t offset);
 
-// [begin, end) 안에 온전히 들어 있는 그룹들.
-std::vector<attribute_group> groups_between(std::span<const attribute_group> groups, std::size_t begin,
-                                            std::size_t end);
+    // [begin, end) 안에 온전히 들어 있는 그룹들.
+    std::vector<attribute_group> groups_between(std::span<const attribute_group> groups, std::size_t begin,
+                                                std::size_t end);
 
-// 식별자 하나 앞에 붙일 한정자("::game::player::")를 돌려준다. 붙일 것이 없으면 빈 문자열.
-using qualifier_lookup = std::function<std::string(std::string_view identifier)>;
+    // 식별자 하나 앞에 붙일 한정자("::game::player::")를 돌려준다. 붙일 것이 없으면 빈 문자열.
+    using qualifier_lookup = std::function<std::string(std::string_view identifier)>;
 
-// [begin, end) 의 token 으로 식을 다시 짓는다. 주석은 버리고 token 사이 공백은 한 칸으로 줄인다
-// (`//` 주석을 그대로 옮기면 뒤에 붙는 ')' 가 주석에 먹힌다). '::', '.', '->' 뒤가 아닌
-// 식별자에는 qualifier_of 가 주는 한정자를 붙인다 — 클래스 멤버 이름은 클래스 밖에 있는 생성
-// 코드에서 한정 없이는 보이지 않는다.
-std::string argument_text(std::span<const token> tokens, std::size_t begin, std::size_t end,
-                          const qualifier_lookup& qualifier_of);
+    // [begin, end) 의 token 으로 식을 다시 짓는다. 주석은 버리고 token 사이 공백은 한 칸으로 줄인다
+    // (`//` 주석을 그대로 옮기면 뒤에 붙는 ')' 가 주석에 먹힌다). '::', '.', '->' 뒤가 아닌
+    // 식별자에는 qualifier_of 가 주는 한정자를 붙인다 — 클래스 멤버 이름은 클래스 밖에 있는 생성
+    // 코드에서 한정 없이는 보이지 않는다.
+    std::string argument_text(std::span<const token> tokens, std::size_t begin, std::size_t end,
+                              const qualifier_lookup& qualifier_of);
 } // namespace reflgen::generator

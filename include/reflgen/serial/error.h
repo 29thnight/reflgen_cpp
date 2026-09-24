@@ -19,96 +19,96 @@
 
 namespace reflgen
 {
-namespace detail
-{
-struct path_segment
-{
-    std::string_view key;
-    std::size_t index = 0;
-    bool is_index = false;
-};
-
-// 스레드마다 따로 — 여러 스레드가 동시에 직렬화해도 서로의 경로를 보지 않는다.
-// 조각의 key 는 그 단계가 살아 있는 동안만 유효한 view 다(단계를 나가며 pop 된다).
-inline thread_local std::vector<path_segment> active_path;
-
-inline void append_escaped(std::string& out, std::string_view segment)
-{
-    out += '/';
-    for (const char c : segment)
+    namespace detail
     {
-        if (c == '~')
+        struct path_segment
         {
-            out += "~0";
-        }
-        else if (c == '/')
+            std::string_view key;
+            std::size_t index = 0;
+            bool is_index = false;
+        };
+
+        // 스레드마다 따로 — 여러 스레드가 동시에 직렬화해도 서로의 경로를 보지 않는다.
+        // 조각의 key 는 그 단계가 살아 있는 동안만 유효한 view 다(단계를 나가며 pop 된다).
+        inline thread_local std::vector<path_segment> active_path;
+
+        inline void append_escaped(std::string& out, std::string_view segment)
         {
-            out += "~1";
+            out += '/';
+            for (const char c : segment)
+            {
+                if (c == '~')
+                {
+                    out += "~0";
+                }
+                else if (c == '/')
+                {
+                    out += "~1";
+                }
+                else
+                {
+                    out += c;
+                }
+            }
         }
-        else
+
+        inline std::string current_path()
         {
-            out += c;
+            std::string result;
+            for (const path_segment& segment : active_path)
+            {
+                if (segment.is_index)
+                {
+                    result += '/';
+                    result += std::to_string(segment.index);
+                }
+                else
+                {
+                    append_escaped(result, segment.key);
+                }
+            }
+            return result;
         }
-    }
-}
+    } // namespace detail
 
-inline std::string current_path()
-{
-    std::string result;
-    for (const path_segment& segment : active_path)
+    class serialization_error : public std::runtime_error
     {
-        if (segment.is_index)
+      public:
+        // 경로는 지금 직렬화 중인 위치다.
+        explicit serialization_error(std::string message) : serialization_error(message, detail::current_path()) {}
+
+        serialization_error(std::string message, std::string path)
+            : std::runtime_error(compose(message, path)), message_(std::move(message)), path_(std::move(path))
         {
-            result += '/';
-            result += std::to_string(segment.index);
         }
-        else
+
+        // 경로를 뺀 메시지.
+        const std::string& message() const noexcept { return message_; }
+        const std::string& path() const noexcept { return path_; }
+
+        // 경로 앞에 조각 하나를 붙인 사본. segment 는 이스케이프 전 원문 키나 인덱스다.
+        serialization_error with_parent(std::string_view segment) const
         {
-            append_escaped(result, segment.key);
+            std::string prefix;
+            detail::append_escaped(prefix, segment);
+            return serialization_error(message_, prefix + path_);
         }
-    }
-    return result;
-}
-} // namespace detail
 
-class serialization_error : public std::runtime_error
-{
-  public:
-    // 경로는 지금 직렬화 중인 위치다.
-    explicit serialization_error(std::string message) : serialization_error(message, detail::current_path()) {}
+        // 경로 끝에 조각 하나를 붙인 사본 — 없는 필드처럼 "지금 위치의 자식"을 가리킬 때 쓴다.
+        serialization_error with_child(std::string_view segment) const
+        {
+            std::string path = path_;
+            detail::append_escaped(path, segment);
+            return serialization_error(message_, path);
+        }
 
-    serialization_error(std::string message, std::string path)
-        : std::runtime_error(compose(message, path)), message_(std::move(message)), path_(std::move(path))
-    {
-    }
+      private:
+        static std::string compose(const std::string& message, const std::string& path)
+        {
+            return path.empty() ? message : message + " (at " + path + ")";
+        }
 
-    // 경로를 뺀 메시지.
-    const std::string& message() const noexcept { return message_; }
-    const std::string& path() const noexcept { return path_; }
-
-    // 경로 앞에 조각 하나를 붙인 사본. segment 는 이스케이프 전 원문 키나 인덱스다.
-    serialization_error with_parent(std::string_view segment) const
-    {
-        std::string prefix;
-        detail::append_escaped(prefix, segment);
-        return serialization_error(message_, prefix + path_);
-    }
-
-    // 경로 끝에 조각 하나를 붙인 사본 — 없는 필드처럼 "지금 위치의 자식"을 가리킬 때 쓴다.
-    serialization_error with_child(std::string_view segment) const
-    {
-        std::string path = path_;
-        detail::append_escaped(path, segment);
-        return serialization_error(message_, path);
-    }
-
-  private:
-    static std::string compose(const std::string& message, const std::string& path)
-    {
-        return path.empty() ? message : message + " (at " + path + ")";
-    }
-
-    std::string message_;
-    std::string path_;
-};
+        std::string message_;
+        std::string path_;
+    };
 } // namespace reflgen

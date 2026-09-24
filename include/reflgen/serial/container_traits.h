@@ -36,12 +36,12 @@
 // 이것으로도 안 되는 타입(원소를 흩어 담는 구조 등)은 serializer<T> 를 직접 특수화한다.
 namespace reflgen
 {
-enum class container_kind : unsigned char
-{
-    sequence,
-    map,
-};
+    enum class container_kind : unsigned char
+    {
+        sequence,
+        map,
+    };
 
-template<class C>
-struct container_traits;
+    template<class C>
+    struct container_traits;
 } // namespace reflgen

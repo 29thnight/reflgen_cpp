@@ -25,51 +25,51 @@
 
 namespace reflgen
 {
-enum class value_kind : unsigned char
-{
-    null,
-    boolean,
-    integer,
-    floating,
-    string,
-    bytes,
-    array,
-    object,
-};
+    enum class value_kind : unsigned char
+    {
+        null,
+        boolean,
+        integer,
+        floating,
+        string,
+        bytes,
+        array,
+        object,
+    };
 
-class reader
-{
-  public:
-    virtual ~reader() = default;
+    class reader
+    {
+      public:
+        virtual ~reader() = default;
 
-    // 다음 값의 종류. 소비하지 않는다.
-    virtual value_kind peek() = 0;
+        // 다음 값의 종류. 소비하지 않는다.
+        virtual value_kind peek() = 0;
 
-    virtual void read_null() = 0;
-    virtual bool read_bool() = 0;
-    // 정수가 아니거나 범위를 넘으면 실패한다. read_float 는 정수도 받는다.
-    virtual std::int64_t read_int() = 0;
-    virtual std::uint64_t read_uint() = 0;
-    virtual double read_float() = 0;
-    virtual std::string read_string() = 0;
-    // 텍스트 포맷은 인코딩된 문자열(base64 등)을 풀어서 돌려준다.
-    virtual std::vector<std::byte> read_bytes() = 0;
+        virtual void read_null() = 0;
+        virtual bool read_bool() = 0;
+        // 정수가 아니거나 범위를 넘으면 실패한다. read_float 는 정수도 받는다.
+        virtual std::int64_t read_int() = 0;
+        virtual std::uint64_t read_uint() = 0;
+        virtual double read_float() = 0;
+        virtual std::string read_string() = 0;
+        // 텍스트 포맷은 인코딩된 문자열(base64 등)을 풀어서 돌려준다.
+        virtual std::vector<std::byte> read_bytes() = 0;
 
-    virtual std::optional<std::size_t> begin_array() = 0;
-    virtual bool next_element() = 0;
-    virtual void end_array() = 0;
+        virtual std::optional<std::size_t> begin_array() = 0;
+        virtual bool next_element() = 0;
+        virtual void end_array() = 0;
 
-    virtual std::optional<std::size_t> begin_object() = 0;
-    // 다음 키를 key 에 담는다. 버퍼를 재사용하려고 반환값이 아니라 출력 인자다.
-    virtual bool next_key(std::string& key) = 0;
-    virtual void end_object() = 0;
+        virtual std::optional<std::size_t> begin_object() = 0;
+        // 다음 키를 key 에 담는다. 버퍼를 재사용하려고 반환값이 아니라 출력 인자다.
+        virtual bool next_key(std::string& key) = 0;
+        virtual void end_object() = 0;
 
-    // 다음 값을 통째로 건너뛴다 — 모르는 키를 무시할 때 쓴다.
-    virtual void skip_value() = 0;
+        // 다음 값을 통째로 건너뛴다 — 모르는 키를 무시할 때 쓴다.
+        virtual void skip_value() = 0;
 
-  protected:
-    reader() = default;
-    reader(const reader&) = default;
-    reader& operator=(const reader&) = default;
-};
+      protected:
+        reader() = default;
+        reader(const reader&) = default;
+        reader& operator=(const reader&) = default;
+    };
 } // namespace reflgen

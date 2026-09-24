@@ -13,29 +13,29 @@
 
 namespace reflgen::binary
 {
-template<class T>
-std::vector<std::byte> to_bytes(const T& value, std::size_t max_depth = writer::default_max_depth)
-{
-    std::vector<std::byte> bytes;
-    writer out(bytes, max_depth);
-    serialize(out, value);
-    return bytes;
-}
+    template<class T>
+    std::vector<std::byte> to_bytes(const T& value, std::size_t max_depth = writer::default_max_depth)
+    {
+        std::vector<std::byte> bytes;
+        writer out(bytes, max_depth);
+        serialize(out, value);
+        return bytes;
+    }
 
-template<class T>
-void from_bytes(std::span<const std::byte> bytes, T& value, std::size_t max_depth = reader::default_max_depth)
-{
-    reader in(bytes, max_depth);
-    deserialize(in, value);
-    in.finish();
-}
+    template<class T>
+    void from_bytes(std::span<const std::byte> bytes, T& value, std::size_t max_depth = reader::default_max_depth)
+    {
+        reader in(bytes, max_depth);
+        deserialize(in, value);
+        in.finish();
+    }
 
-template<class T>
-    requires std::default_initializable<T>
-T from_bytes(std::span<const std::byte> bytes, std::size_t max_depth = reader::default_max_depth)
-{
-    T value{};
-    from_bytes(bytes, value, max_depth);
-    return value;
-}
+    template<class T>
+        requires std::default_initializable<T>
+    T from_bytes(std::span<const std::byte> bytes, std::size_t max_depth = reader::default_max_depth)
+    {
+        T value{};
+        from_bytes(bytes, value, max_depth);
+        return value;
+    }
 } // namespace reflgen::binary

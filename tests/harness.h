@@ -24,93 +24,93 @@
 
 namespace reflgen_test
 {
-struct test_case
-{
-    std::string_view name;
-    void (*body)();
-};
-
-std::vector<test_case>& registry();
-
-struct test
-{
-    test(std::string_view name, void (*body)()) { registry().push_back({name, body}); }
-};
-
-// require 가 테스트를 멈출 때 던지는 표지.
-struct abort_test
-{
-};
-
-void report_failure(std::string_view message, const std::source_location& where);
-
-template<class T>
-std::string describe(const T& value)
-{
-    if constexpr (requires(std::ostream& stream) { stream << value; })
+    struct test_case
     {
-        std::ostringstream stream;
-        stream << value;
-        return stream.str();
-    }
-    else
-    {
-        return "<unprintable>";
-    }
-}
+        std::string_view name;
+        void (*body)();
+    };
 
-inline void check(bool condition, std::string_view what = "condition is false",
-                  std::source_location where = std::source_location::current())
-{
-    if (!condition)
-    {
-        report_failure(what, where);
-    }
-}
+    std::vector<test_case>& registry();
 
-inline void require(bool condition, std::string_view what = "requirement is false",
-                    std::source_location where = std::source_location::current())
-{
-    if (!condition)
+    struct test
     {
-        report_failure(what, where);
-        throw abort_test{};
-    }
-}
+        test(std::string_view name, void (*body)()) { registry().push_back({name, body}); }
+    };
 
-template<class A, class B>
-void check_equal(const A& actual, const B& expected, std::source_location where = std::source_location::current())
-{
-    if (!(actual == expected))
+    // require 가 테스트를 멈출 때 던지는 표지.
+    struct abort_test
     {
-        report_failure("expected [" + describe(expected) + "] but got [" + describe(actual) + "]", where);
-    }
-}
+    };
 
-// 기대한 예외 타입이 나오고, 메시지(what)에 fragment 가 들어 있는지 본다.
-template<class Exception = reflgen::serialization_error, class F>
-void check_throws(F&& action, std::string_view fragment = {},
-                  std::source_location where = std::source_location::current())
-{
-    try
+    void report_failure(std::string_view message, const std::source_location& where);
+
+    template<class T>
+    std::string describe(const T& value)
     {
-        std::invoke(std::forward<F>(action));
-    }
-    catch (const Exception& error)
-    {
-        const std::string message = error.what();
-        if (!fragment.empty() && message.find(fragment) == std::string::npos)
+        if constexpr (requires(std::ostream& stream) { stream << value; })
         {
-            report_failure("exception message [" + message + "] does not contain [" + std::string(fragment) + "]",
-                           where);
+            std::ostringstream stream;
+            stream << value;
+            return stream.str();
         }
-        return;
+        else
+        {
+            return "<unprintable>";
+        }
     }
-    catch (const std::exception& error)
+
+    inline void check(bool condition, std::string_view what = "condition is false",
+                      std::source_location where = std::source_location::current())
     {
-        report_failure(std::string("unexpected exception type: ") + error.what(), where);
-        return;
+        if (!condition)
+        {
+            report_failure(what, where);
+        }
     }
-    report_failure("expected an exception, none was thrown", where);
-}
+
+    inline void require(bool condition, std::string_view what = "requirement is false",
+                        std::source_location where = std::source_location::current())
+    {
+        if (!condition)
+        {
+            report_failure(what, where);
+            throw abort_test{};
+        }
+    }
+
+    template<class A, class B>
+    void check_equal(const A& actual, const B& expected, std::source_location where = std::source_location::current())
+    {
+        if (!(actual == expected))
+        {
+            report_failure("expected [" + describe(expected) + "] but got [" + describe(actual) + "]", where);
+        }
+    }
+
+    // 기대한 예외 타입이 나오고, 메시지(what)에 fragment 가 들어 있는지 본다.
+    template<class Exception = reflgen::serialization_error, class F>
+    void check_throws(F&& action, std::string_view fragment = {},
+                      std::source_location where = std::source_location::current())
+    {
+        try
+        {
+            std::invoke(std::forward<F>(action));
+        }
+        catch (const Exception& error)
+        {
+            const std::string message = error.what();
+            if (!fragment.empty() && message.find(fragment) == std::string::npos)
+            {
+                report_failure("exception message [" + message + "] does not contain [" + std::string(fragment) + "]",
+                               where);
+            }
+            return;
+        }
+        catch (const std::exception& error)
+        {
+            report_failure(std::string("unexpected exception type: ") + error.what(), where);
+            return;
+        }
+        report_failure("expected an exception, none was thrown", where);
+    }
 } // namespace reflgen_test

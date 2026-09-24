@@ -18,70 +18,70 @@
 
 namespace reflgen::generator
 {
-enum class severity
-{
-    warning,
-    error,
-};
-
-struct diagnostic
-{
-    severity level = severity::error;
-    std::string code;
-    source_position position;
-    std::string message;
-};
-
-class diagnostics
-{
-  public:
-    void report(severity level, std::string_view code, source_position position, std::string message)
+    enum class severity
     {
-        entries_.push_back({level, std::string(code), std::move(position), std::move(message)});
-    }
+        warning,
+        error,
+    };
 
-    void error(std::string_view code, source_position position, std::string message)
+    struct diagnostic
     {
-        report(severity::error, code, std::move(position), std::move(message));
-    }
+        severity level = severity::error;
+        std::string code;
+        source_position position;
+        std::string message;
+    };
 
-    void warning(std::string_view code, source_position position, std::string message)
+    class diagnostics
     {
-        report(severity::warning, code, std::move(position), std::move(message));
-    }
-
-    bool has_errors() const noexcept
-    {
-        for (const diagnostic& entry : entries_)
+      public:
+        void report(severity level, std::string_view code, source_position position, std::string message)
         {
-            if (entry.level == severity::error)
+            entries_.push_back({level, std::string(code), std::move(position), std::move(message)});
+        }
+
+        void error(std::string_view code, source_position position, std::string message)
+        {
+            report(severity::error, code, std::move(position), std::move(message));
+        }
+
+        void warning(std::string_view code, source_position position, std::string message)
+        {
+            report(severity::warning, code, std::move(position), std::move(message));
+        }
+
+        bool has_errors() const noexcept
+        {
+            for (const diagnostic& entry : entries_)
             {
-                return true;
+                if (entry.level == severity::error)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        const std::vector<diagnostic>& entries() const noexcept { return entries_; }
+
+        void print(std::FILE* stream) const
+        {
+            for (const diagnostic& entry : entries_)
+            {
+                const char* level = entry.level == severity::error ? "error" : "warning";
+                if (entry.position.file.empty())
+                {
+                    std::fprintf(stream, "reflgen : %s %s: %s\n", level, entry.code.c_str(), entry.message.c_str());
+                }
+                else
+                {
+                    std::fprintf(stream, "%s(%u,%u): %s %s: %s\n", entry.position.file.c_str(), entry.position.line,
+                                 entry.position.column, level, entry.code.c_str(), entry.message.c_str());
+                }
             }
         }
-        return false;
-    }
 
-    const std::vector<diagnostic>& entries() const noexcept { return entries_; }
-
-    void print(std::FILE* stream) const
-    {
-        for (const diagnostic& entry : entries_)
-        {
-            const char* level = entry.level == severity::error ? "error" : "warning";
-            if (entry.position.file.empty())
-            {
-                std::fprintf(stream, "reflgen : %s %s: %s\n", level, entry.code.c_str(), entry.message.c_str());
-            }
-            else
-            {
-                std::fprintf(stream, "%s(%u,%u): %s %s: %s\n", entry.position.file.c_str(), entry.position.line,
-                             entry.position.column, level, entry.code.c_str(), entry.message.c_str());
-            }
-        }
-    }
-
-  private:
-    std::vector<diagnostic> entries_;
-};
+      private:
+        std::vector<diagnostic> entries_;
+    };
 } // namespace reflgen::generator

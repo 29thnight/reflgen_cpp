@@ -18,30 +18,30 @@
 
 namespace reflgen
 {
-class writer
-{
-  public:
-    virtual ~writer() = default;
+    class writer
+    {
+      public:
+        virtual ~writer() = default;
 
-    virtual void write_null() = 0;
-    virtual void write_bool(bool value) = 0;
-    virtual void write_int(std::int64_t value) = 0;
-    virtual void write_uint(std::uint64_t value) = 0;
-    virtual void write_float(double value) = 0;
-    virtual void write_string(std::string_view value) = 0;
-    virtual void write_bytes(std::span<const std::byte> value) = 0;
+        virtual void write_null() = 0;
+        virtual void write_bool(bool value) = 0;
+        virtual void write_int(std::int64_t value) = 0;
+        virtual void write_uint(std::uint64_t value) = 0;
+        virtual void write_float(double value) = 0;
+        virtual void write_string(std::string_view value) = 0;
+        virtual void write_bytes(std::span<const std::byte> value) = 0;
 
-    virtual void begin_array(std::size_t size) = 0;
-    virtual void end_array() = 0;
+        virtual void begin_array(std::size_t size) = 0;
+        virtual void end_array() = 0;
 
-    virtual void begin_object(std::size_t size) = 0;
-    virtual void write_key(std::string_view key) = 0;
-    virtual void end_object() = 0;
+        virtual void begin_object(std::size_t size) = 0;
+        virtual void write_key(std::string_view key) = 0;
+        virtual void end_object() = 0;
 
-  protected:
-    // 다형 기반 — 복사로 잘려 나가는 것(slicing)을 막으려 보호 영역에 둔다.
-    writer() = default;
-    writer(const writer&) = default;
-    writer& operator=(const writer&) = default;
-};
+      protected:
+        // 다형 기반 — 복사로 잘려 나가는 것(slicing)을 막으려 보호 영역에 둔다.
+        writer() = default;
+        writer(const writer&) = default;
+        writer& operator=(const writer&) = default;
+    };
 } // namespace reflgen

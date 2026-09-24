@@ -18,41 +18,41 @@
 
 namespace reflgen::detail
 {
-inline thread_local std::vector<const void*> active_indirections;
+    inline thread_local std::vector<const void*> active_indirections;
 
-// 같은 객체를 기반 클래스 포인터로 보든 파생 포인터로 보든 같은 주소가 되게, 다형 타입은
-// 가장 파생된 객체의 주소로 맞춘다(다중 상속에서는 기반마다 주소가 다르다).
-template<class T>
-const void* identity_address(const T& object) noexcept
-{
-    if constexpr (std::is_polymorphic_v<T>)
+    // 같은 객체를 기반 클래스 포인터로 보든 파생 포인터로 보든 같은 주소가 되게, 다형 타입은
+    // 가장 파생된 객체의 주소로 맞춘다(다중 상속에서는 기반마다 주소가 다르다).
+    template<class T>
+    const void* identity_address(const T& object) noexcept
     {
-        return dynamic_cast<const void*>(std::addressof(object));
-    }
-    else
-    {
-        return static_cast<const void*>(std::addressof(object));
-    }
-}
-
-class indirection_guard
-{
-  public:
-    explicit indirection_guard(const void* address)
-    {
-        for (const void* active : active_indirections)
+        if constexpr (std::is_polymorphic_v<T>)
         {
-            if (active == address)
-            {
-                throw serialization_error("cyclic reference: the object is already being serialized on this path");
-            }
+            return dynamic_cast<const void*>(std::addressof(object));
         }
-        active_indirections.push_back(address);
+        else
+        {
+            return static_cast<const void*>(std::addressof(object));
+        }
     }
 
-    ~indirection_guard() { active_indirections.pop_back(); }
+    class indirection_guard
+    {
+      public:
+        explicit indirection_guard(const void* address)
+        {
+            for (const void* active : active_indirections)
+            {
+                if (active == address)
+                {
+                    throw serialization_error("cyclic reference: the object is already being serialized on this path");
+                }
+            }
+            active_indirections.push_back(address);
+        }
 
-    indirection_guard(const indirection_guard&) = delete;
-    indirection_guard& operator=(const indirection_guard&) = delete;
-};
+        ~indirection_guard() { active_indirections.pop_back(); }
+
+        indirection_guard(const indirection_guard&) = delete;
+        indirection_guard& operator=(const indirection_guard&) = delete;
+    };
 } // namespace reflgen::detail

@@ -9,28 +9,28 @@
 
 namespace reflgen::detail
 {
-class path_scope
-{
-  public:
-    explicit path_scope(std::string_view key) { active_path.push_back({key, 0, false}); }
-    explicit path_scope(std::size_t index) { active_path.push_back({{}, index, true}); }
-    ~path_scope() { active_path.pop_back(); }
+    class path_scope
+    {
+      public:
+        explicit path_scope(std::string_view key) { active_path.push_back({key, 0, false}); }
+        explicit path_scope(std::size_t index) { active_path.push_back({{}, index, true}); }
+        ~path_scope() { active_path.pop_back(); }
 
-    path_scope(const path_scope&) = delete;
-    path_scope& operator=(const path_scope&) = delete;
-};
+        path_scope(const path_scope&) = delete;
+        path_scope& operator=(const path_scope&) = delete;
+    };
 
-template<class F>
-void with_path(std::string_view segment, F&& action)
-{
-    const path_scope scope(segment);
-    std::forward<F>(action)();
-}
+    template<class F>
+    void with_path(std::string_view segment, F&& action)
+    {
+        const path_scope scope(segment);
+        std::forward<F>(action)();
+    }
 
-template<class F>
-void with_index(std::size_t index, F&& action)
-{
-    const path_scope scope(index);
-    std::forward<F>(action)();
-}
+    template<class F>
+    void with_index(std::size_t index, F&& action)
+    {
+        const path_scope scope(index);
+        std::forward<F>(action)();
+    }
 } // namespace reflgen::detail

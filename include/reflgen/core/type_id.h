@@ -14,40 +14,40 @@
 
 namespace reflgen
 {
-class type_id
-{
-  public:
-    constexpr type_id() noexcept = default;
-    constexpr explicit type_id(std::uint64_t value) noexcept : value_(value) {}
-
-    constexpr std::uint64_t value() const noexcept { return value_; }
-
-    friend constexpr bool operator==(const type_id&, const type_id&) noexcept = default;
-    friend constexpr std::strong_ordering operator<=>(const type_id&, const type_id&) noexcept = default;
-
-  private:
-    std::uint64_t value_ = 0;
-};
-
-namespace detail
-{
-constexpr std::uint64_t fnv1a(std::string_view text) noexcept
-{
-    std::uint64_t hash = 14695981039346656037ull;
-    for (const char c : text)
+    class type_id
     {
-        hash ^= static_cast<unsigned char>(c);
-        hash *= 1099511628211ull;
-    }
-    return hash;
-}
-} // namespace detail
+      public:
+        constexpr type_id() noexcept = default;
+        constexpr explicit type_id(std::uint64_t value) noexcept : value_(value) {}
 
-template<class T>
-constexpr type_id type_id_of() noexcept
-{
-    return type_id{detail::fnv1a(type_name_of<T>())};
-}
+        constexpr std::uint64_t value() const noexcept { return value_; }
+
+        friend constexpr bool operator==(const type_id&, const type_id&) noexcept = default;
+        friend constexpr std::strong_ordering operator<=>(const type_id&, const type_id&) noexcept = default;
+
+      private:
+        std::uint64_t value_ = 0;
+    };
+
+    namespace detail
+    {
+        constexpr std::uint64_t fnv1a(std::string_view text) noexcept
+        {
+            std::uint64_t hash = 14695981039346656037ull;
+            for (const char c : text)
+            {
+                hash ^= static_cast<unsigned char>(c);
+                hash *= 1099511628211ull;
+            }
+            return hash;
+        }
+    } // namespace detail
+
+    template<class T>
+    constexpr type_id type_id_of() noexcept
+    {
+        return type_id{detail::fnv1a(type_name_of<T>())};
+    }
 } // namespace reflgen
 
 template<>

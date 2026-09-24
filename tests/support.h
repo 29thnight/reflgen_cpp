@@ -10,30 +10,31 @@
 
 namespace reflgen_test
 {
-template<class T>
-T json_round_trip(const T& value)
-{
-    return reflgen::json::from_string<T>(reflgen::json::to_string(value));
-}
+    template<class T>
+    T json_round_trip(const T& value)
+    {
+        return reflgen::json::from_string<T>(reflgen::json::to_string(value));
+    }
 
-template<class T>
-T binary_round_trip(const T& value)
-{
-    return reflgen::binary::from_bytes<T>(reflgen::binary::to_bytes(value));
-}
+    template<class T>
+    T binary_round_trip(const T& value)
+    {
+        return reflgen::binary::from_bytes<T>(reflgen::binary::to_bytes(value));
+    }
 
-template<class T>
-void check_round_trip(const T& value, std::source_location where = std::source_location::current())
-{
-    check_equal(json_round_trip(value), value, where);
-    check_equal(binary_round_trip(value), value, where);
-}
+    template<class T>
+    void check_round_trip(const T& value, std::source_location where = std::source_location::current())
+    {
+        check_equal(json_round_trip(value), value, where);
+        check_equal(binary_round_trip(value), value, where);
+    }
 
-// 비교 연산이 없거나 뜻이 다른 타입(valarray, priority_queue)용 — 비교 함수를 받는다.
-template<class T, class Equal>
-void check_round_trip_with(const T& value, Equal equal, std::source_location where = std::source_location::current())
-{
-    check(equal(json_round_trip(value), value), "json round trip differs", where);
-    check(equal(binary_round_trip(value), value), "binary round trip differs", where);
-}
+    // 비교 연산이 없거나 뜻이 다른 타입(valarray, priority_queue)용 — 비교 함수를 받는다.
+    template<class T, class Equal>
+    void check_round_trip_with(const T& value, Equal equal,
+                               std::source_location where = std::source_location::current())
+    {
+        check(equal(json_round_trip(value), value), "json round trip differs", where);
+        check(equal(binary_round_trip(value), value), "binary round trip differs", where);
+    }
 } // namespace reflgen_test

@@ -10,10 +10,10 @@
 
 namespace reflgen::generator
 {
-std::string emit_header(const header_model& header, const std::string& generated_path);
+    std::string emit_header(const header_model& header, const std::string& generated_path);
 
-std::string emit_module_header(const std::string& module_name);
+    std::string emit_module_header(const std::string& module_name);
 
-std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers,
-                               const std::vector<std::string>& generated_names);
+    std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers,
+                                   const std::vector<std::string>& generated_names);
 } // namespace reflgen::generator

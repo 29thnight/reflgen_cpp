@@ -16,69 +16,69 @@
 
 namespace reflgen
 {
-template<class T, class E>
-struct serializer<std::expected<T, E>>
-{
-    static void write(writer& out, const std::expected<T, E>& value)
+    template<class T, class E>
+    struct serializer<std::expected<T, E>>
     {
-        out.begin_object(1);
-        if (value.has_value())
+        static void write(writer& out, const std::expected<T, E>& value)
         {
-            out.write_key("value");
-            if constexpr (std::is_void_v<T>)
+            out.begin_object(1);
+            if (value.has_value())
             {
-                out.write_null();
+                out.write_key("value");
+                if constexpr (std::is_void_v<T>)
+                {
+                    out.write_null();
+                }
+                else
+                {
+                    serialize(out, *value);
+                }
             }
             else
             {
-                serialize(out, *value);
+                out.write_key("error");
+                serialize(out, value.error());
             }
+            out.end_object();
         }
-        else
-        {
-            out.write_key("error");
-            serialize(out, value.error());
-        }
-        out.end_object();
-    }
 
-    static void read(reader& in, std::expected<T, E>& value)
-    {
-        in.begin_object();
-        std::string key;
-        if (!in.next_key(key))
+        static void read(reader& in, std::expected<T, E>& value)
         {
-            throw serialization_error("expected an object with a \"value\" or \"error\" key");
-        }
-        if (key == "value")
-        {
-            if constexpr (std::is_void_v<T>)
+            in.begin_object();
+            std::string key;
+            if (!in.next_key(key))
             {
-                in.read_null();
-                value = std::expected<T, E>();
+                throw serialization_error("expected an object with a \"value\" or \"error\" key");
+            }
+            if (key == "value")
+            {
+                if constexpr (std::is_void_v<T>)
+                {
+                    in.read_null();
+                    value = std::expected<T, E>();
+                }
+                else
+                {
+                    T result{};
+                    deserialize(in, result);
+                    value = std::expected<T, E>(std::move(result));
+                }
+            }
+            else if (key == "error")
+            {
+                E error{};
+                deserialize(in, error);
+                value = std::expected<T, E>(std::unexpect, std::move(error));
             }
             else
             {
-                T result{};
-                deserialize(in, result);
-                value = std::expected<T, E>(std::move(result));
+                throw serialization_error("expected an object with a \"value\" or \"error\" key");
             }
+            if (in.next_key(key))
+            {
+                throw serialization_error("unexpected key '" + key + "' in an expected object");
+            }
+            in.end_object();
         }
-        else if (key == "error")
-        {
-            E error{};
-            deserialize(in, error);
-            value = std::expected<T, E>(std::unexpect, std::move(error));
-        }
-        else
-        {
-            throw serialization_error("expected an object with a \"value\" or \"error\" key");
-        }
-        if (in.next_key(key))
-        {
-            throw serialization_error("unexpected key '" + key + "' in an expected object");
-        }
-        in.end_object();
-    }
-};
+    };
 } // namespace reflgen

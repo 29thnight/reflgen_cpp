@@ -15,17 +15,17 @@ endif()
 
 # 줄 번호까지 확인한다 — VS Error List 가 원본으로 이동하는 근거다.
 set(expected
-    "bad_types\\.h\\(9,28\\): error RG0002: .*secret_.*friend struct reflgen::access"
-    "bad_types\\.h\\(16,9\\): warning RG0004: bit-field 'bits'"
-    "bad_types\\.h\\(17,10\\): warning RG0004: reference member 'reference'"
-    "bad_types\\.h\\(20,31\\): error RG0006: 'fire' is overloaded"
-    "bad_types\\.h\\(26,29\\): warning RG0005: class templates"
-    "bad_types\\.h\\(34,29\\): warning RG0005: .*anonymous namespace"
-    "bad_types\\.h\\(41,29\\): error RG0002: .*outer_secret"
-    "bad_types\\.h\\(53,28\\): warning RG0005: unions are not supported"
-    "bad_types\\.h\\(60,26\\): warning RG0004: constructors and destructors"
-    "bad_types\\.h\\(63,31\\): warning RG0005: member function template 'accept'"
-    "bad_types\\.h\\(65,47\\): warning RG0004: static data member 'limit'"
+    "bad_types\\.h\\(9,32\\): error RG0002: .*secret_.*friend struct reflgen::access"
+    "bad_types\\.h\\(16,13\\): warning RG0004: bit-field 'bits'"
+    "bad_types\\.h\\(17,14\\): warning RG0004: reference member 'reference'"
+    "bad_types\\.h\\(20,35\\): error RG0006: 'fire' is overloaded"
+    "bad_types\\.h\\(26,33\\): warning RG0005: class templates"
+    "bad_types\\.h\\(34,37\\): warning RG0005: .*anonymous namespace"
+    "bad_types\\.h\\(41,33\\): error RG0002: .*outer_secret"
+    "bad_types\\.h\\(53,32\\): warning RG0005: unions are not supported"
+    "bad_types\\.h\\(60,30\\): warning RG0004: constructors and destructors"
+    "bad_types\\.h\\(63,35\\): warning RG0005: member function template 'accept'"
+    "bad_types\\.h\\(65,51\\): warning RG0004: static data member 'limit'"
     "bad_types\\.h\\(1,1\\): warning RG0003: .*bad_types\\.reflgen\\.h")
 foreach(pattern IN LISTS expected)
     if(NOT output MATCHES "${pattern}")

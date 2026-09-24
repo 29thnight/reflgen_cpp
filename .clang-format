@@ -12,6 +12,10 @@ BasedOnStyle: Microsoft
 # Microsoft 기본은 Right(`T *p`)다. `T* p` 로 뒤집는다.
 PointerAlignment: Left
 
+# 네임스페이스 안은 중첩된 것까지 모두 들여쓴다(`namespace meta { namespace detail { … } }` 가 두 단계).
+# Microsoft 기본은 None 이지만 CreatorEngine 코드가 실제로 이렇게 쓴다 — 원 설정 파일에만 빠져 있었다.
+NamespaceIndentation: All
+
 # 주석이 한글이다. clang-format 은 한글의 2열 폭을 세지 못해 재배치를 허용하면
 # 주석이 어긋난 채 다시 접힌다.
 ReflowComments: false

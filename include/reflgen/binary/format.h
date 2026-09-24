@@ -19,17 +19,17 @@
 
 namespace reflgen::binary
 {
-enum class tag : std::uint8_t
-{
-    null = 0x00,
-    false_value = 0x01,
-    true_value = 0x02,
-    signed_integer = 0x03,
-    unsigned_integer = 0x04,
-    floating = 0x05,
-    string = 0x06,
-    bytes = 0x07,
-    array = 0x08,
-    object = 0x09,
-};
+    enum class tag : std::uint8_t
+    {
+        null = 0x00,
+        false_value = 0x01,
+        true_value = 0x02,
+        signed_integer = 0x03,
+        unsigned_integer = 0x04,
+        floating = 0x05,
+        string = 0x06,
+        bytes = 0x07,
+        array = 0x08,
+        object = 0x09,
+    };
 } // namespace reflgen::binary
