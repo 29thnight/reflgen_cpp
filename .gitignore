@@ -4,3 +4,7 @@
 /CMakeUserPresets.json
 *.profraw
 *.profdata
+
+# VS 확장(C#) 빌드 산출물
+/vs/**/bin/
+/vs/**/obj/

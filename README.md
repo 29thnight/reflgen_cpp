@@ -115,29 +115,29 @@ struct tooltip
 
 namespace game
 {
-constexpr int max_level = 99;
+    constexpr int max_level = 99;
 
-enum class [[reflgen::reflect]] element { fire, water, wind = 1 << 10 };   // 스캔 범위 밖 값도 정확한 표
+    enum class [[reflgen::reflect]] element { fire, water, wind = 1 << 10 };     // 스캔 범위 밖 값도 정확한 표
 
-class [[reflgen::reflect("game.player")]] player : public entity             // 인자 = 등록 키·다형 태그
-{
-    friend struct reflgen::access;                                           // private 멤버를 반영하려면
+    class [[reflgen::reflect("game.player")]] player : public entity               // 인자 = 등록 키·다형 태그
+    {
+        friend struct reflgen::access;                                             // private 멤버를 반영하려면
 
-  public:
-    static constexpr float max_hp = 999.0f;
+      public:
+        static constexpr float max_hp = 999.0f;
 
-    [[reflgen::range(1, max_level)]] int level = 1;                          // 이름공간의 이름도,
-    [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]] float hp = 100.0f; // 클래스 멤버 이름도 그대로
-    [[reflgen::ignore]] int cache = 0;                                       // 반영에서 제외
-    [[reflgen::transient]] int frame = 0;                                    // 반영하되 저장하지 않음
-    [[reflgen::reflect]] void level_up(int amount);                          // 메서드는 표시한 것만
+        [[reflgen::range(1, max_level)]] int level = 1;                            // 이름공간의 이름도,
+        [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]] float hp = 100.0f;   // 클래스 멤버 이름도 그대로
+        [[reflgen::ignore]] int cache = 0;                                         // 반영에서 제외
+        [[reflgen::transient]] int frame = 0;                                      // 반영하되 저장하지 않음
+        [[reflgen::reflect]] void level_up(int amount);                            // 메서드는 표시한 것만
 
-  private:
-    int secret_ = 7;                                                         // 표시가 없어도 반영된다
-};
+      private:
+        int secret_ = 7;                                                           // 표시가 없어도 반영된다
+    };
 } // namespace game
 
-#include "player.reflgen.h"                                                  // 끝에 생성 파일을 포함
+#include "player.reflgen.h"                                                        // 끝에 생성 파일을 포함
 ```
 
 ```cmake
@@ -165,7 +165,23 @@ reflgen_generate(my_game
 - **요구 사항**: libclang. Visual Studio 는 동봉본(`VC/Tools/Llvm`)을 자동으로 찾는다. 그 밖은
   `REFLGEN_LIBCLANG_DIR` 로 준다. C API header 는 `third_party/clang-c`(LLVM 22.1.3, Apache-2.0 WITH LLVM-exception).
 
-진단은 MSVC 형식(`file(line,col): error RG0002: …`)이라 VS Error List 에서 원본으로 바로 간다.
+진단은 MSVC 형식(`file(line,col): error RG0002: …`)이라 VS Error List 에서 원본으로 바로 간다. 생성기는 편집기
+자동완성에 쓸 attribute 카탈로그(`reflgen_<module>.attributes.tsv` — attribute 이름공간의 타입, 생성자 시그니처,
+선언 앞 주석)도 함께 내놓는다. `[[reflgen::reflect]]` 를 단 데이터 타입은 빠진다. `ATTRIBUTE_SCOPES` 의 이름공간에
+attribute 가 아닌 타입이 섞여 있으면 attribute 타입에 `[[reflgen::attribute]]` 를 단다 — 하나라도 달면 그 이름공간은
+단 것만 내보낸다.
+
+```cpp
+namespace editor
+{
+    struct [[reflgen::attribute]] tooltip
+    {
+        std::string_view text;
+
+        constexpr explicit tooltip(std::string_view value) : text(value) {}
+    };
+} // namespace editor
+```
 
 | 코드 | 뜻 |
 |---|---|
@@ -177,6 +193,62 @@ reflgen_generate(my_game
 | RG0006 | 오버로드된 메서드 |
 | RG0007 | 생성 파일 이름 충돌(같은 이름의 header 둘) |
 | RG0100 | Clang 이 보고한 컴파일 오류 |
+
+### MSBuild(.vcxproj) 연동
+
+프로젝트 끝(`Microsoft.Cpp.targets` 다음)이나 `Directory.Build.targets` 에서 가져오고, 반영할 header 에
+`ReflgenGenerate` 를 단다(아래 VS 확장이 저장할 때 자동으로 단다).
+
+```xml
+<Import Project="path\to\reflgen\msbuild\reflgen.targets" />
+<PropertyGroup>
+  <ReflgenExecutable>path\to\reflgen.exe</ReflgenExecutable>  <!-- 설치 배치(<prefix>\bin)면 생략 -->
+  <ReflgenAttributeScopes>editor</ReflgenAttributeScopes>
+</PropertyGroup>
+<ItemGroup>
+  <ClInclude Include="player.h"><ReflgenGenerate>true</ReflgenGenerate></ClInclude>
+</ItemGroup>
+```
+
+- 컴파일 전에 `ReflgenGenerate` target 이 돈다. 생성물은 `$(IntDir)reflgen\`(구성마다 따로)이고, include 경로에
+  자동으로 붙는다. 생성된 등록 함수(`reflgen_<module>.cpp`)도 컴파일 목록에 들어간다(미리 컴파일된 header 없이).
+- 파싱 설정은 프로젝트의 ClCompile 설정 그대로다 — include 경로, 전처리 정의, `LanguageStandard`, 시스템 include.
+- 입력 header, 그것이 include 하는 파일(지난 실행이 읽은 목록), 생성기, 설정 중 하나가 바뀔 때만 다시 돈다.
+- `C5030`(모르는 attribute) 경고를 끄고, ClangCL 도구 집합에는 `-Wno-unknown-attributes` 를 준다.
+
+| 속성 | 기본값 |
+|---|---|
+| `ReflgenExecutable` | 설치 배치의 `<prefix>\bin\reflgen.exe` |
+| `ReflgenIncludeDirectory` | 저장소 또는 설치 배치의 `include` |
+| `ReflgenModule` | 프로젝트 이름(식별자로 바꿈) — `reflgen::generated::register_<module>()` |
+| `ReflgenAttributeScopes` | 없음(`reflgen` 만) |
+| `ReflgenOutputDirectory` | `$(IntDir)reflgen\` |
+
+### Visual Studio 확장
+
+VS 2022(17.x)·2026(18.x), x64. `vs/` 를 빌드해 나온 `Reflgen.VisualStudio.vsix` 를 실행해 설치한다.
+
+```powershell
+& "<VS>\MSBuild\Current\Bin\amd64\MSBuild.exe" vs\src\Reflgen.VisualStudio\Reflgen.VisualStudio.csproj /restore /p:Configuration=Release
+dotnet test vs\tests\Reflgen.VisualStudio.Core.Tests
+```
+
+`reflgen.targets` 를 가져온 .vcxproj 에서:
+
+- **자동 include** — `[[reflgen::reflect]]` 가 있는 header 를 저장하면, `#include "<name>.reflgen.h"` 가 없을 때
+  파일 끝에 넣는다(저장되는 내용에 함께 들어간다).
+- **자동 등록** — 그 header 의 ClInclude 에 `ReflgenGenerate=true` 를 달고 프로젝트 파일을 저장한다.
+- **저장 시 생성** — 등록된 header 를 저장하면 그 프로젝트의 `ReflgenGenerate` 만 별도 MSBuild 프로세스로 돌려 RG
+  진단을 Error List 에 올린다. VS 빌드가 도는 중이면 건너뛴다(그 빌드가 생성한다). 과정은 Output 창 "reflgen".
+- **attribute 자동완성** — `[[` 나 `,` 뒤에서 attribute 이름공간을, `reflgen::` 뒤에서 attribute 와 생성자
+  시그니처·설명을 제안한다. 목록은 생성기의 카탈로그에서 오며(위 `[[reflgen::attribute]]` 참고), 아직 생성하지
+  않았으면 기본 attribute 만 나온다.
+- 설정: Tools > Options > reflgen > General(각 동작 켜고 끄기, MSBuild.exe 경로).
+
+| 코드 | 뜻 |
+|---|---|
+| RG0901 | header 가 반영을 선언했지만 프로젝트가 `reflgen.targets` 를 가져오지 않았다 |
+| RG0902 | 생성용 MSBuild 가 형식을 알아볼 수 없는 이유로 실패했다(Output 창에 전문) |
 
 ## 직렬화
 
@@ -286,7 +358,11 @@ reflgen::register_type<fireball>();                      // 다형 포인터로 
 ./scripts/test.ps1 -Presets msvc-cpp20   # 하나만
 ```
 
-CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한다. 테스트 하네스도 매크로 없이
+CTest 에는 생성기 end-to-end·진단·한글 경로 시험과, MSBuild 가 있으면 `.vcxproj` 연동 시험(생성·컴파일·실행 후
+다시 빌드해도 생성기가 돌지 않는지)이 들어 있다. VS 확장의 순수 로직은 `dotnet test` 로 따로 돈다.
+
+CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한다. `.vcxproj` 는 설치된
+`<prefix>/share/reflgen/msbuild/reflgen.targets` 를 가져온다. 테스트 하네스도 매크로 없이
 `std::source_location` 으로 만들었다([tests/harness.h](tests/harness.h)).
 
 ### 인코딩
@@ -310,6 +386,8 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 - `default_registry()` 는 모듈(DLL)마다 하나다.
 - 생성기는 클래스 template·멤버 함수 template·오버로드된 메서드·열거자 attribute·union 을 다루지 않는다(진단으로
   알린다). 이름 없는 매개변수는 빈 이름으로 남는다.
+- VS 확장은 .vcxproj 만 다룬다. CMake(폴더 열기) 프로젝트는 빌드할 때 `reflgen_generate()` 가 생성한다.
+  자동완성은 attribute 이름 자리에서만 나온다 — 인자 안은 C++ IntelliSense 의 몫이다.
 - attribute 인자의 이름을 감싸는 이름공간들에서 찾을 때는 `using namespace` 를 바깥부터 모두 여는 방식이라,
   바깥과 안쪽 이름공간에 같은 이름이 있으면 모호하다 — 그때는 한정해서 쓴다.
 - 자동 이름 추출은 `std::source_location` 이 템플릿 인자를 포함한 시그니처를 주는 구현에서 된다
@@ -322,9 +400,10 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 
 ## 로드맵
 
-1. **코드 생성기** — 첫 판 완료(CMake 연동). 남은 것: MSBuild(.props/.targets) 연동, 클래스 template,
-   오버로드된 메서드, 열거자 attribute.
-2. **Visual Studio 확장** — 저장 시 생성, Error List 진단, 어트리뷰트 자동완성, C++26 이행 codemod.
+1. **코드 생성기** — CMake·MSBuild 연동 완료. 남은 것: 클래스 template, 오버로드된 메서드, 열거자 attribute,
+   NuGet 패키지(.vcxproj 가 import 없이 쓰게).
+2. **Visual Studio 확장** — 첫 판 완료(저장 시 생성·Error List·자동완성·자동 등록). 남은 것: CMake(폴더 열기)
+   지원, C++26 이행 codemod, Marketplace 배포.
 3. **C++26 네이티브 백엔드** — `std::meta::nonstatic_data_members_of` + `annotations_of` 로 `schema_of<T>`
    를 만든다. 질의·직렬화 API 는 바뀌지 않는다.
 4. GCC·libc++ CI.

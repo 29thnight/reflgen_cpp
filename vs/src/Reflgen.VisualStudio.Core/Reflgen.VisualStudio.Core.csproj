@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- VS 확장의 순수 로직 — VS SDK 없이 시험할 수 있게 따로 둔다. VS 안(.NET Framework)과 시험(.NET)
+       양쪽에서 쓰므로 netstandard2.0 이다. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Reflgen.VisualStudio</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

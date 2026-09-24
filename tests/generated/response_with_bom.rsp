@@ -1,0 +1,7 @@
+﻿--module
+from_response_file
+--attribute-scope
+generated_tests
+"tests/generated/game_types.h"
+--
+-Iinclude

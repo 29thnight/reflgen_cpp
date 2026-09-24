@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- 프로세스의 ANSI 코드 페이지를 UTF-8 로 둔다(Windows 10 1903 이상). 생성기는 경로를 UTF-8 std::string 으로
+     다루는데, 그러지 않으면 argv·std::filesystem 변환이 시스템 코드 페이지(한국어 Windows 는 949)를 거쳐 한글
+     경로에서 "No mapping for the Unicode character" 로 실패한다. libclang 은 원래 char* 경로를 UTF-8 로 받는다. -->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

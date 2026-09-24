@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Reflgen.VisualStudio.Core/Reflgen.VisualStudio.Core.csproj" />
+    <Project Path="src/Reflgen.VisualStudio/Reflgen.VisualStudio.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Reflgen.VisualStudio.Core.Tests/Reflgen.VisualStudio.Core.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -105,6 +105,38 @@ if(REFLGEN_BUILD_TESTS)
                 "-DINCLUDE=${PROJECT_SOURCE_DIR}/include"
                 "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/reflgen/diagnostics"
                 -P "${PROJECT_SOURCE_DIR}/tests/generated/check_diagnostics.cmake")
+
+        # 편집기 자동완성용 attribute 카탈로그.
+        add_test(NAME reflgen_generator_catalog
+            COMMAND "${CMAKE_COMMAND}"
+                "-DCATALOG=${CMAKE_CURRENT_BINARY_DIR}/reflgen/reflgen_generated_tests/$<CONFIG>/reflgen_generated_tests.attributes.tsv"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_catalog.cmake")
+
+        # 손으로 쓴 응답 파일 — UTF-8 BOM 과 따옴표 친 경로를 받아야 한다(메모장·PowerShell 이 BOM 을 붙인다).
+        add_test(NAME reflgen_generator_response_file
+            COMMAND reflgen_cli --output "${CMAKE_CURRENT_BINARY_DIR}/reflgen/response_file"
+                    "@tests/generated/response_with_bom.rsp"
+            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
+        # 한글·공백이 든 경로.
+        add_test(NAME reflgen_generator_unicode_paths
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DHEADER=${PROJECT_SOURCE_DIR}/tests/generated/game_types.h"
+                "-DINCLUDE=${PROJECT_SOURCE_DIR}/include"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/unicode"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_unicode_paths.cmake")
+
+        # MSBuild 연동 — msbuild/reflgen.targets 를 가져온 .vcxproj 가 생성·컴파일·등록하고 최신 상태를 지키는가.
+        find_program(REFLGEN_MSBUILD_EXECUTABLE NAMES MSBuild msbuild)
+        if(WIN32 AND REFLGEN_MSBUILD_EXECUTABLE)
+            add_test(NAME reflgen_msbuild_integration
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DMSBUILD=${REFLGEN_MSBUILD_EXECUTABLE}"
+                    "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/msbuild_test"
+                    -P "${PROJECT_SOURCE_DIR}/tests/msbuild/run_msbuild_test.cmake")
+        endif()
     endif()
 endif()
 
@@ -119,6 +151,8 @@ include(CMakePackageConfigHelpers)
 install(TARGETS reflgen EXPORT reflgen-targets)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES cmake/reflgen.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/reflgen)
+# .vcxproj 용 — <prefix>/share/reflgen/msbuild/reflgen.targets 가 <prefix>/include 와 <prefix>/bin 을 찾는다.
+install(FILES msbuild/reflgen.targets DESTINATION ${CMAKE_INSTALL_DATADIR}/reflgen/msbuild)
 if(TARGET reflgen_cli)
     install(TARGETS reflgen_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(REFLGEN_LIBCLANG_DLL)

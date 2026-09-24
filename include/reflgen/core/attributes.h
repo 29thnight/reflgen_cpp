@@ -19,118 +19,119 @@
 
 namespace reflgen
 {
-// 사람이 읽는 이름 (인스펙터 라벨 등).
-struct display_name
-{
-    std::string_view value;
-
-    constexpr explicit display_name(std::string_view text) noexcept : value(text) {}
-};
-
-// 설명문 (툴팁 등).
-struct description
-{
-    std::string_view value;
-
-    constexpr explicit description(std::string_view text) noexcept : value(text) {}
-};
-
-// 값의 허용 구간. 직렬화는 검사하지 않는다 — 편집기·검증기가 소비하는 표기다.
-template<class T>
-struct range
-{
-    T min;
-    T max;
-
-    constexpr range(T min_value, T max_value) noexcept : min(min_value), max(max_value) {}
-};
-
-// 직렬화 키 이름을 멤버 이름과 다르게 둔다. 멤버 이름을 바꿔도 파일 호환을
-// 유지하려면 이것으로 옛 이름을 못 박는다.
-struct serialized_name
-{
-    std::string_view value;
-
-    constexpr explicit serialized_name(std::string_view text) noexcept : value(text) {}
-};
-
-// 직렬화에서 제외한다. 캐시·런타임 핸들처럼 저장할 이유가 없는 필드에 붙인다.
-struct transient
-{
-};
-
-// 역직렬화 입력에 반드시 있어야 한다. 기본은 "없으면 기존 값을 유지"다 — 필드를
-// 새로 더해도 옛 파일이 읽히게 하려는 기본값이라 뒤집지 않는다.
-struct required
-{
-};
-
-// 편집기 표시 힌트. 직렬화와 무관하다.
-struct hidden
-{
-};
-
-struct readonly
-{
-};
-
-// 런타임 속성 한 항목 — 타입 식별자와 정본 값의 주소. 값은 schema_of<T> 안(정적
-// 저장소)에 있으므로 주소는 프로그램 수명 동안 유효하다.
-class attribute_ref
-{
-  public:
-    constexpr attribute_ref(type_id type, const void* value) noexcept : type_(type), value_(value) {}
-
-    constexpr type_id type() const noexcept { return type_; }
-    constexpr const void* data() const noexcept { return value_; }
-
-    template<class A>
-    constexpr const A* get_if() const noexcept
+    // 사람이 읽는 이름 (인스펙터 라벨 등).
+    struct display_name
     {
-        return type_ == type_id_of<A>() ? static_cast<const A*>(value_) : nullptr;
-    }
+        std::string_view value;
 
-  private:
-    type_id type_;
-    const void* value_;
-};
+        constexpr explicit display_name(std::string_view text) noexcept : value(text) {}
+    };
 
-// 필드·타입에 붙은 속성들의 런타임 뷰.
-class attribute_list
-{
-  public:
-    using value_type = attribute_ref;
-    using iterator = std::span<const attribute_ref>::iterator;
-
-    constexpr attribute_list() noexcept = default;
-    constexpr explicit attribute_list(std::span<const attribute_ref> items) noexcept : items_(items) {}
-
-    constexpr iterator begin() const noexcept { return items_.begin(); }
-    constexpr iterator end() const noexcept { return items_.end(); }
-    constexpr std::size_t size() const noexcept { return items_.size(); }
-    constexpr bool empty() const noexcept { return items_.empty(); }
-
-    // 같은 타입이 여럿 붙었으면 첫 번째를 돌려준다.
-    template<class A>
-    constexpr const A* find() const noexcept
+    // 설명문 (툴팁 등).
+    struct description
     {
-        for (const attribute_ref& item : items_)
+        std::string_view value;
+
+        constexpr explicit description(std::string_view text) noexcept : value(text) {}
+    };
+
+    // 값의 허용 구간. 직렬화는 검사하지 않는다 — 편집기·검증기가 소비하는 표기다.
+    template<class T>
+    struct range
+    {
+        T min;
+        T max;
+
+        constexpr range(T min_value, T max_value) noexcept : min(min_value), max(max_value) {}
+    };
+
+    // 직렬화 키 이름을 멤버 이름과 다르게 둔다. 멤버 이름을 바꿔도 파일 호환을
+    // 유지하려면 이것으로 옛 이름을 못 박는다.
+    struct serialized_name
+    {
+        std::string_view value;
+
+        constexpr explicit serialized_name(std::string_view text) noexcept : value(text) {}
+    };
+
+    // 직렬화에서 제외한다. 캐시·런타임 핸들처럼 저장할 이유가 없는 필드에 붙인다.
+    struct transient
+    {
+    };
+
+    // 역직렬화 입력에 반드시 있어야 한다. 기본은 "없으면 기존 값을 유지"다 — 필드를
+    // 새로 더해도 옛 파일이 읽히게 하려는 기본값이라 뒤집지 않는다.
+    struct required
+    {
+    };
+
+    // 편집기 표시 힌트. 직렬화와 무관하다.
+    struct hidden
+    {
+    };
+
+    // 편집기에서 읽기 전용으로 보인다. 직렬화와 무관하다.
+    struct readonly
+    {
+    };
+
+    // 런타임 속성 한 항목 — 타입 식별자와 정본 값의 주소. 값은 schema_of<T> 안(정적
+    // 저장소)에 있으므로 주소는 프로그램 수명 동안 유효하다.
+    class attribute_ref
+    {
+      public:
+        constexpr attribute_ref(type_id type, const void* value) noexcept : type_(type), value_(value) {}
+
+        constexpr type_id type() const noexcept { return type_; }
+        constexpr const void* data() const noexcept { return value_; }
+
+        template<class A>
+        constexpr const A* get_if() const noexcept
         {
-            if (const A* value = item.get_if<A>())
-            {
-                return value;
-            }
+            return type_ == type_id_of<A>() ? static_cast<const A*>(value_) : nullptr;
         }
-        return nullptr;
-    }
 
-    template<class A>
-    constexpr bool contains() const noexcept
+      private:
+        type_id type_;
+        const void* value_;
+    };
+
+    // 필드·타입에 붙은 속성들의 런타임 뷰.
+    class attribute_list
     {
-        return find<A>() != nullptr;
-    }
+      public:
+        using value_type = attribute_ref;
+        using iterator = std::span<const attribute_ref>::iterator;
 
-  private:
-    std::span<const attribute_ref> items_;
-};
+        constexpr attribute_list() noexcept = default;
+        constexpr explicit attribute_list(std::span<const attribute_ref> items) noexcept : items_(items) {}
+
+        constexpr iterator begin() const noexcept { return items_.begin(); }
+        constexpr iterator end() const noexcept { return items_.end(); }
+        constexpr std::size_t size() const noexcept { return items_.size(); }
+        constexpr bool empty() const noexcept { return items_.empty(); }
+
+        // 같은 타입이 여럿 붙었으면 첫 번째를 돌려준다.
+        template<class A>
+        constexpr const A* find() const noexcept
+        {
+            for (const attribute_ref& item : items_)
+            {
+                if (const A* value = item.get_if<A>())
+                {
+                    return value;
+                }
+            }
+            return nullptr;
+        }
+
+        template<class A>
+        constexpr bool contains() const noexcept
+        {
+            return find<A>() != nullptr;
+        }
+
+      private:
+        std::span<const attribute_ref> items_;
+    };
 } // namespace reflgen

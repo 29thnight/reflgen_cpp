@@ -32,12 +32,17 @@ target_include_directories(reflgen_generator_core PUBLIC src)
 target_compile_features(reflgen_generator_core PUBLIC cxx_std_20)
 
 add_executable(reflgen_cli
+    src/catalog.cpp
     src/clang_api.cpp
     src/class_scope.cpp
     src/emit.cpp
     src/extract.cpp
     src/main.cpp)
 set_target_properties(reflgen_cli PROPERTIES OUTPUT_NAME reflgen)
+if(WIN32)
+    # 경로를 UTF-8 로 다루게 한다(매니페스트 머리말 참고). MSVC 계열 링커가 소스 목록의 .manifest 를 넣는다.
+    target_sources(reflgen_cli PRIVATE src/reflgen.manifest)
+endif()
 target_include_directories(reflgen_cli SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/third_party/clang-c/include")
 target_link_libraries(reflgen_cli PRIVATE reflgen_generator_core "${REFLGEN_LIBCLANG}")
 

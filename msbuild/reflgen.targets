@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  reflgen.targets — .vcxproj 에서 [[reflgen::…]] attribute 로 reflection 코드를 만든다.
+
+  프로젝트 끝(Microsoft.Cpp.targets 다음)이나 Directory.Build.targets 에서 가져온다:
+    <Import Project="path\to\reflgen\msbuild\reflgen.targets" />
+
+  반영할 header 는 ClInclude 항목에 ReflgenGenerate 를 단다. VS 확장(reflgen for Visual Studio)은
+  [[reflgen::reflect]] 가 있는 header 를 저장할 때 이것을 자동으로 단다.
+    <ClInclude Include="player.h"><ReflgenGenerate>true</ReflgenGenerate></ClInclude>
+
+  속성(모두 선택):
+    ReflgenExecutable        reflgen.exe 경로. 설치 배치(<prefix>\bin)면 자동으로 찾는다.
+    ReflgenIncludeDirectory  reflgen/reflgen.h 가 있는 include 디렉터리. 자동으로 찾는다.
+    ReflgenModule            등록 함수 reflgen::generated::register_<module>() 의 이름. 기본은 프로젝트 이름.
+    ReflgenAttributeScopes   reflgen 외에 스키마로 옮길 attribute 이름공간(';' 로 가른다).
+    ReflgenOutputDirectory   생성물 위치. 기본은 $(IntDir)reflgen\ — 구성마다 따로다.
+-->
+<Project>
+  <PropertyGroup>
+    <!-- VS 확장이 이 프로젝트가 reflgen 을 쓰는지 알아보는 표지. -->
+    <ReflgenTargetsImported>true</ReflgenTargetsImported>
+
+    <!-- 저장소 배치(msbuild\ 옆의 include\)와 설치 배치(<prefix>\share\reflgen\msbuild\) 둘 다 찾는다. -->
+    <ReflgenIncludeDirectory Condition="'$(ReflgenIncludeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)..\include\reflgen\reflgen.h')">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\include'))</ReflgenIncludeDirectory>
+    <ReflgenIncludeDirectory Condition="'$(ReflgenIncludeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\include\reflgen\reflgen.h')">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\..\..\include'))</ReflgenIncludeDirectory>
+    <ReflgenExecutable Condition="'$(ReflgenExecutable)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\bin\reflgen.exe')">$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)..\..\..\bin\reflgen.exe'))</ReflgenExecutable>
+
+    <!-- module 이름은 C++ 식별자여야 한다(등록 함수 이름이 된다). -->
+    <ReflgenModule Condition="'$(ReflgenModule)' == ''">$([System.Text.RegularExpressions.Regex]::Replace('$(ProjectName)', '[^A-Za-z0-9_]', '_'))</ReflgenModule>
+    <ReflgenModule Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(ReflgenModule)', '^[0-9]'))">_$(ReflgenModule)</ReflgenModule>
+
+    <!-- IntDir 가 상대 경로든 절대 경로든 프로젝트 기준으로 푼다. IntDir 가 아직 없으면(Microsoft.Cpp.targets
+         앞, 예컨대 Directory.Build.props 에서 가져왔으면) 생성물이 프로젝트 폴더로 새므로 빌드 때 막는다. -->
+    <_ReflgenImportedTooEarly Condition="'$(ReflgenOutputDirectory)' == '' and '$(IntDir)' == ''">true</_ReflgenImportedTooEarly>
+    <ReflgenOutputDirectory Condition="'$(ReflgenOutputDirectory)' == ''">$([MSBuild]::NormalizeDirectory('$(ProjectDir)', '$(IntDir)', 'reflgen'))</ReflgenOutputDirectory>
+    <ReflgenOutputDirectory>$([MSBuild]::EnsureTrailingSlash('$(ReflgenOutputDirectory)'))</ReflgenOutputDirectory>
+
+    <!-- VS 확장이 자동완성에 읽는 카탈로그. -->
+    <ReflgenCatalogFile>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).attributes.tsv</ReflgenCatalogFile>
+
+    <_ReflgenModuleSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).cpp</_ReflgenModuleSource>
+    <_ReflgenArgumentsFile>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).args</_ReflgenArgumentsFile>
+    <_ReflgenResponseFile>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).rsp</_ReflgenResponseFile>
+    <_ReflgenDependencyList>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).dependencies</_ReflgenDependencyList>
+    <_ReflgenStamp>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).stamp</_ReflgenStamp>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(ReflgenOutputDirectory);$(ReflgenIncludeDirectory)</AdditionalIncludeDirectories>
+      <!-- [[reflgen::…]] 는 컴파일러에게 모르는 attribute 다(C5030, -Wunknown-attributes). -->
+      <DisableSpecificWarnings>%(DisableSpecificWarnings);5030</DisableSpecificWarnings>
+      <AdditionalOptions Condition="'$(PlatformToolset)' == 'ClangCL'">%(AdditionalOptions) -Wno-unknown-attributes</AdditionalOptions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <!-- 컴파일 전에 돈다. VS 확장은 저장할 때 이 target 만 따로 부른다. IntelliSense 의 design-time
+       build 에서는 돌지 않는다. -->
+  <Target Name="ReflgenGenerate"
+          BeforeTargets="ClCompile"
+          Condition="'$(DesignTimeBuild)' != 'true'"
+          DependsOnTargets="_ReflgenComputeInputs;_ReflgenWriteArguments;_ReflgenRun" />
+
+  <Target Name="_ReflgenComputeInputs">
+    <Error Condition="'$(_ReflgenImportedTooEarly)' == 'true'"
+           Code="RG0001"
+           Text="reflgen: reflgen.targets was imported before IntDir is defined; import it after Microsoft.Cpp.targets (or from Directory.Build.targets), or set ReflgenOutputDirectory" />
+    <ItemGroup>
+      <_ReflgenHeader Include="@(ClInclude->WithMetadataValue('ReflgenGenerate', 'true')->'%(FullPath)')" />
+    </ItemGroup>
+
+    <!-- 생성된 등록 함수도 컴파일한다. 미리 컴파일된 header 는 쓰지 않는다(생성 파일은 pch.h 를 모른다).
+         강제 include(/FI)는 남긴다 — 사용자 header 가 그것이 주는 설정에 기댈 수 있다. -->
+    <ItemGroup Condition="'@(_ReflgenHeader)' != ''">
+      <ClCompile Include="$(_ReflgenModuleSource)">
+        <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      </ClCompile>
+      <!-- 이 항목은 프로젝트의 ClCompile 설정(include 경로·정의·표준)을 그대로 물려받는다 —
+           생성기의 파싱에도 같은 설정을 준다. -->
+      <_ReflgenCompile Include="@(ClCompile->WithMetadataValue('Identity', '$(_ReflgenModuleSource)'))" />
+    </ItemGroup>
+
+    <!-- 지난 실행이 읽은 파일들 — header 가 include 하는 파일이 바뀌어도 다시 생성하게 한다. -->
+    <ReadLinesFromFile File="$(_ReflgenDependencyList)" Condition="'@(_ReflgenHeader)' != '' and Exists('$(_ReflgenDependencyList)')">
+      <Output TaskParameter="Lines" ItemName="_ReflgenDependency" />
+    </ReadLinesFromFile>
+  </Target>
+
+  <Target Name="_ReflgenWriteArguments" Condition="'@(_ReflgenHeader)' != ''">
+    <PropertyGroup>
+      <_ReflgenLanguageStandard>@(_ReflgenCompile->'%(LanguageStandard)')</_ReflgenLanguageStandard>
+      <_ReflgenStandardArgument Condition="'$(_ReflgenLanguageStandard)' == 'stdcpp17'">-std=c++17</_ReflgenStandardArgument>
+      <_ReflgenStandardArgument Condition="'$(_ReflgenLanguageStandard)' == 'stdcpp20'">-std=c++20</_ReflgenStandardArgument>
+      <_ReflgenStandardArgument Condition="$(_ReflgenLanguageStandard.StartsWith('stdcpp23'))">-std=c++23</_ReflgenStandardArgument>
+      <_ReflgenStandardArgument Condition="'$(_ReflgenLanguageStandard)' == 'stdcpplatest'">-std=c++2c</_ReflgenStandardArgument>
+      <!-- 지정하지 않으면 생성기의 기본(C++20)으로 파싱한다. MSVC 의 기본(C++14)으로는 reflgen header 가
+           컴파일되지 않으므로 C++20 보다 낮게 볼 이유가 없다. -->
+      <!-- 메타데이터 변환 결과는 ';' 가 있어도 항목 하나로 남는다 — 속성을 거쳐야 목록으로 나뉜다. -->
+      <_ReflgenIncludeText>@(_ReflgenCompile->'%(AdditionalIncludeDirectories)')</_ReflgenIncludeText>
+      <_ReflgenSystemText>@(_ReflgenCompile->'%(ExternalIncludeDirectories)');$(ExternalIncludePath);$(IncludePath)</_ReflgenSystemText>
+      <_ReflgenDefinitionText>@(_ReflgenCompile->'%(PreprocessorDefinitions)')</_ReflgenDefinitionText>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ReflgenIncludeDirectory Include="$(_ReflgenIncludeText)" />
+      <_ReflgenSystemDirectory Include="$(_ReflgenSystemText)" />
+      <_ReflgenDefinition Include="$(_ReflgenDefinitionText)" />
+
+      <!-- 한 줄에 clang 인자 하나 — 공백이 든 경로·정의도 따옴표 없이 넘어간다. 경로는 겹치는 것을
+           뺀다(Distinct 는 대소문자를 가리지 않으므로 정의에는 쓰지 않는다). -->
+      <_ReflgenClangArgument Include="@(_ReflgenIncludeDirectory->Distinct()->'-I%(FullPath)')" />
+      <_ReflgenClangArgument Include="@(_ReflgenSystemDirectory->Distinct()->'-isystem%(FullPath)')" />
+      <_ReflgenClangArgument Include="@(_ReflgenDefinition->'-D%(Identity)')" />
+      <_ReflgenClangArgument Include="$(_ReflgenStandardArgument)" />
+
+      <_ReflgenAttributeScope Include="$(ReflgenAttributeScopes)" />
+
+      <!-- 응답 파일 — 한 줄에 생성기 인자 하나. header 가 많아도 명령줄 길이 제한에 걸리지 않는다. -->
+      <_ReflgenCommandLine Include="--module;$(ReflgenModule)" />
+      <_ReflgenCommandLine Include="--output;$(ReflgenOutputDirectory.TrimEnd('\'))" />
+      <_ReflgenCommandLine Include="--clang-args-file;$(_ReflgenArgumentsFile)" />
+      <_ReflgenCommandLine Include="--dependency-list;$(_ReflgenDependencyList)" />
+    </ItemGroup>
+    <PropertyGroup>
+      <_ReflgenScopeText>@(_ReflgenAttributeScope->'--attribute-scope;%(Identity)')</_ReflgenScopeText>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ReflgenCommandLine Include="$(_ReflgenScopeText)" />
+      <_ReflgenCommandLine Include="@(_ReflgenHeader)" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(ReflgenOutputDirectory)" />
+    <!-- 내용이 같으면 쓰지 않는다 — 시각이 바뀌면 다음 빌드가 다시 생성한다. -->
+    <WriteLinesToFile File="$(_ReflgenArgumentsFile)" Lines="@(_ReflgenClangArgument)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <WriteLinesToFile File="$(_ReflgenResponseFile)" Lines="@(_ReflgenCommandLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- stamp 로 최신 여부를 가린다. 생성기는 내용이 같으면 생성 파일을 다시 쓰지 않으므로(컴파일을
+       다시 부르지 않으려는 것) 생성 파일의 시각으로는 가릴 수 없다. -->
+  <Target Name="_ReflgenRun"
+          Condition="'@(_ReflgenHeader)' != ''"
+          Inputs="@(_ReflgenHeader);@(_ReflgenDependency);$(ReflgenExecutable);$(_ReflgenArgumentsFile);$(_ReflgenResponseFile)"
+          Outputs="$(_ReflgenStamp)">
+    <Error Condition="'$(ReflgenExecutable)' == '' or !Exists('$(ReflgenExecutable)')"
+           Code="RG0001"
+           Text="reflgen: the generator was not found; set ReflgenExecutable to the path of reflgen.exe (now '$(ReflgenExecutable)')" />
+    <Message Importance="high" Text="reflgen: generating reflection for $(ProjectName) ($(ReflgenModule))" />
+    <!-- 진단은 MSVC 형식이라 Exec 가 그대로 오류·경고로 올린다(Error List 로 간다). 생성기는 UTF-8 로
+         쓴다 — 지정하지 않으면 Exec 가 콘솔 코드 페이지(한국어 Windows 는 949)로 읽어 한글 경로가 깨진다. -->
+    <Exec Command="&quot;$(ReflgenExecutable)&quot; @&quot;$(_ReflgenResponseFile)&quot;" StdOutEncoding="utf-8" StdErrEncoding="utf-8" />
+    <Touch Files="$(_ReflgenStamp)" AlwaysCreate="true" />
+    <ItemGroup>
+      <FileWrites Include="$(ReflgenOutputDirectory)*.*" />
+    </ItemGroup>
+  </Target>
+</Project>

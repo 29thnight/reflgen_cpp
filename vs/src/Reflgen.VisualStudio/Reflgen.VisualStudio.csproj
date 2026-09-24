@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- VS 확장(VSIX). VS 안에서 돌므로 .NET Framework 이고, VS SDK 빌드 도구가 .NET Framework 태스크라
+       dotnet build 가 아니라 VS 의 MSBuild 로 빌드한다:
+         MSBuild vs\src\Reflgen.VisualStudio\Reflgen.VisualStudio.csproj /restore /p:Configuration=Release -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Reflgen.VisualStudio</RootNamespace>
+    <AssemblyName>Reflgen.VisualStudio</AssemblyName>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- SDK 스타일 프로젝트에서 VSIX 패키징 target 을 가져오게 한다(없으면 dll 만 나오고 .vsix 가 없다). -->
+    <VSSDKBuildToolsAutoSetup>true</VSSDKBuildToolsAutoSetup>
+    <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <UseCodebase>true</UseCodebase>
+    <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
+    <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
+    <IncludeDebugSymbolsInLocalVSIXDeployment>false</IncludeDebugSymbolsInLocalVSIXDeployment>
+    <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
+    <CopyOutputSymbolsToOutputDirectory>true</CopyOutputSymbolsToOutputDirectory>
+    <!-- 빌드할 때 실험 인스턴스에 설치하지 않는다. 디버깅할 때만 /p:DeployExtension=true 로 켠다. -->
+    <DeployExtension Condition="'$(DeployExtension)' == ''">false</DeployExtension>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.9.820" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Reflgen.VisualStudio.Core\Reflgen.VisualStudio.Core.csproj" />
+    <!-- MEF([Export]) — .NET Framework 어셈블리라 NuGet 이 아니라 참조로 건다. -->
+    <Reference Include="System.ComponentModel.Composition" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- record 에 필요한 형식 — 어셈블리마다 internal 로 둬야 해서 Core 의 것을 함께 컴파일한다. -->
+    <Compile Include="..\Reflgen.VisualStudio.Core\IsExternalInit.cs" Link="IsExternalInit.cs" />
+    <!-- 확장자 없는 원본은 VSIX 안에서 원래 이름으로 들어가므로 대상 경로를 적어 준다. -->
+    <Content Include="..\..\..\LICENSE" Link="LICENSE.txt" TargetPath="LICENSE.txt" IncludeInVSIX="true" />
+  </ItemGroup>
+
+</Project>
