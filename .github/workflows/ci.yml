@@ -1,0 +1,51 @@
+# 저장소의 시험을 로컬과 같은 방법으로 돌린다.
+#   cpp          컴파일러 × 표준 행렬(scripts/test.ps1) — 라이브러리, 생성기, 생성 코드, MSBuild 연동
+#   vs-extension VS 확장의 C# 시험과 VSIX 빌드(산출물로 올린다)
+# 로컬 검증 환경(VS 18, MSVC 19.5x)과 맞추려고 VS 2026 이미지를 고정한다.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp:
+    name: cpp (${{ matrix.preset }})
+    runs-on: windows-2025-vs2026
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [msvc-cpp20, msvc-cpp23, clang-cl-cpp20, clang-cl-cpp23]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure, build and test
+        shell: pwsh
+        run: ./scripts/test.ps1 -Presets ${{ matrix.preset }}
+
+  vs-extension:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Core tests
+        shell: pwsh
+        run: dotnet test vs/tests/Reflgen.VisualStudio.Core.Tests --nologo
+      - name: Build the VSIX
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\amd64\MSBuild.exe' | Select-Object -First 1
+          & $msbuild vs/src/Reflgen.VisualStudio/Reflgen.VisualStudio.csproj /restore /p:Configuration=Release /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Reflgen.VisualStudio.vsix
+          path: vs/src/Reflgen.VisualStudio/bin/Release/net472/Reflgen.VisualStudio.vsix
+          if-no-files-found: error

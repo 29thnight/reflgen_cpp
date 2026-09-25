@@ -18,6 +18,12 @@ if (-not (Get-Command cl -ErrorAction SilentlyContinue) -or -not $env:INCLUDE) {
     Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
 }
 
+# 어느 컴파일러로 시험했는지 남긴다 — 로컬과 CI 의 결과를 견줄 때 필요하다.
+$cl = (& cl 2>&1 | Select-String -Pattern '\d+\.\d+\.\d+' | Select-Object -First 1)
+$clang = (& clang-cl --version 2>&1 | Select-Object -First 1)
+Write-Host "cl: $cl"
+Write-Host "clang-cl: $clang ($((Get-Command clang-cl -ErrorAction SilentlyContinue).Source))"
+
 $failed = @()
 foreach ($preset in $Presets) {
     Write-Host "=== $preset" -ForegroundColor Cyan
