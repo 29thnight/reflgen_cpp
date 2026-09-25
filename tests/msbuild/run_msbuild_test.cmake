@@ -1,15 +1,19 @@
-# MSBuild 연동 시험 — reflgen_msbuild_test.vcxproj 를 빌드해 실행하고, 바뀐 것 없이 다시 빌드하면
-# 생성기가 돌지 않는지 본다.
+# MSBuild 연동 시험 — reflgen_msbuild_test.vcxproj(와 그것이 참조하는 reflgen_msbuild_lib.vcxproj)를 빌드해
+# 실행하고, 바뀐 것 없이 다시 빌드하면 생성기가 돌지 않는지 본다.
 #
 #   cmake -DMSBUILD=<MSBuild.exe> -DGENERATOR=<reflgen.exe> -DWORK=<dir> -P run_msbuild_test.cmake
 
 set(project "${CMAKE_CURRENT_LIST_DIR}/reflgen_msbuild_test.vcxproj")
 # 경로는 '/' 로 넘긴다 — "…\bin\" 처럼 끝이 역슬래시면 명령줄에서 닫는 따옴표가 먹힌다.
+# IntDir 는 전역 속성으로 주지 않는다 — 참조하는 프로젝트까지 같은 IntDir 를 쓰게 된다. 두 프로젝트가 작업
+# 디렉터리(ReflgenTestWork) 아래에 자기 이름으로 나눠 둔다.
 set(build_command "${MSBUILD}" "${project}" /nologo /v:minimal /p:Configuration=Debug /p:Platform=x64
-    "/p:ReflgenExecutable=${GENERATOR}" "/p:OutDir=${WORK}/bin/" "/p:IntDir=${WORK}/obj/")
+    "/p:ReflgenExecutable=${GENERATOR}" "/p:ReflgenTestWork=${WORK}/")
+set(app_output "${WORK}/obj/reflgen_msbuild_test/reflgen")
+set(lib_output "${WORK}/obj/reflgen_msbuild_lib/reflgen")
 
 # 앞선 시험이 남긴 결과가 있어도 첫 빌드는 반드시 생성하게 한다.
-file(REMOVE "${WORK}/obj/reflgen/reflgen_msbuild_test.stamp")
+file(REMOVE "${app_output}/reflgen_msbuild_test.stamp" "${lib_output}/reflgen_msbuild_lib.stamp")
 execute_process(COMMAND ${build_command} RESULT_VARIABLE result OUTPUT_VARIABLE first_output ERROR_VARIABLE first_output)
 if(NOT result EQUAL 0)
     message(FATAL_ERROR "the first build failed:\n${first_output}")
@@ -23,11 +27,11 @@ endif()
 message(STATUS "${output}")
 
 # 등록 없이 찾았는가 — [[reflgen::reflect]] 가 있는 header 만 생성되고, 나머지(plain.h, pch.h)는 건너뛴다.
-if(NOT EXISTS "${WORK}/obj/reflgen/game_types.reflgen.h")
-    message(FATAL_ERROR "game_types.h was not discovered:\n${first_output}")
+if(NOT EXISTS "${app_output}/game_types.reflgen.h" OR NOT EXISTS "${lib_output}/lib_types.reflgen.h")
+    message(FATAL_ERROR "game_types.h or lib_types.h was not discovered:\n${first_output}")
 endif()
 foreach(skipped IN ITEMS plain pch)
-    if(EXISTS "${WORK}/obj/reflgen/${skipped}.reflgen.h")
+    if(EXISTS "${app_output}/${skipped}.reflgen.h")
         message(FATAL_ERROR "${skipped}.h does not declare reflection but was generated")
     endif()
 endforeach()

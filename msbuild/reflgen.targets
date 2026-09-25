@@ -9,8 +9,8 @@
     struct [[reflgen::reflect("game.player")]] player { [[reflgen::range(0, 100)]] int hp = 100; };
   빌드는 프로젝트의 header(ClInclude) 가운데 [[reflgen::reflect]] 가 있는 것을 찾아 생성하고, 생성물을 묶은
   주입 header($(IntDir)reflgen\reflgen_<module>.h)를 모든 번역 단위에 강제 include(/FI)한다. 생성물은
-  .obj·.pch 처럼 빌드 중간 산출물이다. 이 프로젝트 밖(다른 .vcxproj)에서 그 타입의 reflection 을 쓰려면
-  그 프로젝트도 이 파일을 가져오고 header 를 ClInclude 로 둔다.
+  .obj·.pch 처럼 빌드 중간 산출물이다. ProjectReference 로 참조하는 reflgen 프로젝트의 주입 header 도 함께
+  강제 include 한다(그쪽 것이 먼저) — 참조하는 프로젝트도 이 파일을 가져와야 한다.
 
   속성(모두 선택):
     ReflgenExecutable        reflgen.exe 경로. 설치 배치(<prefix>\bin)면 자동으로 찾는다.
@@ -71,20 +71,48 @@
           Condition="'$(DesignTimeBuild)' != 'true'"
           DependsOnTargets="_ReflgenComputeInputs;_ReflgenWriteArguments;_ReflgenRun" />
 
-  <!-- 모든 번역 단위에 주입 header 를 강제 include 한다. 미리 컴파일된 header 를 쓰는(/Yu·/Yc) 파일은 그
-       header 를 먼저 강제 include 한다 — /Yu 는 pch header 앞에 온 것을 건너뛰므로 주입 header 가 먼저 오면
-       사라진다. 아직 생성하기 전이면(처음 여는 프로젝트의 IntelliSense) 빈 주입 header 를 둔다 — 빌드에서는
-       ReflgenGenerate 가 컴파일 전에 채운다. -->
-  <Target Name="_ReflgenInject" Condition="'@(ClInclude)' != ''">
-    <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="!Exists('$(_ReflgenInjection)')" />
-    <WriteLinesToFile File="$(_ReflgenInjection)" Lines="#pragma once" Condition="!Exists('$(_ReflgenInjection)')" />
-    <ItemGroup>
+  <!-- 모든 번역 단위에 주입 header 들(참조하는 reflgen 프로젝트의 것과 자기 것)을 강제 include 한다. 미리
+       컴파일된 header 를 쓰는(/Yu·/Yc) 파일은 그 header 를 먼저 강제 include 한다 — /Yu 는 pch header 앞에 온 것을
+       건너뛰므로 주입 header 가 먼저 오면 사라진다. -->
+  <Target Name="_ReflgenInject" DependsOnTargets="_ReflgenCollectInjections">
+    <PropertyGroup>
+      <_ReflgenForcedIncludes>@(_ReflgenInjections)</_ReflgenForcedIncludes>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(_ReflgenForcedIncludes)' != ''">
       <ClCompile Condition="('%(ClCompile.PrecompiledHeader)' == 'Use' or '%(ClCompile.PrecompiledHeader)' == 'Create') and '%(ClCompile.PrecompiledHeaderFile)' != ''">
-        <ForcedIncludeFiles>%(ClCompile.PrecompiledHeaderFile);%(ClCompile.ForcedIncludeFiles);$(_ReflgenInjection)</ForcedIncludeFiles>
+        <ForcedIncludeFiles>%(ClCompile.PrecompiledHeaderFile);%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
       <ClCompile Condition="('%(ClCompile.PrecompiledHeader)' != 'Use' and '%(ClCompile.PrecompiledHeader)' != 'Create') or '%(ClCompile.PrecompiledHeaderFile)' == ''">
-        <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenInjection)</ForcedIncludeFiles>
+        <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
+    </ItemGroup>
+  </Target>
+
+  <!-- 이 프로젝트가 강제 include 할 주입 header 들을 돌려준다 — 참조하는 프로젝트가 부른다(ProjectReference 로
+       이어진 reflgen 프로젝트의 서술이 참조하는 쪽까지 전해진다). 참조하는 reflgen 프로젝트의 것이 먼저(의존
+       순서), 자기 것이 마지막이다: 다른 프로젝트의 타입을 부모로 둔 타입은 부모의 서술이 먼저 보여야 컴파일된다. -->
+  <Target Name="ReflgenGetInjections" DependsOnTargets="_ReflgenCollectInjections" Returns="@(_ReflgenInjections)" />
+
+  <Target Name="_ReflgenCollectInjections" DependsOnTargets="AssignProjectConfiguration">
+    <!-- reflgen 을 쓰지 않는 참조(target 이 없는 프로젝트)는 건너뛴다. -->
+    <MSBuild Projects="@(ProjectReferenceWithConfiguration)"
+             Targets="ReflgenGetInjections"
+             Properties="%(ProjectReferenceWithConfiguration.SetConfiguration);%(ProjectReferenceWithConfiguration.SetPlatform)"
+             SkipNonexistentProjects="true"
+             SkipNonexistentTargets="true"
+             Condition="'@(ProjectReferenceWithConfiguration)' != ''">
+      <Output TaskParameter="TargetOutputs" ItemName="_ReflgenReferencedInjection" />
+    </MSBuild>
+    <!-- 아직 생성하기 전이면(처음 여는 프로젝트의 IntelliSense, 또는 참조하는 쪽이 먼저 물을 때) 빈 주입 header 를
+         둔다 — 빌드에서는 ReflgenGenerate 가 컴파일 전에 채운다. -->
+    <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="'@(ClInclude)' != '' and !Exists('$(_ReflgenInjection)')" />
+    <WriteLinesToFile File="$(_ReflgenInjection)" Lines="#pragma once"
+                      Condition="'@(ClInclude)' != '' and !Exists('$(_ReflgenInjection)')" />
+    <ItemGroup>
+      <_ReflgenInjectionCandidate Include="@(_ReflgenReferencedInjection)" />
+      <_ReflgenInjectionCandidate Include="$(_ReflgenInjection)" Condition="'@(ClInclude)' != ''" />
+      <!-- 다이아몬드 참조로 같은 header 가 두 번 오면 처음 것만 남긴다(순서는 그대로). -->
+      <_ReflgenInjections Include="@(_ReflgenInjectionCandidate->Distinct())" />
     </ItemGroup>
   </Target>
 

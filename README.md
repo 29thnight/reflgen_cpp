@@ -227,8 +227,10 @@ namespace editor
   강제 include 를 본다. 생성된 등록 함수(`reflgen_<module>.cpp`)도 컴파일 목록에 들어간다(미리 컴파일된 header 없이).
 - 파싱 설정은 프로젝트의 ClCompile 설정 그대로다 — include 경로, 전처리 정의, `LanguageStandard`, 시스템 include.
 - 프로젝트의 header, 그것들이 include 하는 파일(지난 실행이 읽은 목록), 생성기, 설정 중 하나가 바뀔 때만 다시 돈다.
-- 다른 .vcxproj 가 이 프로젝트의 header 로 reflection 을 쓰려면 그 프로젝트도 `reflgen.targets` 를 가져오고 그
-  header 를 `ClInclude` 로 둔다(주입은 프로젝트마다다).
+- **프로젝트 사이**: `ProjectReference` 로 참조하는 reflgen 프로젝트의 주입 header 도 강제 include 한다 — 엔진
+  라이브러리의 타입을 게임 실행 파일에서 직렬화할 수 있다. 참조하는 쪽의 것이 먼저, 자기 것이 마지막이라 다른
+  프로젝트의 타입을 부모로 둔 타입도 컴파일된다. 간접 참조까지 따라가고 겹치면 한 번만 넣는다. 참조하는 쪽도
+  `reflgen.targets` 를 가져와야 한다(reflgen 을 쓰지 않는 참조는 건너뛴다).
 - `C5030`(모르는 attribute) 경고를 끄고, ClangCL 도구 집합에는 `-Wno-unknown-attributes` 를 준다.
 
 | 속성 | 기본값 |
