@@ -22,7 +22,7 @@ jobs:
       matrix:
         preset: [msvc-cpp20, msvc-cpp23, clang-cl-cpp20, clang-cl-cpp23]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure, build and test
         shell: pwsh
         run: ./scripts/test.ps1 -Presets ${{ matrix.preset }}
@@ -30,8 +30,8 @@ jobs:
   vs-extension:
     runs-on: windows-2025-vs2026
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
       - name: Core tests
@@ -44,7 +44,7 @@ jobs:
           $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\amd64\MSBuild.exe' | Select-Object -First 1
           & $msbuild vs/src/Reflgen.VisualStudio/Reflgen.VisualStudio.csproj /restore /p:Configuration=Release /v:minimal /nologo
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Reflgen.VisualStudio.vsix
           path: vs/src/Reflgen.VisualStudio/bin/Release/net472/Reflgen.VisualStudio.vsix

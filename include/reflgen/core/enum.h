@@ -104,29 +104,56 @@ namespace reflgen
         template<class E, long long I>
         inline constexpr bool enum_value_named = is_enum_value_named<E, I>();
 
-        template<class E, long long Min, std::size_t... Is>
-        consteval std::size_t count_named_values(std::index_sequence<Is...>) noexcept
+        // 스캔 범위의 값 하나 — 이름이 있으면 그 항목, 없으면 이름이 빈 항목.
+        template<class E, long long I>
+        consteval enum_entry<E> scanned_entry() noexcept
         {
-            return (std::size_t{enum_value_named<E, Min + static_cast<long long>(Is)>} + ... + std::size_t{0});
+            if constexpr (enum_value_named<E, I>)
+            {
+                using storage = enumerator_name_storage<enum_from_integer<E, I>()>;
+                return enum_entry<E>{std::string_view{storage::buffer.data(), storage::raw.size()},
+                                     enum_from_integer<E, I>()};
+            }
+            else
+            {
+                return enum_entry<E>{};
+            }
         }
 
-        template<class E, long long Min, std::size_t N, std::size_t... Is>
-        consteval std::array<enum_entry<E>, N> collect_named_values(std::index_sequence<Is...>) noexcept
+        // 범위 전체를 배열 초기화의 pack 확장으로 훑는다. fold 식으로 쓰면 값 수만큼 식이 중첩되어 clang 21 까지의
+        // 기본 한도(256)를 넘는다 — 기본 스캔 범위 [-128, 128] 만 해도 257 값이다.
+        template<class E, long long Min, std::size_t... Is>
+        consteval std::array<enum_entry<E>, sizeof...(Is)> scan_values(std::index_sequence<Is...>) noexcept
+        {
+            return {scanned_entry<E, Min + static_cast<long long>(Is)>()...};
+        }
+
+        template<class E, long long Min, std::size_t Width>
+        inline constexpr auto scanned_values = scan_values<E, Min>(std::make_index_sequence<Width>{});
+
+        template<class E, long long Min, std::size_t Width>
+        consteval std::size_t count_named_values() noexcept
+        {
+            std::size_t count = 0;
+            for (const enum_entry<E>& entry : scanned_values<E, Min, Width>)
+            {
+                count += entry.name.empty() ? 0 : 1;
+            }
+            return count;
+        }
+
+        template<class E, long long Min, std::size_t Width, std::size_t N>
+        consteval std::array<enum_entry<E>, N> collect_named_values() noexcept
         {
             std::array<enum_entry<E>, N> result{};
             std::size_t next = 0;
-            (
-                [&] {
-                    [[maybe_unused]] constexpr long long value = Min + static_cast<long long>(Is);
-                    if constexpr (enum_value_named<E, value>)
-                    {
-                        using storage = enumerator_name_storage<enum_from_integer<E, value>()>;
-                        result[next] = enum_entry<E>{std::string_view{storage::buffer.data(), storage::raw.size()},
-                                                     enum_from_integer<E, value>()};
-                        ++next;
-                    }
-                }(),
-                ...);
+            for (const enum_entry<E>& entry : scanned_values<E, Min, Width>)
+            {
+                if (!entry.name.empty())
+                {
+                    result[next++] = entry;
+                }
+            }
             return result;
         }
 
@@ -151,8 +178,8 @@ namespace reflgen
                 else
                 {
                     constexpr std::size_t width = static_cast<std::size_t>(max - min + 1);
-                    constexpr std::size_t count = count_named_values<E, min>(std::make_index_sequence<width>{});
-                    return collect_named_values<E, min, count>(std::make_index_sequence<width>{});
+                    constexpr std::size_t count = count_named_values<E, min, width>();
+                    return collect_named_values<E, min, width, count>();
                 }
             }
         }

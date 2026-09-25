@@ -37,6 +37,12 @@ function(reflgen_configure_target target)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
+    # clang 21 까지의 기본 식 중첩 한도(256)를 새 clang 에서도 지킨다 — 큰 fold 식이 새 clang 에서만 통과하는 것을
+    # 로컬에서 잡으려는 것이다(CI 의 clang 20 에서 깨진 적이 있다).
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        target_compile_options(${target} PRIVATE
+            "$<IF:$<STREQUAL:${CMAKE_CXX_COMPILER_FRONTEND_VARIANT},MSVC>,/clang:-fbracket-depth=256,-fbracket-depth=256>")
+    endif()
 endfunction()
 
 if(REFLGEN_BUILD_GENERATOR)
