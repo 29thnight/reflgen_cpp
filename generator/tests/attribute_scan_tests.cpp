@@ -12,6 +12,7 @@ namespace
     using reflgen::generator::declares_reflection;
     using reflgen::generator::groups_between;
     using reflgen::generator::groups_run_at;
+    using reflgen::generator::groups_run_before;
     using reflgen::generator::next_token_offset;
     using reflgen::generator::scan_attribute_groups;
     using reflgen::generator::token;
@@ -169,6 +170,34 @@ namespace
         check(groups_run_at(tokens, groups, *after_y).empty());
         check(!next_token_offset(tokens, text.size() - 1).has_value());         // 마지막 token 뒤는 없다
         check(!next_token_offset(tokens, offset_of(text, "nt x")).has_value()); // token 중간
+    });
+
+    // libclang 20 은 [[a]] int x; 의 범위를 int 부터 잡는다(22 는 [[ 부터) — 선언 앞에 붙은 그룹도 찾아야 한다.
+    const test run_before("select: groups ending right before a declaration", [] {
+        const std::string_view text = "; [[a]] [[b]] int x; [[c]] ; int y;";
+        const std::vector<token> tokens = lex(text);
+        const std::vector<attribute_group> groups = scan_attribute_groups(tokens);
+
+        const std::vector<attribute_group> before_x = groups_run_before(tokens, groups, offset_of(text, "int x"));
+        require(before_x.size() == 2);
+        check_equal(before_x[0].attributes[0].name, std::string("a")); // 소스 순서
+        check_equal(before_x[1].attributes[0].name, std::string("b"));
+        check(groups_run_before(tokens, groups, offset_of(text, "int y")).empty()); // ';' 가 끊는다
+        check(groups_run_before(tokens, groups, offset_of(text, "[[a]]")).empty());
+        check(groups_run_before(tokens, groups, offset_of(text, "x;")).empty());   // 앞이 그룹이 아니다
+        check(groups_run_before(tokens, groups, offset_of(text, "nt x")).empty()); // token 중간
+    });
+
+    const test run_before_comment("select: comments between the group and the declaration are skipped", [] {
+        // 시험용 lexer 는 주석을 버리지만 실제 token 목록에는 주석이 올 수 있다(clang_api 가 CXToken_Comment 를
+        // 옮긴다) — 비워 둔 자리에 주석 token 을 직접 끼워 넣는다.
+        const std::string_view text = "[[d]]           int z;";
+        std::vector<token> tokens = lex(text);
+        tokens.insert(tokens.begin() + 5, token{token_kind::comment, "/* note */", 6, 16});
+        const std::vector<attribute_group> groups = scan_attribute_groups(tokens);
+        const std::vector<attribute_group> before_z = groups_run_before(tokens, groups, offset_of(text, "int z"));
+        require(before_z.size() == 1);
+        check_equal(before_z[0].attributes[0].name, std::string("d"));
     });
 
     const test between("select: groups fully inside a range", [] {

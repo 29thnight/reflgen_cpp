@@ -77,6 +77,12 @@ namespace reflgen::generator
     std::vector<attribute_group> groups_run_at(std::span<const token> tokens, std::span<const attribute_group> groups,
                                                std::size_t offset);
 
+    // offset 에서 시작하는 token 바로 앞에서 끝나며 빈틈없이 이어진 그룹들(소스 순서, 사이의 주석은 건너뛴다).
+    // 선언 맨 앞의 attribute 를 찾는다 — libclang 20 은 `[[a]] int x;` 의 범위를 int 부터 잡고(22 는 [[ 부터), 그러면
+    // groups_run_at 으로는 [[a]] 가 보이지 않는다. 두 함수의 결과는 겹치지 않는다.
+    std::vector<attribute_group> groups_run_before(std::span<const token> tokens,
+                                                   std::span<const attribute_group> groups, std::size_t offset);
+
     // [begin, end) 안에 온전히 들어 있는 그룹들.
     std::vector<attribute_group> groups_between(std::span<const attribute_group> groups, std::size_t begin,
                                                 std::size_t end);

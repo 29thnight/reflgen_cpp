@@ -131,19 +131,30 @@ namespace reflgen::generator
                 return next ? groups_run_at(source.tokens, source.groups, *next) : std::vector<attribute_group>{};
             }
 
+            // 선언 범위 바로 앞의 그룹 — libclang 20 은 `[[a]] int x;` 의 범위를 int 부터 잡는다(22 는 [[ 부터).
+            // 범위 안에서 찾는 쪽(groups_run_at·groups_before_name)과 겹치지 않으므로 둘 다 더하면 두 판 모두 된다.
+            std::vector<attribute_group> groups_before_extent(CXCursor cursor)
+            {
+                const source_file& source = source_of(cursor);
+                return groups_run_before(source.tokens, source.groups,
+                                         offset_of(clang_getRangeStart(clang_getCursorExtent(cursor))));
+            }
+
             // 필드: 선언 맨 앞(모든 declarator 공통)과 이름 바로 뒤(이 declarator 만).
             std::vector<attribute_group> field_groups(CXCursor field)
             {
                 const source_file& source = source_of(field);
-                std::vector<attribute_group> groups = groups_run_at(
-                    source.tokens, source.groups, offset_of(clang_getRangeStart(clang_getCursorExtent(field))));
+                std::vector<attribute_group> groups = groups_before_extent(field);
+                append(groups, groups_run_at(source.tokens, source.groups,
+                                             offset_of(clang_getRangeStart(clang_getCursorExtent(field)))));
                 append(groups, groups_after_name(field));
                 return groups;
             }
 
             std::vector<attribute_group> function_groups(CXCursor function)
             {
-                std::vector<attribute_group> groups = groups_before_name(function);
+                std::vector<attribute_group> groups = groups_before_extent(function);
+                append(groups, groups_before_name(function));
                 append(groups, groups_after_name(function));
                 return groups;
             }

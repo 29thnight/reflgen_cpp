@@ -249,6 +249,39 @@ namespace reflgen::generator
         }
     }
 
+    std::vector<attribute_group> groups_run_before(std::span<const token> tokens,
+                                                   std::span<const attribute_group> groups, std::size_t offset)
+    {
+        std::vector<attribute_group> run;
+        auto at = first_token_from(tokens, offset);
+        if (at == tokens.end() || at->begin != offset)
+        {
+            return run;
+        }
+        while (true)
+        {
+            while (at != tokens.begin() && (at - 1)->kind == token_kind::comment)
+            {
+                --at;
+            }
+            if (at == tokens.begin())
+            {
+                return run;
+            }
+            // 바로 앞 token 이 어느 그룹의 닫는 ']' 여야 이어진다.
+            const std::size_t previous_end = (at - 1)->end;
+            const auto group = std::find_if(groups.begin(), groups.end(), [previous_end](const attribute_group& item) {
+                return item.end == previous_end;
+            });
+            if (group == groups.end())
+            {
+                return run;
+            }
+            run.insert(run.begin(), *group);
+            at = first_token_from(tokens, group->begin);
+        }
+    }
+
     std::vector<attribute_group> groups_between(std::span<const attribute_group> groups, std::size_t begin,
                                                 std::size_t end)
     {
