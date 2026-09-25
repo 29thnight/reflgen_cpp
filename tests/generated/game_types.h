@@ -13,9 +13,10 @@ namespace generated_tests
 
     // 사용자 정의 attribute — ATTRIBUTE_SCOPES 에 generated_tests 를 넣었으므로 옮겨진다. 이 이름공간에는 데이터
     // 타입도 있으므로 [[reflgen::attribute]] 로 편집기 자동완성 카탈로그에 이것만 내보낸다.
+    // 문자열은 static_string 에 담는다 — 구조적 타입이라 C++26 주석 값으로도 그대로 쓰인다.
     struct [[reflgen::attribute]] tooltip
     {
-        std::string_view text;
+        reflgen::static_string text;
 
         constexpr explicit tooltip(std::string_view value) : text(value) {}
     };

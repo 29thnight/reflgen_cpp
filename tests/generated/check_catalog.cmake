@@ -18,6 +18,7 @@ set(expected
     "directive\treflgen\tattribute\t"
     "attribute\treflgen\trange\trange(T min_value, T max_value)\t"
     "attribute\treflgen\ttransient\ttransient\t"
+    "attribute\treflgen\tcategory\tcategory(std::string_view text)\t"
     # [[reflgen::attribute]] 를 단 사용자 attribute — 생성자 시그니처가 따라온다.
     "attribute\tgenerated_tests\ttooltip\ttooltip(std::string_view value)\t")
 foreach(prefix IN LISTS expected)
@@ -41,8 +42,9 @@ foreach(name stats hero entity limits plain)
         endif()
     endforeach()
 endforeach()
+# 지시어 타입(reflect·ignore·attribute)은 지시어로만, 문자열 도우미(static_string)는 아예 나오지 않는다.
 foreach(line IN LISTS lines)
-    if(line MATCHES "^attribute\treflgen\t(attribute_ref|attribute_list|registry)\t")
+    if(line MATCHES "^attribute\treflgen\t(attribute_ref|attribute_list|registry|static_string|reflect|ignore|attribute)\t")
         message(FATAL_ERROR "a non-attribute reflgen type is in the catalog: ${line}")
     endif()
 endforeach()

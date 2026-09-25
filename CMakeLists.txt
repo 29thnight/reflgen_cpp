@@ -47,6 +47,8 @@ if(REFLGEN_BUILD_TESTS)
     enable_testing()
     set(REFLGEN_TEST_SOURCES
         tests/harness.cpp
+        tests/static_string_tests.cpp
+        tests/annotation_readiness_tests.cpp
         tests/name_tests.cpp
         tests/enum_tests.cpp
         tests/schema_tests.cpp

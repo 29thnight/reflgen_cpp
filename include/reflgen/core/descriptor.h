@@ -13,6 +13,7 @@
 //
 // 레시피는 **로컬**이다: 이 타입이 직접 선언한 필드·메서드와 직계 부모만 적는다.
 // 상속 합성은 질의(for_each_field)가 계산한다.
+#include "reflgen/core/directives.h"
 #include "reflgen/core/name.h"
 #include <array>
 #include <cstddef>
@@ -75,6 +76,16 @@ namespace reflgen
             }
             return sizeof...(Ts);
         }
+
+        // reflect·ignore·attribute 는 생성기 지시어다(C++26 에서는 주석 값) — 스키마에 붙는 속성이 아니다. 뜻 없이
+        // 조용히 통과하지 않게 막는다.
+        template<class... More>
+        consteval void reject_directives() noexcept
+        {
+            static_assert(!(is_directive_v<More> || ...),
+                          "reflgen::reflect, reflgen::ignore and reflgen::attribute are generator directives, not "
+                          "attributes; to leave a member out, do not list it in the schema");
+        }
     } // namespace detail
 
     template<auto Member, class... Attrs>
@@ -100,6 +111,7 @@ namespace reflgen
         template<class... More>
         consteval field_descriptor<Member, Attrs..., More...> with(More... more) const
         {
+            detail::reject_directives<More...>();
             return {name, std::tuple_cat(attributes, std::tuple<More...>{more...})};
         }
 
@@ -152,6 +164,7 @@ namespace reflgen
         template<class... More>
         consteval method_descriptor<Function, ParameterCount, Attrs..., More...> with(More... more) const
         {
+            detail::reject_directives<More...>();
             return {name, parameter_names, std::tuple_cat(attributes, std::tuple<More...>{more...})};
         }
 
@@ -212,6 +225,7 @@ namespace reflgen
         template<class... More>
         consteval type_schema<T, Bases, Fields, Methods, Attrs..., More...> with(More... more) const
         {
+            detail::reject_directives<More...>();
             return {name, fields, methods, std::tuple_cat(attributes, std::tuple<More...>{more...})};
         }
 

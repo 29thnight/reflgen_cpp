@@ -73,12 +73,14 @@ struct reflgen::reflection<vendor::config>
 
 ### 속성
 
-속성은 **생성자 호출식**이다. 사용자 정의 속성도 `constexpr` 생성자가 있는 구조체 하나면 된다.
+속성은 **생성자 호출식**이다. 사용자 정의 속성도 `constexpr` 생성자가 있는 구조체 하나면 된다. 문자열은
+`reflgen::static_string` 에 담는다 — `std::string_view` 처럼 읽히면서 구조적 타입이라 C++26 주석 값이 될 수 있다
+(아래 [C++26 이행](#c26-이행)). `std::string_view` 로 담아도 C++20/23 에서는 동작한다.
 
 ```cpp
 struct tooltip
 {
-    std::string_view text;
+    reflgen::static_string text;
     constexpr explicit tooltip(std::string_view value) : text(value) {}
 };
 ```
@@ -86,11 +88,15 @@ struct tooltip
 | 기본 속성 | 뜻 |
 |---|---|
 | `display_name("…")`, `description("…")` | 편집기 표시용 |
+| `category("…")` | 편집기가 묶어 보여 줄 분류(인스펙터의 접는 구역 등) |
 | `range(min, max)` | 값 구간(검증기·편집기용, 직렬화는 검사하지 않음) |
 | `serialized_name("…")` | 직렬화 키를 멤버 이름과 다르게 |
 | `transient()` | 직렬화 제외 |
 | `required()` | 역직렬화 입력에 반드시 있어야 함 |
 | `hidden()`, `readonly()` | 편집기 힌트 |
+
+문자열 속성의 `.value` 는 `reflgen::static_string` 이다 — `std::string_view` 로 암시적으로 바뀌고, 비교와
+`data()`·`size()`·`begin()`·`end()` 가 된다.
 
 조회: 컴파일 타임은 `field.has_attribute<A>()` / `field.attribute<A>()`, 런타임은
 `field_info::attributes().find<A>()`.
@@ -392,6 +398,36 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 이름은 STL 컨벤션(snake_case, 멤버 후치 `_`, 템플릿 매개변수 PascalCase, 상수도 snake_case), 중괄호·공백·
 들여쓰기는 CreatorEngine 의 [.clang-format](.clang-format) 이다. 주석은 한글로, 무엇이 아니라 왜를 적는다.
 
+## C++26 이행
+
+C++26 정식 리플렉션(P2996)과 주석(P3394)이 오면 스키마를 만드는 앞단만 생성기에서 `std::meta` 로 바뀐다
+(로드맵 3). 사용자 코드는 attribute 표기를 한 번 기계적으로 바꾸면 된다 — C++20/23 의 `[[…]]` 는 C++26 에서도
+유효하지만 `annotations_of` 가 보는 것은 `[[=…]]` 뿐이다. `[[=…]]` 는 C++20/23 에서 문법 오류이고 이 라이브러리는
+`#if` 를 쓰지 않으므로, 두 표기를 한 소스에 섞어 두지 않고 옮길 때 한 번에 바꾼다.
+
+| C++20/23 | C++26 |
+|---|---|
+| `[[reflgen::reflect]]` | `[[=reflgen::reflect{}]]` |
+| `[[reflgen::reflect("game.player")]]` | `[[=reflgen::reflect("game.player")]]` |
+| `[[reflgen::ignore]]` | `[[=reflgen::ignore{}]]` |
+| `[[reflgen::range(0, 100)]]` | `[[=reflgen::range(0, 100)]]` |
+| `[[reflgen::transient]]` | `[[=reflgen::transient{}]]` |
+| `[[game::tooltip("HP")]]` | `[[=game::tooltip("HP")]]` |
+| `[[using reflgen: transient, range(0, 1)]]` | `[[=reflgen::transient{}, =reflgen::range(0, 1)]]` |
+
+규칙: 인자가 있으면 식을 그대로, 없으면 `{}` 를 붙인다 — 생성기가 지금 스키마로 옮길 때 쓰는 규칙과 같다.
+
+준비된 것:
+- 기본 속성과 지시어 타입(`reflect`·`ignore`·`attribute`, `core/directives.h`)은 모두 구조적 타입이다. 주석 값의
+  조건이 C++20 클래스 NTTP 와 같아서 `tests/annotation_readiness_tests.cpp` 가 템플릿 인자로 써 보아 컴파일로
+  확인한다.
+- 문자열은 `static_string` 이다. C++26 백엔드는 `std::define_static_string` 으로 만든 배열을 가리키게 만든다
+  (주석 값의 포인터는 문자열 리터럴을 가리킬 수 없다). `.value` 를 읽는 쪽은 바뀌지 않는다.
+- 사용자 정의 속성도 주석 값이 되려면 구조적 타입이어야 한다 — 멤버를 공개하고 문자열은 `static_string` 에 담는다.
+- 지시어 타입은 속성이 아니다 — `.with(reflgen::ignore{})` 는 컴파일 오류다(멤버를 빼려면 스키마에 적지 않는다).
+
+아직 없는 것: 표기를 바꿔 주는 codemod(VS 확장 명령)와 네이티브 백엔드.
+
 ## 알려진 제약
 
 - 컴파일러가 만든 타입 이름은 표준 라이브러리 타입에서 구현마다 다르다(MSVC 는 기본 템플릿 인자를 적는다).
@@ -426,6 +462,7 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 2. **Visual Studio 확장** — 첫 판 완료(저장·열기 시 생성, Error List, IntelliSense 새로 고침, 자동완성, friend
    자동 삽입). 남은 것: 솔루션 전체가 아니라 바뀐 번역 단위만 IntelliSense 를 새로 고치기, CMake(폴더 열기)
    지원, C++26 이행 codemod, Marketplace 배포.
-3. **C++26 네이티브 백엔드** — `std::meta::nonstatic_data_members_of` + `annotations_of` 로 `schema_of<T>`
-   를 만든다. 질의·직렬화 API 는 바뀌지 않는다.
+3. **C++26 네이티브 백엔드** — `std::meta::nonstatic_data_members_of`(`access_context::unchecked()`) +
+   `annotations_of` 로 `schema_of<T>` 를 만든다. 질의·직렬화 API 는 바뀌지 않고 friend 도 필요 없어진다.
+   준비 완료: 속성·지시어 타입이 모두 구조적 타입, 문자열은 `static_string`([C++26 이행](#c26-이행)).
 4. GCC·libc++ CI.

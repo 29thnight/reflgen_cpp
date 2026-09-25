@@ -6,12 +6,12 @@
 //   C++20/23 : [[reflgen::range(0.0f, 1.0f)]]   코드 생성기가 인자 토큰을 그대로 옮긴다
 //   C++26    : [[=reflgen::range(0.0f, 1.0f)]]  주석(annotation) 값이 된다
 // 두 경우 모두 같은 식이 같은 타입의 값을 만든다. 그래서 사용자 정의 속성도 생성자가
-// constexpr 인 구조체 하나면 된다. 속성 타입에는 아무 제약도 걸지 않는다(리터럴
-// 타입이기만 하면 schema 의 constexpr 튜플에 담긴다).
+// constexpr 인 구조체 하나면 된다(리터럴 타입이기만 하면 schema 의 constexpr 튜플에 담긴다).
 //
-// C++26 주석 값은 구조적 타입이어야 해서 std::string_view 를 담을 수 없다. 그
-// 백엔드가 들어올 때 문자열 속성은 std::define_static_string 기반으로 바뀐다 —
-// 소비자는 .value 를 string_view 로 읽으므로 영향이 없다.
+// C++26 주석 값은 구조적 타입이어야 한다(C++20 클래스 NTTP 와 같은 조건 — 모든 멤버가 공개). 그래서 기본 속성의
+// 문자열은 std::string_view 가 아니라 reflgen::static_string 이다. .value 는 여전히 string_view 처럼 읽힌다.
+// 사용자 정의 속성도 C++26 으로 옮길 것이라면 문자열을 static_string 으로 담는다.
+#include "reflgen/core/static_string.h"
 #include "reflgen/core/type_id.h"
 #include <cstddef>
 #include <span>
@@ -22,7 +22,7 @@ namespace reflgen
     // 사람이 읽는 이름 (인스펙터 라벨 등).
     struct display_name
     {
-        std::string_view value;
+        static_string value;
 
         constexpr explicit display_name(std::string_view text) noexcept : value(text) {}
     };
@@ -30,7 +30,7 @@ namespace reflgen
     // 설명문 (툴팁 등).
     struct description
     {
-        std::string_view value;
+        static_string value;
 
         constexpr explicit description(std::string_view text) noexcept : value(text) {}
     };
@@ -49,9 +49,17 @@ namespace reflgen
     // 유지하려면 이것으로 옛 이름을 못 박는다.
     struct serialized_name
     {
-        std::string_view value;
+        static_string value;
 
         constexpr explicit serialized_name(std::string_view text) noexcept : value(text) {}
+    };
+
+    // 편집기가 멤버를 묶어 보여 줄 분류(인스펙터의 접는 구역 등). 직렬화와 무관하다.
+    struct category
+    {
+        static_string value;
+
+        constexpr explicit category(std::string_view text) noexcept : value(text) {}
     };
 
     // 직렬화에서 제외한다. 캐시·런타임 핸들처럼 저장할 이유가 없는 필드에 붙인다.

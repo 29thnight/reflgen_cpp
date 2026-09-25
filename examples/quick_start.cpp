@@ -12,9 +12,10 @@
 namespace game
 {
     // 사용자 정의 속성 — 생성자가 constexpr 인 구조체면 무엇이든 된다.
+    // 문자열은 reflgen::static_string 에 담는다 — C++26 주석 값이 될 수 있는 모양(구조적 타입)이다.
     struct tooltip
     {
-        std::string_view text;
+        reflgen::static_string text;
 
         constexpr explicit tooltip(std::string_view value) : text(value) {}
     };
