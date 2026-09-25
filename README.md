@@ -242,7 +242,12 @@ VS 2022(17.x)·2026(18.x), x64. `vs/` 를 빌드해 나온 `Reflgen.VisualStudio
 dotnet test vs\tests\Reflgen.VisualStudio.Core.Tests
 ```
 
-`reflgen.targets` 를 가져온 .vcxproj 에서 쓴다. 확장은 header 와 프로젝트 파일을 고치지 않는다.
+`reflgen.targets` 를 가져온 .vcxproj 에서 쓴다. 생성 결과는 header 에도 프로젝트 파일에도 들어가지 않는다.
+
+- **friend 자동 삽입** — 공개되지 않은 멤버(비정적 데이터 멤버, `[[reflgen::reflect]]` 메서드, attribute 인자에서
+  쓰는 static 멤버)를 반영하는 클래스에 `friend struct reflgen::access;` 가 없으면, 저장할 때 본문 맨 앞에 멤버
+  들여쓰기로 넣는다(저장되는 내용에 함께 들어간다). 생성 코드는 클래스 밖에 있어 이것이 필요하다.
+  header 에 더하는 것은 이 한 줄뿐이다.
 
 - **저장 시 생성** — `[[reflgen::reflect]]` 가 있는(또는 지운) header 를 저장하면 그 프로젝트의 `ReflgenGenerate`
   만 별도 MSBuild 프로세스로 돌려 RG 진단을 Error List 에 올린다. VS 빌드가 도는 중이면 건너뛴다(그 빌드가
@@ -255,7 +260,7 @@ dotnet test vs\tests\Reflgen.VisualStudio.Core.Tests
 - **attribute 자동완성** — `[[` 나 `,` 뒤에서 attribute 이름공간을, `reflgen::` 뒤에서 attribute 와 생성자
   시그니처·설명을 제안한다. 목록은 생성기의 카탈로그에서 오며(위 `[[reflgen::attribute]]` 참고), 아직 생성하지
   않았으면 기본 attribute 만 나온다.
-- 설정: Tools > Options > reflgen > General(생성, IntelliSense 새로 고침 켜고 끄기, MSBuild.exe 경로).
+- 설정: Tools > Options > reflgen > General(friend 삽입, 생성, IntelliSense 새로 고침 켜고 끄기, MSBuild.exe 경로).
 
 | 코드 | 뜻 |
 |---|---|
@@ -398,6 +403,10 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 - `default_registry()` 는 모듈(DLL)마다 하나다.
 - 생성기는 클래스 template·멤버 함수 template·오버로드된 메서드·열거자 attribute·union 을 다루지 않는다(진단으로
   알린다). 이름 없는 매개변수는 빈 이름으로 남는다.
+- 비공개 멤버를 반영하려면 `friend struct reflgen::access;` 가 있어야 한다(VS 확장이 저장할 때 넣는다). friend
+  없이 private 멤버의 포인터를 상수로 얻는 C++20 방법(명시적 인스턴스화의 접근 검사 예외로 friend 함수를
+  주입)은 Clang 에서는 되지만 MSVC 19.51 은 그 함수를 상수 평가에서 쓰지 못한다(C3779·C2131, 실측). C++26
+  백엔드에서는 `access_context::unchecked()` 로 friend 가 필요 없어진다.
 - VS 확장은 .vcxproj 만 다룬다. CMake(폴더 열기) 프로젝트는 빌드할 때 `reflgen_generate()` 가 생성한다.
   자동완성은 attribute 이름 자리에서만 나온다 — 인자 안은 C++ IntelliSense 의 몫이다.
 - attribute 인자의 이름을 감싸는 이름공간들에서 찾을 때는 `using namespace` 를 바깥부터 모두 여는 방식이라,
@@ -414,8 +423,8 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 
 1. **코드 생성기** — CMake·MSBuild 연동 완료. 남은 것: 클래스 template, 오버로드된 메서드, 열거자 attribute,
    NuGet 패키지(.vcxproj 가 import 없이 쓰게).
-2. **Visual Studio 확장** — 첫 판 완료(저장·열기 시 생성, Error List, IntelliSense 새로 고침, 자동완성).
-   남은 것: 솔루션 전체가 아니라 바뀐 번역 단위만 IntelliSense 를 새로 고치기, CMake(폴더 열기)
+2. **Visual Studio 확장** — 첫 판 완료(저장·열기 시 생성, Error List, IntelliSense 새로 고침, 자동완성, friend
+   자동 삽입). 남은 것: 솔루션 전체가 아니라 바뀐 번역 단위만 IntelliSense 를 새로 고치기, CMake(폴더 열기)
    지원, C++26 이행 codemod, Marketplace 배포.
 3. **C++26 네이티브 백엔드** — `std::meta::nonstatic_data_members_of` + `annotations_of` 로 `schema_of<T>`
    를 만든다. 질의·직렬화 API 는 바뀌지 않는다.

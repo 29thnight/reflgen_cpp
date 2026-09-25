@@ -3,7 +3,7 @@
   <Metadata>
     <Identity Id="Reflgen.VisualStudio.29thnight" Version="0.1.0" Language="en-US" Publisher="29thnight" />
     <DisplayName>reflgen</DisplayName>
-    <Description xml:space="preserve">Attribute-driven C++ reflection without macros. Regenerates reflgen code when a header is saved, shows RG diagnostics in the Error List, and completes [[reflgen::…]] attributes. Headers and project files stay untouched: the build force-includes the generated code.</Description>
+    <Description xml:space="preserve">Attribute-driven C++ reflection without macros. Regenerates reflgen code when a header is saved, shows RG diagnostics in the Error List, completes [[reflgen::…]] attributes, and adds `friend struct reflgen::access;` to classes that reflect non-public members. Generated code never goes into headers or project files: the build force-includes it.</Description>
     <License>LICENSE.txt</License>
     <Tags>C++;reflection;serialization;code generation;attributes</Tags>
   </Metadata>

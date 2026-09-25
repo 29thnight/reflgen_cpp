@@ -2,6 +2,8 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.VisualStudio;
+using Microsoft.VisualStudio.ComponentModelHost;
+using Microsoft.VisualStudio.Editor;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Task = System.Threading.Tasks.Task;
@@ -9,8 +11,9 @@ using Task = System.Threading.Tasks.Task;
 namespace Reflgen.VisualStudio
 {
     // 솔루션이 열리면 뒤에서 올라와 저장을 지켜본다 — [[reflgen::reflect]] header 를 저장하면 생성기를 돌려
-    // 진단을 Error List 에 올린다. header 와 프로젝트 파일은 건드리지 않는다(빌드가 생성물을 강제 include 한다).
-    // 자동완성은 MEF 쪽(AttributeCompletionSource)이 맡는다.
+    // 진단을 Error List 에 올린다. 생성 결과는 header 에 넣지 않는다(빌드가 강제 include 한다). header 에 더하는
+    // 것은 비공개 멤버를 반영할 때 필요한 `friend struct reflgen::access;` 한 줄뿐이고, 프로젝트 파일은 건드리지
+    // 않는다. 자동완성은 MEF 쪽(AttributeCompletionSource)이 맡는다.
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [Guid(PackageGuidString)]
     [ProvideAutoLoad(VSConstants.UICONTEXT.SolutionExistsAndFullyLoaded_string, PackageAutoLoadFlags.BackgroundLoad)]
@@ -32,9 +35,10 @@ namespace Reflgen.VisualStudio
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
             var options = (ReflgenOptionsPage)GetDialogPage(typeof(ReflgenOptionsPage));
+            var componentModel = await GetServiceAsync(typeof(SComponentModel)) as IComponentModel;
             var documents = await GetServiceAsync(typeof(SVsRunningDocumentTable)) as IVsRunningDocumentTable;
             var solution = await GetServiceAsync(typeof(SVsSolution)) as IVsSolution;
-            if (documents == null || solution == null)
+            if (componentModel == null || documents == null || solution == null)
             {
                 return; // 편집기가 없는 환경(명령줄 devenv 등)에서는 할 일이 없다
             }
@@ -42,7 +46,8 @@ namespace Reflgen.VisualStudio
             var projects = new ProjectBridge(this);
             _reporter = new DiagnosticsReporter(this);
             var runner = new GenerationRunner(JoinableTaskFactory, projects, _reporter, options);
-            var listener = new SaveListener(documents, projects, runner, _reporter, options);
+            var listener = new SaveListener(documents, componentModel.GetService<IVsEditorAdaptersFactoryService>(),
+                                            projects, runner, _reporter, options);
             ErrorHandler.ThrowOnFailure(documents.AdviseRunningDocTableEvents(listener, out _documentEventsCookie));
             _documents = documents;
             var solutionListener = new SolutionListener(projects, runner, _reporter, options);
