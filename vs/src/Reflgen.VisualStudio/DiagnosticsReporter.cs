@@ -90,6 +90,9 @@ namespace Reflgen.VisualStudio
                 {
                     return;
                 }
+                // 만들 때 한 번만 Output 창의 선택을 이 창으로 돌린다 — 그러지 않으면 드롭다운에서 골라야 보인다.
+                // 이후 로그는 사용자가 고른 창(빌드 등)을 빼앗지 않는다. Output 창 자체를 열지는 않는다.
+                _pane.Activate();
             }
             _pane.OutputStringThreadSafe(message + Environment.NewLine);
         }

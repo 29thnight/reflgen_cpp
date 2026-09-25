@@ -259,7 +259,7 @@ dotnet test vs\tests\Reflgen.VisualStudio.Core.Tests
 
 - **저장 시 생성** — `[[reflgen::reflect]]` 가 있는(또는 지운) header 를 저장하면 그 프로젝트의 `ReflgenGenerate`
   만 별도 MSBuild 프로세스로 돌려 RG 진단을 Error List 에 올린다. VS 빌드가 도는 중이면 건너뛴다(그 빌드가
-  생성한다). 과정은 Output 창 "reflgen".
+  생성한다). 과정은 Output 창 "reflgen"(VS 를 띄운 뒤 첫 로그 때 한 번 그 창이 선택된다).
 - **처음 열 때 생성** — 한 번도 생성하지 않은 프로젝트는 열 때 생성한다. 그러지 않으면 IntelliSense 가 빈 주입
   header 를 보고 reflection 을 쓰는 코드에 빨간 줄을 긋는다.
 - **IntelliSense 새로 고침** — IntelliSense 는 프로젝트 밖(`$(IntDir)`)의 강제 include 파일이 바뀐 것을 스스로
