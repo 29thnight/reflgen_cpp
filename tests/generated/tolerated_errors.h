@@ -3,7 +3,9 @@
 // 코드베이스(게임 엔진)에 흔하다: __FUNCSIG__ 표기를 못 박은 static_assert, clang 이 상수 식으로 받지 않는 enum
 // 캐스트 같은 것. 생성기는 이 오류들을 넘기고 반영 선언을 생성해야 한다. 이 header 는 컴파일하지 않는다.
 #include "reflgen/reflgen.h"
+#include <cstddef>
 #include <immintrin.h>
+#include <utility>
 
 namespace tolerated_errors
 {
@@ -12,6 +14,16 @@ namespace tolerated_errors
     template<class V>
     concept subscriptable = requires(V value) { value[0]; };
     static_assert(subscriptable<__m128>, "clang's builtin headers were not used");
+
+    // clang 의 식 중첩 한도(-fbracket-depth)를 넘는 fold — MSVC 에는 없는 한도라 MSVC 로만 빌드하는 코드에 나온다
+    // (CreatorEngine 의 enum 스캔은 값 257 개를 한 fold 로 편다). 기본 한도가 clang 판마다 다르고(20 은 256, 22 는
+    // 2048) 넘으면 치명 오류로 파싱이 멈추므로, 생성기가 판과 무관하게 넉넉히(4096) 준다. 3000 은 22 의 기본도 넘는다.
+    template<std::size_t... I>
+    constexpr std::size_t count_all(std::index_sequence<I...>)
+    {
+        return (std::size_t(I < 100000) + ... + std::size_t(0));
+    }
+    static_assert(count_all(std::make_index_sequence<3000>{}) == 3000);
 
     // 반영 선언 밖의 오류 21 개 — clang 의 기본 한도(20)를 넘는다. 한도에서 파싱을 멈추면 뒤의 survivor 를 놓친다.
     constexpr int clang_only = 0;

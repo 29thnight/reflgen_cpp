@@ -777,8 +777,15 @@ namespace reflgen::generator
             // -fparse-all-comments: 카탈로그가 `//` 주석도 attribute 설명으로 쓴다(기본은 doc 주석만 붙는다).
             // -ferror-limit=0: 오류가 많아도 끝까지 파싱한다 — 반영 선언 밖의 오류는 넘기므로(report_clang_errors)
             // 한도에서 멈추면 뒤에 오는 반영 선언을 놓친다.
-            std::vector<std::string> arguments = {"-x", "c++", "-Wno-unknown-attributes", "-fparse-all-comments",
-                                                  "-ferror-limit=0"};
+            // -fbracket-depth=4096: 식 중첩 한도는 MSVC 에 없고 clang 은 넘으면 치명 오류로 파싱을 멈춘다. 기본값이
+            // libclang 판마다 달라서(20 은 256, 22 는 2048) 생성기를 빌드한 VS 에 따라 같은 코드가 갈렸다 — 값 257 개를
+            // 한 fold 로 펴는 enum 스캔이 20 에서 멈췄다. 판과 무관하게 넉넉히 준다(사용자 인자가 뒤에 와서 덮는다).
+            std::vector<std::string> arguments = {"-x",
+                                                  "c++",
+                                                  "-Wno-unknown-attributes",
+                                                  "-fparse-all-comments",
+                                                  "-ferror-limit=0",
+                                                  "-fbracket-depth=4096"};
             if (!options.resource_directory.empty())
             {
                 // 내장 header 를 빌드 시스템이 주는 -isystem(MSVC·Windows SDK include)보다 먼저 찾는다 — clang-cl 의

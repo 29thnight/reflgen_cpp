@@ -190,7 +190,8 @@ reflgen_generate(my_game
   `static_assert`, clang 이 상수 식으로 받지 않는 enum 캐스트 등)에서 clang 오류가 난다. 반영 선언 밖의 오류는 넘기고
   수만 알린다(`note RG0101`) — 생성 코드는 반영 선언의 이름과 attribute 만 옮기고 컴파일은 사용자의 컴파일러가 한다.
   반영 선언 안의 오류(RG0100)나, 밖의 오류(부모 클래스 등) 때문에 clang 이 무효로 본 반영 선언(RG0102)은 실패다 —
-  clang 이 그 선언을 잘못 읽었을 수 있다. 실패하면 넘겼던 오류도 위치와 함께 모두 알린다.
+  clang 이 그 선언을 잘못 읽었을 수 있다. 실패하면 넘겼던 오류도 위치와 함께 모두 알린다. MSVC 에 없는 식 중첩
+  한도(`-fbracket-depth`)는 libclang 판마다 기본값이 달라(20 은 256, 22 는 2048) 판과 무관하게 4096 으로 준다.
 
 진단은 MSVC 형식(`file(line,col): error RG0002: …`)이라 VS Error List 에서 원본으로 바로 간다. 생성기는 편집기
 자동완성에 쓸 attribute 카탈로그(`reflgen_<module>.attributes.tsv` — attribute 이름공간의 타입, 생성자 시그니처,
