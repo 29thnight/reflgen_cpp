@@ -10,6 +10,7 @@
 #include "reflgen/core/schema.h"
 #include "reflgen/core/static_string.h"
 #include "reflgen/core/type_id.h"
+#include "reflgen/core/version.h"
 #include "reflgen/runtime/registry.h"
 #include "reflgen/runtime/type_descriptor.h"
 #include "reflgen/serial/container_traits.h"

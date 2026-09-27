@@ -1,6 +1,8 @@
 #include "emit.h"
+#include "reflgen/core/version.h"
 #include <algorithm>
 #include <cstddef>
+#include <string>
 #include <string_view>
 
 namespace reflgen::generator
@@ -215,7 +217,14 @@ namespace reflgen::generator
         out.line("// Force-included into every translation unit of module '" + module_name +
                  "' by the build system; source headers never include it.");
         out.line("#pragma once");
+        out.line("#include \"reflgen/core/version.h\"");
         out.line("#include \"reflgen/runtime/registry.h\"");
+        // 모든 번역 단위에 들어가는 자리라 한 번이면 모듈 전체가 검사된다 — 생성기와 header 의 판이 어긋나면 멈춘다.
+        const std::string format = std::to_string(::reflgen::generated_code_format);
+        out.line("static_assert(::reflgen::generated_code_format == " + format + ",");
+        out.line("              \"reflgen: this code was generated for generated code format " + format +
+                 ", but the reflgen headers expect another format; regenerate it with the reflgen generator that "
+                 "matches these headers\");");
         for (const std::string& path : generated_paths)
         {
             out.line("#include \"" + path + "\"");

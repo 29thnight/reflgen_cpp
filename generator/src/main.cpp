@@ -3,6 +3,7 @@
 //   reflgen --module NAME --output DIR [--attribute-scope NS]... [--clang-args-file FILE]
 //           [--depfile FILE] [--dependency-list FILE] [--discover] HEADER... [-- CLANG_ARG...]
 //   reflgen @FILE          FILE 의 한 줄을 인자 하나로 펼친다(명령줄 길이 제한을 피하려는 것)
+//   reflgen --version      판과 생성 코드 형식을 찍는다
 //
 // 빌드 시스템(cmake/reflgen.cmake 의 reflgen_generate, msbuild/reflgen.targets)이 부르는 것이
 // 기본이다. 출력은 모두 빌드 중간 산출물이다 — 사용자 header 는 아무것도 include 하지 않고, 빌드 시스템이
@@ -17,6 +18,7 @@
 #include "emit.h"
 #include "extract.h"
 #include "clang_api.h"
+#include "reflgen/core/version.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -37,7 +39,8 @@ namespace
     constexpr std::string_view usage =
         "usage: reflgen --module NAME --output DIR [--attribute-scope NS]... "
         "[--clang-args-file FILE] [--depfile FILE] [--dependency-list FILE] [--discover] HEADER... "
-        "[-- CLANG_ARG...]\n";
+        "[-- CLANG_ARG...]\n"
+        "       reflgen --version\n";
 
     struct cli_options
     {
@@ -360,6 +363,12 @@ namespace
     {
         diagnostics report;
         const std::vector<std::string> arguments = expand_response_files(argc, argv, report);
+        if (std::ranges::find(arguments, "--version") != arguments.end())
+        {
+            std::printf("reflgen %.*s (generated code format %d)\n", static_cast<int>(::reflgen::version_string.size()),
+                        ::reflgen::version_string.data(), ::reflgen::generated_code_format);
+            return 0;
+        }
         std::optional<cli_options> cli = report.has_errors() ? std::nullopt : parse_options(arguments, report);
         if (!cli)
         {

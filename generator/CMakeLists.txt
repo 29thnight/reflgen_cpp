@@ -26,16 +26,19 @@ if(NOT REFLGEN_LIBCLANG)
 endif()
 message(STATUS "reflgen: libclang = ${REFLGEN_LIBCLANG}")
 
+# libclang 없이 시험할 수 있는 부분 — attribute 읽기와 생성 코드 쓰기.
 add_library(reflgen_generator_core STATIC
-    src/attribute_scan.cpp)
+    src/attribute_scan.cpp
+    src/emit.cpp)
 target_include_directories(reflgen_generator_core PUBLIC src)
+# 생성 코드 형식(reflgen/core/version.h)을 라이브러리와 같은 곳에서 읽는다.
+target_link_libraries(reflgen_generator_core PUBLIC reflgen::reflgen)
 target_compile_features(reflgen_generator_core PUBLIC cxx_std_20)
 
 add_executable(reflgen_cli
     src/catalog.cpp
     src/clang_api.cpp
     src/class_scope.cpp
-    src/emit.cpp
     src/extract.cpp
     src/main.cpp)
 set_target_properties(reflgen_cli PROPERTIES OUTPUT_NAME reflgen)

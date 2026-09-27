@@ -1,7 +1,12 @@
 cmake_minimum_required(VERSION 3.25)
 
+# 판은 include/reflgen/core/version.h 한 곳에서 정한다.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/include/reflgen/core/version.h" reflgen_version_line
+    REGEX "version_string = \"[0-9]+\\.[0-9]+\\.[0-9]+\"")
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" reflgen_version "${reflgen_version_line}")
+
 project(reflgen
-    VERSION 0.1.0
+    VERSION ${reflgen_version}
     DESCRIPTION "Macro-free C++20 reflection and format-agnostic serialization"
     LANGUAGES CXX)
 
@@ -53,6 +58,7 @@ if(REFLGEN_BUILD_TESTS)
     enable_testing()
     set(REFLGEN_TEST_SOURCES
         tests/harness.cpp
+        tests/version_tests.cpp
         tests/static_string_tests.cpp
         tests/annotation_readiness_tests.cpp
         tests/name_tests.cpp
@@ -88,7 +94,10 @@ if(REFLGEN_BUILD_TESTS)
             list(APPEND reflgen_harness_sources tests/msvc_crt.cpp)
         endif()
 
-        add_executable(reflgen_generator_tests generator/tests/attribute_scan_tests.cpp ${reflgen_harness_sources})
+        add_executable(reflgen_generator_tests
+            generator/tests/attribute_scan_tests.cpp
+            generator/tests/emit_tests.cpp
+            ${reflgen_harness_sources})
         target_include_directories(reflgen_generator_tests PRIVATE tests)
         target_link_libraries(reflgen_generator_tests PRIVATE reflgen_generator_core reflgen::reflgen)
         reflgen_configure_target(reflgen_generator_tests)
@@ -130,6 +139,15 @@ if(REFLGEN_BUILD_TESTS)
             COMMAND reflgen_cli --output "${CMAKE_CURRENT_BINARY_DIR}/reflgen/response_file"
                     "@tests/generated/response_with_bom.rsp"
             WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
+        # 판이 version.h 한 곳에서만 나오는지 — CMake·생성기 --version·VSIX 매니페스트.
+        add_test(NAME reflgen_version_consistency
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DPROJECT_VERSION=${PROJECT_VERSION}"
+                "-DMANIFEST=${PROJECT_SOURCE_DIR}/vs/src/Reflgen.VisualStudio/source.extension.vsixmanifest"
+                "-DHEADER=${PROJECT_SOURCE_DIR}/include/reflgen/core/version.h"
+                -P "${PROJECT_SOURCE_DIR}/tests/version/check_version.cmake")
 
         # 프로젝트의 header 전부를 후보로 받았을 때(--discover, MSBuild 가 쓴다).
         add_test(NAME reflgen_generator_discover
