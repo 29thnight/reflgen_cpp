@@ -320,4 +320,26 @@ namespace reflgen::generator
         }
         return text;
     }
+
+    std::vector<std::string> external_identifiers(std::span<const token> tokens, std::size_t begin, std::size_t end,
+                                                  const qualifier_lookup& qualifier_of)
+    {
+        std::vector<std::string> names;
+        const token* previous = nullptr;
+        for (auto item = first_token_from(tokens, begin); item != tokens.end() && item->end <= end; ++item)
+        {
+            if (item->kind == token_kind::comment)
+            {
+                continue;
+            }
+            const bool root = item->kind == token_kind::identifier && !follows_member_access(previous);
+            if (root && item->spelling != "reflgen" && item->spelling != "std" &&
+                qualifier_of(item->spelling).empty() && std::ranges::find(names, item->spelling) == names.end())
+            {
+                names.push_back(item->spelling);
+            }
+            previous = &*item;
+        }
+        return names;
+    }
 } // namespace reflgen::generator

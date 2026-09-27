@@ -10,6 +10,7 @@ namespace
     using reflgen::generator::argument_text;
     using reflgen::generator::attribute_group;
     using reflgen::generator::declares_reflection;
+    using reflgen::generator::external_identifiers;
     using reflgen::generator::groups_between;
     using reflgen::generator::groups_run_at;
     using reflgen::generator::groups_run_before;
@@ -222,6 +223,24 @@ namespace
         // 주석이 빠지고, '::' '.' '->' 뒤의 이름은 그대로다.
         check_equal(rebuilt, std::string("0, ::game::t::max_hp , limits::cap, ::game::t::cfg.value, other->x, "
                                          "::game::t::f( 1 ,2 )"));
+    });
+
+    // 가벼운 주입: 생성 header 는 원본을 include 하지 않으므로 인자가 쓰는 이름은 멤버(T::)·reflgen·std 여야 한다.
+    // 그 밖의 이름(원본 header 나 다른 header 의 상수)이 있으면 원본 header 를 include 해야 한다.
+    const test external_names("arguments: root names that are not members, reflgen or std", [] {
+        const std::string_view text =
+            "[[r(0, max_hp, limits::cap, reflgen::range(1, 2), std::numeric_limits<int>::max(), cfg.value, cap)]]";
+        const std::vector<token> tokens = lex(text);
+        const std::vector<attribute_group> groups = scan_attribute_groups(tokens);
+        require(groups.size() == 1);
+        const auto& attribute = groups[0].attributes[0];
+        const std::vector<std::string> names =
+            external_identifiers(tokens, attribute.arguments_begin, attribute.arguments_end, [](std::string_view name) {
+                return name == "max_hp" || name == "cfg" ? std::string("T::") : std::string();
+            });
+        require(names.size() == 2);
+        check_equal(names[0], std::string("limits")); // limits::cap 의 뿌리 — cap 은 :: 뒤라 뿌리가 아니다
+        check_equal(names[1], std::string("cap"));    // 한정 없이 쓴 cap 은 멤버가 아니다
     });
 
     const test discovery("discover: headers that declare reflection", [] {

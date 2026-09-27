@@ -9,10 +9,11 @@ file(MAKE_DIRECTORY "${directory}")
 file(COPY "${HEADER}" DESTINATION "${directory}")
 get_filename_component(header_name "${HEADER}" NAME)
 get_filename_component(stem "${HEADER}" NAME_WLE)
+get_filename_component(header_directory "${HEADER}" DIRECTORY) # 복사한 header 가 include 하는 이웃(test_attributes.h)
 
 execute_process(
     COMMAND "${GENERATOR}" --module unicode --output "${directory}/out" --attribute-scope generated_tests
-            "${directory}/${header_name}" -- "-I${INCLUDE}"
+            "${directory}/${header_name}" -- "-I${INCLUDE}" "-I${header_directory}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
     ERROR_VARIABLE output)

@@ -1,5 +1,6 @@
 // 코드 생성기 end-to-end 시험 — game_types.h 의 attribute 에서 생성된 서술이 손으로 쓴
 // 서술과 같은 일을 하는가.
+#include "fallback_types.h"
 #include "game_types.h"
 #include "harness.h"
 #include "reflgen/json.h"
@@ -49,7 +50,7 @@ namespace
         const auto& fields = reflgen::schema_of<generated_tests::stats>.fields;
         const auto& level = std::get<0>(fields);
         static_assert(std::remove_cvref_t<decltype(level)>::has_attribute<reflgen::range<int>>());
-        // max_level 은 클래스의 이름공간에서 찾아진다.
+        // max_level 은 클래스의 정적 멤버다 — 생성 코드는 T::max_level 로 찾는다.
         check_equal(level.attribute<reflgen::range<int>>().max, 99);
 
         const auto& health = std::get<1>(fields);
@@ -139,4 +140,14 @@ namespace
         check(loaded_hero->affinity == generated_tests::element::wind);
         check_equal(loaded_hero->inventory.at("potion"), 3);
     });
+
+    // 반영하지 않는 중간층(stamped<Self, Base>)을 건너 가장 가까운 반영된 조상(entity)을 부모로 적는다.
+    const test nearest_reflected_ancestor("generated: bases skip unreflected layers to the nearest reflected ancestor",
+                                          [] {
+                                              generated_tests::stamped_hero value;
+                                              value.name = "knight";
+                                              value.stamp = 9;
+                                              check_equal(reflgen::json::to_string(value),
+                                                          std::string(R"({"name":"knight","rank":1})"));
+                                          });
 } // namespace

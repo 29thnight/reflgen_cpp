@@ -35,23 +35,45 @@ namespace reflgen::generator
         std::vector<attribute_use> attributes;
     };
 
+    // 다른 클래스를 가리키는 것(부모) — 생성 header 가 전방 선언할 수 있게 이름공간과 키를 함께 둔다.
+    struct type_reference
+    {
+        std::string qualified_name; // "engine::transform"
+        std::string name;           // "transform"
+        std::string class_key = "struct";
+        std::string enclosing_namespace; // "engine", "a::b" — 비면 전역
+        bool nested = false;             // 클래스 안에 선언됐다 — 전방 선언할 수 없다
+        bool templated = false;          // 템플릿 특수화다 — 전방 선언하지 않는다
+    };
+
     struct class_model
     {
         std::string qualified_name;          // "game::player"
+        std::string name;                    // "player" — 전방 선언에 쓴다
+        std::string class_key = "struct";    // "class" 또는 "struct" — 전방 선언이 원본과 같은 키를 쓴다
         std::string schema_name;             // 등록 키·다형 태그 — 기본은 qualified_name
         std::vector<std::string> namespaces; // 감싸는 이름공간들, 바깥부터: "game", "game::detail"
-        std::vector<std::string> bases;      // public 직계 부모의 완전한 이름
+        // 가장 가까운 반영된 조상들. 반영하지 않는 public 부모(CRTP 중간층 등)는 건너 그 위를 본다.
+        std::vector<type_reference> bases;
         std::vector<field_model> fields;
         std::vector<method_model> methods;
         std::vector<attribute_use> attributes;
         source_position position;
+        bool nested = false; // 클래스 안에 선언됐다 — 전방 선언할 수 없어 원본 header 가 필요하다
+        // attribute 인자가 쓰는 멤버·reflgen·std 밖의 이름 — 있으면 원본 header 가 필요하다.
+        std::vector<std::string> external_names;
     };
 
     struct enum_model
     {
         std::string qualified_name;
+        std::string name;                    // 전방 선언에 쓴다
+        std::vector<std::string> namespaces; // class_model 과 같다
         std::vector<std::string> enumerators;
         source_position position;
+        bool nested = false;
+        bool scoped = false;         // enum class
+        std::string underlying_type; // 적힌 기반 타입("unsigned char") — 비면 적지 않았다
     };
 
     // 편집기 자동완성에 내보내는 attribute 하나 — 생성기 지시어(reflect, ignore)와 스키마로 옮겨지는

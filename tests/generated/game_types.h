@@ -2,25 +2,16 @@
 // 코드 생성기 end-to-end 시험용 타입. 손으로 쓴 reflect() 가 하나도 없다 — 서술은 전부
 // [[reflgen::…]] attribute 에서 생성된다.
 #include "reflgen/reflgen.h"
+#include "test_attributes.h"
 #include <map>
 #include <string>
 #include <string_view>
 #include <vector>
 
+// 이 header 의 타입은 모두 전방 선언할 수 있다 — 생성 header 는 이 파일을 include 하지 않는다(가벼운 주입).
+// 원본 header 가 필요한 경우(중첩 타입, 이름공간 상수를 쓰는 인자)는 fallback_types.h 에 있다.
 namespace generated_tests
 {
-    constexpr int max_level = 99;
-
-    // 사용자 정의 attribute — ATTRIBUTE_SCOPES 에 generated_tests 를 넣었으므로 옮겨진다. 이 이름공간에는 데이터
-    // 타입도 있으므로 [[reflgen::attribute]] 로 편집기 자동완성 카탈로그에 이것만 내보낸다.
-    // 문자열은 static_string 에 담는다 — 구조적 타입이라 C++26 주석 값으로도 그대로 쓰인다.
-    struct [[reflgen::attribute]] tooltip
-    {
-        reflgen::static_string text;
-
-        constexpr explicit tooltip(std::string_view value) : text(value) {}
-    };
-
     // 1 << 10 은 값 범위 스캔(기본 [-128, 128]) 밖이다 — 생성된 정확한 표로만 이름이 붙는다.
     enum class [[reflgen::reflect]] element
     {
@@ -35,6 +26,8 @@ namespace generated_tests
         friend struct reflgen::access;
 
       public:
+        static constexpr int max_level = 99; // 인자가 쓰는 자기 멤버 — 생성 코드는 T::max_level 로 찾는다
+
         [[reflgen::range(1, max_level)]] int level = 1;
         [[reflgen::display_name("Health"), generated_tests::tooltip("hit points")]] float health = 100.0f;
         [[reflgen::ignore]] int cache = 0;
@@ -72,6 +65,18 @@ namespace generated_tests
         std::map<std::string, int> inventory;
     };
 
+    // 반영하지 않는 중간층(엔진의 CRTP 정체성 베이스 같은 것) — 그 위의 반영된 조상의 필드가 이어져야 한다.
+    template<class Self, class Base>
+    struct stamped : Base
+    {
+        int stamp = 0; // 중간층의 필드는 반영되지 않는다
+    };
+
+    struct [[reflgen::reflect]] stamped_hero : stamped<stamped_hero, entity>
+    {
+        int rank = 1;
+    };
+
     namespace nested
     {
         struct [[reflgen::reflect]] marker
@@ -79,26 +84,6 @@ namespace generated_tests
             int id = 0;
         };
     } // namespace nested
-
-    struct limits
-    {
-        static constexpr int cap = 64;
-
-        // attribute 인자는 자기 클래스와 감싸는 클래스의 이름을 한정 없이 쓴다 — 생성 코드는 클래스
-        // 밖에 있으므로 생성기가 한정해 준다.
-        struct [[reflgen::reflect]] slot
-        {
-            static constexpr int floor = 1;
-
-            [[reflgen::range(floor, cap)]] int count = 1;
-            // 이름 뒤 attribute 는 그 declarator 에만 붙는다 — scratch 만 빠지고 weight 는 남는다.
-            int scratch [[reflgen::ignore]] = 0, weight = 2;
-            [[reflgen::display_name("Tag" // 인자 안의 주석은 생성 코드로 옮겨지지 않는다
-                                    )]] std::string tag;
-
-            [[reflgen::reflect]] explicit operator bool() const { return count != 0; }
-        };
-    };
 
     // 반영하지 않는 타입 — 생성물에 나타나지 않아야 한다.
     struct plain

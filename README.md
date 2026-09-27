@@ -126,8 +126,6 @@ include(`/FI`, `-include`)한다.
 
 namespace game
 {
-    constexpr int max_level = 99;
-
     enum class [[reflgen::reflect]] element { fire, water, wind = 1 << 10 };     // 스캔 범위 밖 값도 정확한 표
 
     class [[reflgen::reflect("game.player")]] player : public entity               // 인자 = 등록 키·다형 태그
@@ -135,10 +133,11 @@ namespace game
         friend struct reflgen::access;                                             // private 멤버를 반영하려면
 
       public:
+        static constexpr int max_level = 99;
         static constexpr float max_hp = 999.0f;
 
-        [[reflgen::range(1, max_level)]] int level = 1;                            // 이름공간의 이름도,
-        [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]] float hp = 100.0f;   // 클래스 멤버 이름도 그대로
+        [[reflgen::range(1, max_level)]] int level = 1;                            // 클래스 멤버 이름을
+        [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]] float hp = 100.0f;   // 한정 없이 그대로
         [[reflgen::ignore]] int cache = 0;                                         // 반영에서 제외
         [[reflgen::transient]] int frame = 0;                                      // 반영하되 저장하지 않음
         [[reflgen::reflect]] void level_up(int amount);                            // 메서드는 표시한 것만
@@ -153,17 +152,20 @@ namespace game
 reflgen_generate(my_game
     HEADERS include/game/player.h include/game/item.h
     MODULE game                       # 등록 함수: reflgen::generated::register_game()
-    ATTRIBUTE_SCOPES game)            # reflgen 외에 옮길 attribute 이름공간
+    ATTRIBUTE_SCOPES game             # reflgen 외에 옮길 attribute 이름공간
+    ATTRIBUTE_HEADERS include/game/attributes.h) # 그 attribute 타입(game::tooltip)의 정의
 ```
 
 - **반영 범위**: `[[reflgen::reflect]]` 클래스의 non-static data member 전부(C++26 native reflection 과 같은 결과).
-  `[[reflgen::ignore]]` 로 뺀다. 메서드는 `[[reflgen::reflect]]` 를 단 것만. `public` 부모는 `base<>` 로 이어진다.
+  `[[reflgen::ignore]]` 로 뺀다. 메서드는 `[[reflgen::reflect]]` 를 단 것만. `public` 부모 가운데 반영된 것은
+  `base<>` 로 이어지고, 반영하지 않는 부모(CRTP 중간층, 서드파티 베이스)는 건너 그 위의 가장 가까운 반영된 조상으로
+  이어진다.
 - **attribute 옮기기**: `reflgen::` 과 `ATTRIBUTE_SCOPES` 의 이름공간만 스키마로 간다. 인자 없는
   attribute(`[[reflgen::transient]]`)는 표지 타입으로 보고 `{}` 를 붙인다. 선언 맨 앞의 attribute 는 그 선언의
   모든 멤버에, 이름 뒤의 attribute(`int x [[reflgen::ignore]], y;`)는 그 멤버에만 붙는다.
-- **인자의 이름**: 클래스 안에서 쓴 것처럼 풀린다. 생성 코드는 클래스 밖에 있으므로, 자기 클래스(부모 포함)와
-  감싸는 클래스의 멤버 이름은 생성기가 `::game::player::max_hp` 처럼 한정하고, 이름공간의 이름은
-  `using namespace` 로 보이게 한다. 인자 안의 주석은 옮기지 않는다.
+- **인자의 이름**: 클래스 안에서 쓴 것처럼 풀린다. 생성 코드는 클래스 밖에 있으므로, 자기 클래스(부모 포함)의
+  멤버 이름은 생성기가 `T::max_hp` 처럼 한정한다. 이름공간 상수 같은 그 밖의 이름도 쓸 수 있지만, 그러면 그
+  header 의 생성물이 원본 header 를 include 한다(아래 **비용**). 인자 안의 주석은 옮기지 않는다.
 - **오류 위치**: attribute 인자에 오타가 있으면 컴파일 오류가 생성 파일이 아니라 원본 header 의 그 줄을
   가리킨다(생성 코드가 `#line` 으로 원본을 가리킨다).
 - **등록**: 다형 포인터로 읽고 쓸 타입은 시작할 때 `reflgen::generated::register_<module>()` 를 한 번 부른다.
@@ -173,8 +175,12 @@ reflgen_generate(my_game
   것이다. 주입(강제 include)은 target 과 그것을 링크하는 target 에 `PUBLIC`·`BUILD_INTERFACE` 로 간다 — header 가
   생성 파일을 include 하지 않으므로 reflection 은 강제 include 로만 소비자에게 닿는다. 설치(install)할
   라이브러리의 소비자에게는 전해지지 않는다. CMake 3.25 이상.
-- **비용**: 주입 header 가 반영 대상 header 를 모두 include 하므로, 그 target 의 모든 번역 단위가 그것들을
-  읽는다. 미리 컴파일된 header 로 줄인다.
+- **비용(가벼운 주입)**: 주입 header 는 반영하는 타입을 **전방 선언**만 하고, 서술은 타입을 쓰는 자리(타입이
+  완전한 곳)에서 실체화된다 — 원본 header 를 모든 번역 단위에 끌고 다니지 않으므로 header 하나를 고쳐도 그것을
+  include 하는 번역 단위만 다시 컴파일되고, 원본 header 의 매크로(`windows.h` 등)가 새지 않는다. 전방 선언으로 설
+  수 없는 header — 클래스 안의 타입, 이름공간 상수를 쓰는 인자, 템플릿 특수화 부모, 기반 타입을 적지 않은 비스코프드
+  열거형, `ATTRIBUTE_HEADERS` 없이 쓴 사용자 attribute — 는 생성물이 원본 header 를 include 하고 그 까닭을 주석에
+  적는다. 등록 함수 정의(`reflgen_<module>.cpp`)만 원본 header 를 모두 include 한다.
 - **C 소스**: 같은 target 의 C 번역 단위(서드파티 C 코드)에는 주입하지 않는다.
 - **요구 사항**: libclang. Visual Studio 는 동봉본(`VC/Tools/Llvm`)을 자동으로 찾는다. 그 밖은
   `REFLGEN_LIBCLANG_DIR` 로 준다. C API header 는 `third_party/clang-c`(LLVM 22.1.3, Apache-2.0 WITH LLVM-exception).
@@ -217,6 +223,7 @@ namespace editor
 <PropertyGroup>
   <ReflgenExecutable>path\to\reflgen.exe</ReflgenExecutable>  <!-- 설치 배치(<prefix>\bin)면 생략 -->
   <ReflgenAttributeScopes>editor</ReflgenAttributeScopes>
+  <ReflgenAttributeHeaders>include\editor\attributes.h</ReflgenAttributeHeaders>
 </PropertyGroup>
 ```
 
@@ -240,6 +247,7 @@ namespace editor
 | `ReflgenIncludeDirectory` | 저장소 또는 설치 배치의 `include` |
 | `ReflgenModule` | 프로젝트 이름(식별자로 바꿈) — `reflgen::generated::register_<module>()` |
 | `ReflgenAttributeScopes` | 없음(`reflgen` 만) |
+| `ReflgenAttributeHeaders` | 없음 — 사용자 attribute 타입을 정의한 header. 주입 header 가 include 한다 |
 | `ReflgenOutputDirectory` | `$(IntDir)reflgen\` |
 
 ### Visual Studio 확장

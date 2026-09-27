@@ -12,7 +12,10 @@ namespace reflgen::generator
         std::vector<std::string> headers;          // 정규화한 절대 경로
         std::vector<std::string> clang_arguments;  // -I, -D, -std 등(빌드 시스템이 준다)
         std::vector<std::string> attribute_scopes; // reflgen 외에 옮길 attribute 이름공간
-        std::string output_directory;              // 정규화한 절대 경로
+        // 사용자 이름공간의 attribute 타입을 정의한 header — 주입 header 가 include 한다. 없으면 사용자 attribute 를
+        // 쓰는 타입은 원본 header 가 필요하다(생성 코드가 attribute 타입을 볼 길이 그것뿐이다).
+        std::vector<std::string> attribute_headers;
+        std::string output_directory; // 정규화한 절대 경로
         std::string module_name;
     };
 

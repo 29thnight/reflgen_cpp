@@ -10,7 +10,7 @@ namespace Reflgen.VisualStudio
     public sealed record FriendInsertion(string ClassName, int Position, string Text);
 
     // [[reflgen::reflect]] 클래스가 공개되지 않은 멤버를 반영하는데 `friend struct reflgen::access;` 가 없으면 넣을
-    // 자리를 찾는다. 생성 코드는 클래스 밖(access::describe<T>)에서 멤버를 가리키므로 그 friend 가 있어야 한다.
+    // 자리를 찾는다. 생성 코드는 클래스 밖(access::describer<T>)에서 멤버를 가리키므로 그 friend 가 있어야 한다.
     // 생성기의 RG0002 와 같은 규칙에 하나를 더한다:
     //   - 비정적 데이터 멤버([[reflgen::ignore]]·bit-field·참조는 반영되지 않으므로 뺀다)
     //   - [[reflgen::reflect]] 를 단 비정적 메서드

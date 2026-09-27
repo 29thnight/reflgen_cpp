@@ -96,4 +96,10 @@ namespace reflgen::generator
     // 코드에서 한정 없이는 보이지 않는다.
     std::string argument_text(std::span<const token> tokens, std::size_t begin, std::size_t end,
                               const qualifier_lookup& qualifier_of);
+
+    // [begin, end) 의 뿌리 식별자('::', '.', '->' 뒤가 아닌 것) 가운데 qualifier_of 가 멤버로 한정하지 않고 reflgen·
+    // std 도 아닌 것을 나온 순서대로(한 번씩) 돌려준다. 생성 header 가 원본 header 없이 서려면 이것이 비어야 한다 —
+    // 생성 코드는 전방 선언만 보므로 원본 header 나 다른 header 에 선언된 이름을 찾지 못한다.
+    std::vector<std::string> external_identifiers(std::span<const token> tokens, std::size_t begin, std::size_t end,
+                                                  const qualifier_lookup& qualifier_of);
 } // namespace reflgen::generator

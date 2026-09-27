@@ -6,7 +6,7 @@
 //
 // ②는 손댈 수 없는 타입(서드파티)과 코드 생성기의 출력이 들어가는 자리다. 열거형도
 // ②로 정확한 열거자 표를 공급할 수 있다(그러면 값 범위 스캔을 하지 않는다).
-// 생성기는 ②를 만들되 본문을 access::describe<T>() 특수화에 둔다(private 접근 때문).
+// 생성기는 ②를 만들되 본문을 access::describer<T> 부분 특수화에 둔다(private 접근 때문).
 // 소비자는 둘 중 어느 것인지 알 필요가 없다 — reflgen::schema_of<T> 가 단일 창구다.
 #include <utility>
 
@@ -30,12 +30,17 @@ namespace reflgen
             return T::reflect();
         }
 
-        // 코드 생성기(reflgen-cli)가 타입마다 특수화하는 자리. 정의는 없다.
-        // 생성된 reflection<T>::value 가 이것을 부른다 — access 의 멤버라서, 클래스가
-        // friend struct reflgen::access; 를 선언하면 private 멤버의 포인터도 만들 수 있다.
-        // 손으로 쓰는 서술은 이 자리를 쓰지 않는다(①·②로 충분하다).
-        template<class T>
-        static consteval auto describe();
+        // 코드 생성기(reflgen-cli)가 타입마다 이름공간 범위에서 부분 특수화하는 자리. 정의는 없다.
+        //
+        //   template<class T> requires std::same_as<T, game::player>
+        //   struct reflgen::access::describer<T> { static consteval auto describe() { ... } };
+        //
+        // 본문이 T 에 의존하므로 T 를 쓰는 자리(타입이 완전한 곳)에서 실체화된다 — 생성 header 는 원본 header 를
+        // include 하지 않고 전방 선언만으로 선다(강제 include 가 모든 번역 단위에 원본 header 를 끌고 다니지 않는다).
+        // access 의 멤버라서, 클래스가 friend struct reflgen::access; 를 선언하면 private 멤버의 포인터도 만들 수
+        // 있다. 생성된 reflection<T>::value 가 describe() 를 부른다. 손으로 쓰는 서술은 이 자리를 쓰지 않는다(①·②).
+        template<class T, class = void>
+        struct describer;
     };
 
     namespace detail

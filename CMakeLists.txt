@@ -108,6 +108,7 @@ if(REFLGEN_BUILD_TESTS)
         enable_language(C)
         add_executable(reflgen_generated_tests
             tests/generated/generated_tests.cpp
+            tests/generated/light_tests.cpp
             tests/generated/c_unit.c
             ${reflgen_harness_sources})
         target_include_directories(reflgen_generated_tests PRIVATE tests tests/generated)
@@ -115,8 +116,9 @@ if(REFLGEN_BUILD_TESTS)
         reflgen_configure_target(reflgen_generated_tests)
         reflgen_generate(reflgen_generated_tests
             MODULE generated_tests
-            HEADERS tests/generated/game_types.h
-            ATTRIBUTE_SCOPES generated_tests)
+            HEADERS tests/generated/game_types.h tests/generated/fallback_types.h
+            ATTRIBUTE_SCOPES generated_tests
+            ATTRIBUTE_HEADERS tests/generated/test_attributes.h)
         add_test(NAME reflgen_generated_tests COMMAND reflgen_generated_tests)
 
         # 잘못 쓴 header 에 대한 진단(코드·위치·실패 종료).

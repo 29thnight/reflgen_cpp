@@ -4,6 +4,7 @@
 #       HEADERS include/game/player.h include/game/item.h
 #       [MODULE game]                      # 등록 함수 이름: reflgen::generated::register_game()
 #       [ATTRIBUTE_SCOPES game editor]     # reflgen 외에 스키마로 옮길 attribute 이름공간
+#       [ATTRIBUTE_HEADERS include/game/attributes.h] # 그 이름공간의 attribute 타입 정의 — 주입 header 가 include
 #       [OUTPUT_DIRECTORY dir])            # 구성(config)마다 그 아래 <config>/ 에 만든다
 #
 # header 는 아무것도 include 하지 않는다 — attribute 만 단다. 생성물을 묶은 주입 header
@@ -20,7 +21,7 @@ cmake_policy(PUSH)
 cmake_policy(VERSION 3.25)
 
 function(reflgen_generate target)
-    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "MODULE;OUTPUT_DIRECTORY" "HEADERS;ATTRIBUTE_SCOPES")
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "MODULE;OUTPUT_DIRECTORY" "HEADERS;ATTRIBUTE_SCOPES;ATTRIBUTE_HEADERS")
     if(NOT ARG_HEADERS)
         message(FATAL_ERROR "reflgen_generate(${target}): HEADERS is required")
     endif()
@@ -76,6 +77,12 @@ $<$<IN_LIST:cxx_std_26,${features}>:-std=c++26\n>")
     set(scope_arguments)
     foreach(scope IN LISTS ARG_ATTRIBUTE_SCOPES)
         list(APPEND scope_arguments --attribute-scope "${scope}")
+    endforeach()
+    # 사용자 attribute 타입의 정의 — 생성 header 는 원본 header 를 include 하지 않으므로 주입 header 가 이것을 include
+    # 해서 attribute 타입을 보게 한다. 없으면 사용자 attribute 를 쓰는 header 는 생성물이 원본을 include 한다.
+    foreach(attribute_header IN LISTS ARG_ATTRIBUTE_HEADERS)
+        get_filename_component(attribute_header "${attribute_header}" ABSOLUTE)
+        list(APPEND scope_arguments --attribute-header "${attribute_header}")
     endforeach()
 
     # HEADERS 가 include 하는 파일(상수·부모 클래스를 담은 공용 header 등)은 생성기가 depfile 로 알린다.

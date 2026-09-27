@@ -2,6 +2,7 @@
 #include "reflgen/core/version.h"
 #include <algorithm>
 #include <cstddef>
+#include <map>
 #include <string>
 #include <string_view>
 
@@ -67,12 +68,19 @@ namespace reflgen::generator
             const source_position* position = nullptr; // 있으면 이 항목의 오류가 원본을 가리킨다
         };
 
+        // 서술은 T 에 의존하는 부분 특수화다 — 본문은 T 를 쓰는 자리(타입이 완전한 곳)에서 실체화되므로 생성 header 가
+        // 원본 header 없이 전방 선언만으로 선다. 제약 한 줄: T 가 바로 이 타입일 때만 고른다.
+        std::string only_for(std::string_view parameter, const std::string& qualified_name)
+        {
+            return "    requires ::std::same_as<" + std::string(parameter) + ", ::" + qualified_name + ">";
+        }
+
         void emit_class(text_builder& out, const class_model& model, const std::string& generated_path)
         {
             std::vector<schema_entry> entries;
-            for (const std::string& base : model.bases)
+            for (const type_reference& base : model.bases)
             {
-                entries.push_back({"::reflgen::base<" + base + ">", nullptr});
+                entries.push_back({"::reflgen::base<::" + base.qualified_name + ">", nullptr});
             }
             for (const field_model& field : model.fields)
             {
@@ -104,24 +112,26 @@ namespace reflgen::generator
 
             out.line("// " + model.qualified_name + " - " + model.position.file + "(" +
                      std::to_string(model.position.line) + ")");
-            out.line("template<>");
-            out.line("consteval auto reflgen::access::describe<" + model.qualified_name + ">()");
+            out.line("template<class T>");
+            out.line(only_for("T", model.qualified_name));
+            out.line("struct reflgen::access::describer<T>");
             out.line("{");
+            out.line("    static consteval auto describe()");
+            out.line("    {");
             // attribute 인자는 클래스가 선언된 이름공간에서 쓴 것이다 — 그 이름들이 보이게 한다.
             for (const std::string& name : model.namespaces)
             {
-                out.line("    using namespace " + name + ";");
+                out.line("        using namespace " + name + ";");
             }
-            out.line("    using T = " + model.qualified_name + ";");
             // clang-format off 는 생성 파일이 포매터에 걸려도 한 줄 한 항목을 유지하게 한다.
-            out.line("    // clang-format off");
+            out.line("        // clang-format off");
             if (entries.empty())
             {
-                out.line("    return ::reflgen::schema<T>()");
+                out.line("        return ::reflgen::schema<T>()");
             }
             else
             {
-                out.line("    return ::reflgen::schema<T>(");
+                out.line("        return ::reflgen::schema<T>(");
                 bool pointed = false;
                 for (std::size_t i = 0; i < entries.size(); ++i)
                 {
@@ -130,33 +140,35 @@ namespace reflgen::generator
                         out.point_to(*entries[i].position);
                         pointed = true;
                     }
-                    out.line("        " + entries[i].text + (i + 1 < entries.size() ? "," : ""));
+                    out.line("            " + entries[i].text + (i + 1 < entries.size() ? "," : ""));
                 }
                 if (pointed)
                 {
                     out.point_back(generated_path);
                 }
-                out.line("    )");
+                out.line("        )");
             }
-            std::string tail = "        .named(" + model.schema_name + ")";
+            std::string tail = "            .named(" + model.schema_name + ")";
             if (!model.attributes.empty())
             {
                 out.line(tail);
                 out.point_to(model.attributes.front().position);
-                out.line("        .with(" + joined(model.attributes) + ");");
+                out.line("            .with(" + joined(model.attributes) + ");");
                 out.point_back(generated_path);
             }
             else
             {
                 out.line(tail + ";");
             }
-            out.line("    // clang-format on");
-            out.line("}");
+            out.line("        // clang-format on");
+            out.line("    }");
+            out.line("};");
             out.line();
-            out.line("template<>");
-            out.line("struct reflgen::reflection<" + model.qualified_name + ">");
+            out.line("template<class T>");
+            out.line(only_for("T", model.qualified_name));
+            out.line("struct reflgen::reflection<T>");
             out.line("{");
-            out.line("    static constexpr auto value = ::reflgen::access::describe<" + model.qualified_name + ">();");
+            out.line("    static constexpr auto value = ::reflgen::access::describer<T>::describe();");
             out.line("};");
             out.line();
         }
@@ -165,26 +177,114 @@ namespace reflgen::generator
         {
             out.line("// " + model.qualified_name + " - " + model.position.file + "(" +
                      std::to_string(model.position.line) + ")");
-            out.line("template<>");
-            out.line("struct reflgen::reflection<" + model.qualified_name + ">");
+            out.line("template<class E>");
+            out.line(only_for("E", model.qualified_name));
+            out.line("struct reflgen::reflection<E>");
             out.line("{");
             if (model.enumerators.empty())
             {
-                out.line("    static constexpr std::array<::reflgen::enum_entry<" + model.qualified_name +
-                         ">, 0> value{};");
+                out.line("    static constexpr std::array<::reflgen::enum_entry<E>, 0> value{};");
             }
             else
             {
+                // 열거자도 E:: 로 쓴다 — 의존 이름이라 전방 선언(opaque enum)만 본 자리에서는 찾지 않는다.
                 out.line("    static constexpr std::array value = {");
                 for (std::size_t i = 0; i < model.enumerators.size(); ++i)
                 {
                     const std::string& name = model.enumerators[i];
-                    out.line("        ::reflgen::enum_entry<" + model.qualified_name + ">{\"" + name + "\", " +
-                             model.qualified_name + "::" + name + "}" + (i + 1 < model.enumerators.size() ? "," : ""));
+                    out.line("        ::reflgen::enum_entry<E>{\"" + name + "\", E::" + name + "}" +
+                             (i + 1 < model.enumerators.size() ? "," : ""));
                 }
                 out.line("    };");
             }
             out.line("};");
+            out.line();
+        }
+
+        // 생성 header 가 원본 header 없이(전방 선언만으로) 설 수 없는 까닭. 비면 설 수 있다.
+        std::string source_needed(const header_model& header)
+        {
+            for (const class_model& model : header.classes)
+            {
+                if (model.nested)
+                {
+                    return "'" + model.qualified_name + "' is declared inside a class";
+                }
+                if (!model.external_names.empty())
+                {
+                    return "attribute arguments of '" + model.qualified_name + "' use '" +
+                           model.external_names.front() + "'";
+                }
+                for (const type_reference& base : model.bases)
+                {
+                    if (base.nested || base.templated)
+                    {
+                        return "the base '" + base.qualified_name + "' of '" + model.qualified_name +
+                               "' cannot be forward-declared";
+                    }
+                }
+            }
+            for (const enum_model& model : header.enums)
+            {
+                if (model.nested)
+                {
+                    return "'" + model.qualified_name + "' is declared inside a class";
+                }
+                if (!model.scoped && model.underlying_type.empty())
+                {
+                    return "the unscoped enum '" + model.qualified_name + "' has no fixed underlying type";
+                }
+            }
+            return {};
+        }
+
+        // 반영하는 타입과 그 부모들을 이름공간별로 전방 선언한다(원본과 같은 class·struct 키로).
+        void emit_forward_declarations(text_builder& out, const header_model& header)
+        {
+            std::map<std::string, std::vector<std::string>> by_namespace;
+            const auto add = [&](const std::string& enclosing, std::string text) {
+                std::vector<std::string>& lines = by_namespace[enclosing];
+                if (std::ranges::find(lines, text) == lines.end())
+                {
+                    lines.push_back(std::move(text));
+                }
+            };
+            for (const class_model& model : header.classes)
+            {
+                for (const type_reference& base : model.bases)
+                {
+                    add(base.enclosing_namespace, base.class_key + " " + base.name + ";");
+                }
+                add(model.namespaces.empty() ? std::string() : model.namespaces.back(),
+                    model.class_key + " " + model.name + ";");
+            }
+            for (const enum_model& model : header.enums)
+            {
+                std::string text = (model.scoped ? "enum class " : "enum ") + model.name;
+                if (!model.underlying_type.empty())
+                {
+                    text += " : " + model.underlying_type;
+                }
+                add(model.namespaces.empty() ? std::string() : model.namespaces.back(), text + ";");
+            }
+            for (const auto& [enclosing, lines] : by_namespace)
+            {
+                if (enclosing.empty())
+                {
+                    for (const std::string& line : lines)
+                    {
+                        out.line(line);
+                    }
+                    continue;
+                }
+                out.line("namespace " + enclosing);
+                out.line("{");
+                for (const std::string& line : lines)
+                {
+                    out.line("    " + line);
+                }
+                out.line("} // namespace " + enclosing);
+            }
             out.line();
         }
     } // namespace
@@ -195,10 +295,21 @@ namespace reflgen::generator
         out.line(banner);
         out.line("// source: " + header.path);
         out.line("#pragma once");
-        out.line("#include \"reflgen/reflgen.h\"");
-        out.line("#include <array>");
-        out.line("#include \"" + header.path + "\"");
-        out.line();
+        out.line("#include \"reflgen/generated.h\"");
+        const std::string reason = source_needed(header);
+        if (reason.empty())
+        {
+            // 원본 header 는 include 하지 않는다 — 이 파일은 모든 번역 단위에 강제 include 되므로, 원본을 끌고
+            // 다니면 번역 단위마다 그것을 다시 읽고 원본을 고칠 때마다 모두 다시 컴파일된다.
+            out.line();
+            emit_forward_declarations(out, header);
+        }
+        else
+        {
+            out.line("// The source header is included because " + reason + ".");
+            out.line("#include \"" + header.path + "\"");
+            out.line();
+        }
         for (const enum_model& model : header.enums)
         {
             emit_enum(out, model);
@@ -210,7 +321,8 @@ namespace reflgen::generator
         return out.take();
     }
 
-    std::string emit_module_header(const std::string& module_name, const std::vector<std::string>& generated_paths)
+    std::string emit_module_header(const std::string& module_name, const std::vector<std::string>& generated_paths,
+                                   const std::vector<std::string>& attribute_headers)
     {
         text_builder out;
         out.line(banner);
@@ -218,13 +330,18 @@ namespace reflgen::generator
                  "' by the build system; source headers never include it.");
         out.line("#pragma once");
         out.line("#include \"reflgen/core/version.h\"");
-        out.line("#include \"reflgen/runtime/registry.h\"");
+        out.line("#include \"reflgen/generated.h\"");
         // 모든 번역 단위에 들어가는 자리라 한 번이면 모듈 전체가 검사된다 — 생성기와 header 의 판이 어긋나면 멈춘다.
         const std::string format = std::to_string(::reflgen::generated_code_format);
         out.line("static_assert(::reflgen::generated_code_format == " + format + ",");
         out.line("              \"reflgen: this code was generated for generated code format " + format +
                  ", but the reflgen headers expect another format; regenerate it with the reflgen generator that "
                  "matches these headers\");");
+        // 사용자 이름공간의 attribute 타입 — 생성 코드가 그 타입을 쓴다.
+        for (const std::string& path : attribute_headers)
+        {
+            out.line("#include \"" + path + "\"");
+        }
         for (const std::string& path : generated_paths)
         {
             out.line("#include \"" + path + "\"");
@@ -235,7 +352,9 @@ namespace reflgen::generator
         // 생성 코드도 저장소 규약처럼 네임스페이스 안을 들여쓴다.
         out.line("    // Registers every [[reflgen::reflect]] class of module '" + module_name + "' in target.");
         out.line("    // Call it once at startup before reading polymorphic pointers.");
-        out.line("    void register_" + module_name + "(::reflgen::registry& target = ::reflgen::default_registry());");
+        out.line("    void register_" + module_name + "(::reflgen::registry& target);");
+        out.line("    // Same as above, in reflgen::default_registry().");
+        out.line("    void register_" + module_name + "();");
         out.line("} // namespace reflgen::generated");
         return out.take();
     }
@@ -246,6 +365,15 @@ namespace reflgen::generator
         out.line(banner);
         // 주입 header 가 생성 파일을 모두 include 한다. 강제 include 를 받지 않는 빌드에서도 컴파일되게 직접 부른다.
         out.line("#include \"reflgen_" + module_name + ".h\"");
+        out.line("#include \"reflgen/runtime/registry.h\"");
+        // 등록은 완전한 타입이 필요하다 — 주입 header 는 전방 선언만 보므로 원본 header 를 여기서 include 한다.
+        for (const header_model& header : headers)
+        {
+            if (!header.classes.empty())
+            {
+                out.line("#include \"" + header.path + "\"");
+            }
+        }
         out.line();
         out.line("namespace reflgen::generated");
         out.line("{");
@@ -256,7 +384,7 @@ namespace reflgen::generator
         {
             for (const class_model& model : header.classes)
             {
-                out.line("        target.add<" + model.qualified_name + ">();");
+                out.line("        target.add<::" + model.qualified_name + ">();");
                 ++count;
             }
         }
@@ -264,6 +392,11 @@ namespace reflgen::generator
         {
             out.line("        static_cast<void>(target);");
         }
+        out.line("    }");
+        out.line();
+        out.line("    void register_" + module_name + "()");
+        out.line("    {");
+        out.line("        register_" + module_name + "(::reflgen::default_registry());");
         out.line("    }");
         out.line("} // namespace reflgen::generated");
         return out.take();

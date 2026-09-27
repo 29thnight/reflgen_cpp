@@ -17,6 +17,8 @@
     ReflgenIncludeDirectory  reflgen/reflgen.h 가 있는 include 디렉터리. 자동으로 찾는다.
     ReflgenModule            등록 함수 reflgen::generated::register_<module>() 의 이름. 기본은 프로젝트 이름.
     ReflgenAttributeScopes   reflgen 외에 스키마로 옮길 attribute 이름공간(';' 로 가른다).
+    ReflgenAttributeHeaders  그 이름공간의 attribute 타입을 정의한 header(';' 로 가른다). 주입 header 가 include 한다 —
+                             없으면 사용자 attribute 를 쓰는 header 는 생성물이 원본 header 를 include 해야 한다.
     ReflgenOutputDirectory   생성물 위치. 기본은 $(IntDir)reflgen\ — 구성마다 따로다.
 -->
 <Project>
@@ -177,6 +179,7 @@
       <_ReflgenClangArgument Include="$(_ReflgenStandardArgument)" />
 
       <_ReflgenAttributeScope Include="$(ReflgenAttributeScopes)" />
+      <_ReflgenAttributeHeader Include="$(ReflgenAttributeHeaders)" />
 
       <!-- 응답 파일 — 한 줄에 생성기 인자 하나. header 가 많아도 명령줄 길이 제한에 걸리지 않는다. -->
       <_ReflgenCommandLine Include="--module;$(ReflgenModule)" />
@@ -187,9 +190,11 @@
     </ItemGroup>
     <PropertyGroup>
       <_ReflgenScopeText>@(_ReflgenAttributeScope->'--attribute-scope;%(Identity)')</_ReflgenScopeText>
+      <_ReflgenAttributeHeaderText>@(_ReflgenAttributeHeader->'--attribute-header;%(FullPath)')</_ReflgenAttributeHeaderText>
     </PropertyGroup>
     <ItemGroup>
       <_ReflgenCommandLine Include="$(_ReflgenScopeText)" />
+      <_ReflgenCommandLine Include="$(_ReflgenAttributeHeaderText)" />
       <_ReflgenCommandLine Include="@(_ReflgenHeader)" />
     </ItemGroup>
 

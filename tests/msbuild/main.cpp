@@ -3,6 +3,7 @@
 // lib_types.h 는 참조하는 라이브러리의 header 다 — 그 서술은 라이브러리의 주입이 전파되어 온다.
 #include "pch.h"
 #include "derived_types.h"
+#include "fallback_types.h"
 #include "game_types.h"
 #include "lib_types.h"
 #include "reflgen/json.h"

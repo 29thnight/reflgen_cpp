@@ -368,14 +368,17 @@ namespace reflgen
         static_assert(std::is_class_v<T>, "reflgen::schema<T>: T must be a class type");
         (detail::check_entry<T, Entries>(), ...);
 
-        const std::tuple<Entries...> all{entries...};
-        const auto fields = detail::pick<detail::is_field_descriptor>(all);
-        const auto methods = detail::pick<detail::is_method_descriptor>(all);
-        detail::check_names(fields);
-        detail::check_names(methods);
+        // 이 함수는 서술을 쓰는 자리에서 실체화된다 — 사용자 코드의 전역 이름(fields, methods 등)을 가리지 않게
+        // 흔한 이름을 피한다(MSVC C4459).
+        const std::tuple<Entries...> schema_entries{entries...};
+        const auto field_entries = detail::pick<detail::is_field_descriptor>(schema_entries);
+        const auto method_entries = detail::pick<detail::is_method_descriptor>(schema_entries);
+        detail::check_names(field_entries);
+        detail::check_names(method_entries);
 
         using bases = typename detail::concat_type_lists<typename detail::base_list_of_entry<Entries>::type...>::type;
-        return type_schema<T, bases, std::remove_const_t<decltype(fields)>, std::remove_const_t<decltype(methods)>>{
-            type_name_of<T>(), fields, methods, {}};
+        return type_schema<T, bases, std::remove_const_t<decltype(field_entries)>,
+                           std::remove_const_t<decltype(method_entries)>>{
+            type_name_of<T>(), field_entries, method_entries, {}};
     }
 } // namespace reflgen

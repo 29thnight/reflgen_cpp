@@ -80,6 +80,7 @@ namespace reflgen::generator
                 {
                     scopes_.insert(scope);
                 }
+                has_attribute_headers_ = !options.attribute_headers.empty();
             }
 
             void run() { visit_scope(clang_getTranslationUnitCursor(unit_)); }
@@ -159,8 +160,20 @@ namespace reflgen::generator
                 return groups;
             }
 
+            // 원본 header 없이는 생성 코드가 찾지 못하는 이름을 기록한다(한 번씩).
+            static void note_external(const std::vector<std::string>& names, std::vector<std::string>& external)
+            {
+                for (const std::string& name : names)
+                {
+                    if (std::ranges::find(external, name) == external.end())
+                    {
+                        external.push_back(name);
+                    }
+                }
+            }
+
             std::vector<attribute_use> uses_of(const std::vector<attribute_group>& groups, const source_file& source,
-                                               const qualifier_lookup& lookup)
+                                               const qualifier_lookup& lookup, std::vector<std::string>& external)
             {
                 std::vector<attribute_use> uses;
                 for (const attribute_group& group : groups)
@@ -170,6 +183,17 @@ namespace reflgen::generator
                         if (attribute.scope.empty() || !scopes_.contains(attribute.scope) || is_directive(attribute))
                         {
                             continue;
+                        }
+                        // 사용자 이름공간의 attribute 타입은 attribute header 로만 생성 코드에 보인다.
+                        if (attribute.scope != library_scope && !has_attribute_headers_)
+                        {
+                            note_external({attribute.scope + "::" + attribute.name}, external);
+                        }
+                        if (attribute.has_arguments)
+                        {
+                            note_external(external_identifiers(source.tokens, attribute.arguments_begin,
+                                                               attribute.arguments_end, lookup),
+                                          external);
                         }
                         attribute_use use;
                         use.expression = attribute.scope + "::" + attribute.name;
@@ -265,19 +289,35 @@ namespace reflgen::generator
 
                 class_model result;
                 result.qualified_name = type_name_of(cursor);
+                result.name = cursor_spelling(cursor);
+                result.class_key = clang_getCursorKind(cursor) == CXCursor_ClassDecl ? "class" : "struct";
                 result.namespaces = *namespaces;
                 result.position = position;
+                result.bases = reflected_ancestors(clang_getCursorType(cursor));
 
                 // 클래스 attribute 는 클래스 이름 앞에 있어 자기 멤버를 볼 수 없다 — 감싸는 클래스만 찾는다.
                 const std::vector<class_scope> outer_scopes = enclosing_class_scopes(cursor);
+                result.nested = !outer_scopes.empty();
                 const qualifier_lookup outer_lookup = lookup_in(outer_scopes);
                 const source_file& source = source_of(cursor);
-                result.attributes = uses_of(class_groups, source, outer_lookup);
-                result.schema_name = reflect->has_arguments ? argument_text(source.tokens, reflect->arguments_begin,
-                                                                            reflect->arguments_end, outer_lookup)
-                                                            : "\"" + result.qualified_name + "\"";
+                result.attributes = uses_of(class_groups, source, outer_lookup, result.external_names);
+                if (reflect->has_arguments)
+                {
+                    result.schema_name =
+                        argument_text(source.tokens, reflect->arguments_begin, reflect->arguments_end, outer_lookup);
+                    note_external(external_identifiers(source.tokens, reflect->arguments_begin, reflect->arguments_end,
+                                                       outer_lookup),
+                                  result.external_names);
+                }
+                else
+                {
+                    result.schema_name = "\"" + result.qualified_name + "\"";
+                }
 
+                // 자기 멤버는 T:: 로 한정한다 — 생성 코드의 서술은 T 에 의존하는 템플릿이라, 의존 이름이어야 T 가
+                // 완전해지는 사용 자리에서 찾는다(생성 header 는 원본 header 없이 전방 선언만 본다).
                 std::vector<class_scope> member_scopes{scope_of(cursor)};
+                member_scopes.front().qualifier = "T::";
                 member_scopes.insert(member_scopes.end(), outer_scopes.begin(), outer_scopes.end());
                 const qualifier_lookup member_lookup = lookup_in(member_scopes);
                 member_context context{result, member_lookup, count_functions(cursor), {}};
@@ -314,13 +354,6 @@ namespace reflgen::generator
                 visit_children(cursor, [&](CXCursor child, CXCursor) {
                     switch (clang_getCursorKind(child))
                     {
-                    case CXCursor_CXXBaseSpecifier:
-                        if (clang_getCXXAccessSpecifier(child) == CX_CXXPublic)
-                        {
-                            context.result.bases.push_back(strip_tag(take_string(
-                                clang_getTypeSpelling(clang_getCanonicalType(clang_getCursorType(child))))));
-                        }
-                        break;
                     case CXCursor_FieldDecl:
                         add_field(child, context);
                         break;
@@ -384,7 +417,7 @@ namespace reflgen::generator
                 field_model model;
                 model.name = name;
                 model.position = position_of(clang_getRangeStart(clang_getCursorExtent(field)));
-                model.attributes = uses_of(groups, source_of(field), context.lookup);
+                model.attributes = uses_of(groups, source_of(field), context.lookup, context.result.external_names);
                 context.result.fields.push_back(std::move(model));
             }
 
@@ -417,7 +450,7 @@ namespace reflgen::generator
                 method_model model;
                 model.name = name;
                 model.position = position_of(clang_getRangeStart(clang_getCursorExtent(method)));
-                model.attributes = uses_of(groups, source_of(method), context.lookup);
+                model.attributes = uses_of(groups, source_of(method), context.lookup, context.result.external_names);
                 // 이름 없는 매개변수는 빈 이름으로 남는다 — 선언에 없는 이름을 지어내지 않는다.
                 const int count = clang_Cursor_getNumArguments(method);
                 for (int i = 0; i < count; ++i)
@@ -444,13 +477,25 @@ namespace reflgen::generator
 
                 enum_model result;
                 result.qualified_name = type_name_of(cursor);
+                result.name = cursor_spelling(cursor);
+                result.namespaces = *enclosing_namespaces(cursor);
                 result.position = position;
+                result.nested = !enclosing_class_scopes(cursor).empty();
+                result.scoped = clang_EnumDecl_isScoped(cursor) != 0;
+                // 전방 선언은 원본과 같은 enum-base 를 적는다 — 적지 않은 비스코프드 열거형은 전방 선언할 수 없다.
+                if (writes_enum_base(cursor))
+                {
+                    // std::uint8_t 같은 별칭은 전방 선언 자리에서 보이지 않을 수 있다 — 표준 타입 이름으로 적는다.
+                    result.underlying_type = take_string(
+                        clang_getTypeSpelling(clang_getCanonicalType(clang_getEnumDeclIntegerType(cursor))));
+                }
                 const qualifier_lookup no_lookup = [](std::string_view) { return std::string(); };
+                std::vector<std::string> ignored_names;
                 visit_children(cursor, [&](CXCursor child, CXCursor) {
                     if (clang_getCursorKind(child) == CXCursor_EnumConstantDecl)
                     {
                         result.enumerators.push_back(cursor_spelling(child));
-                        if (!uses_of(groups_after_name(child), source_of(child), no_lookup).empty())
+                        if (!uses_of(groups_after_name(child), source_of(child), no_lookup, ignored_names).empty())
                         {
                             report_.warning("RG0004", position_of(clang_getCursorLocation(child)),
                                             "attributes on enumerators are not supported yet; ignored");
@@ -461,12 +506,131 @@ namespace reflgen::generator
                 model_for(cursor)->enums.push_back(std::move(result));
             }
 
+            // enum 이름 뒤, 본문('{')이나 끝(';') 앞에 ':' 가 있으면 enum-base 를 적은 것이다.
+            bool writes_enum_base(CXCursor cursor)
+            {
+                const source_file& source = source_of(cursor);
+                const std::size_t name = offset_of(clang_getCursorLocation(cursor));
+                for (const token& item : source.tokens)
+                {
+                    if (item.begin <= name || item.kind != token_kind::punctuation)
+                    {
+                        continue;
+                    }
+                    if (item.spelling == ":")
+                    {
+                        return true;
+                    }
+                    if (item.spelling == "{" || item.spelling == ";")
+                    {
+                        return false;
+                    }
+                }
+                return false;
+            }
+
+            // 반영된 클래스인가 — [[reflgen::reflect]] 를 달았거나 클래스 안 static reflect() 레시피가 있다.
+            bool is_reflected(CXCursor record)
+            {
+                if (declares(record, "reflect"))
+                {
+                    return true;
+                }
+                bool has_recipe = false;
+                visit_children(record, [&](CXCursor child, CXCursor) {
+                    if (clang_getCursorKind(child) == CXCursor_CXXMethod && clang_CXXMethod_isStatic(child) != 0 &&
+                        cursor_spelling(child) == "reflect")
+                    {
+                        has_recipe = true;
+                        return CXChildVisit_Break;
+                    }
+                    return CXChildVisit_Continue;
+                });
+                return has_recipe;
+            }
+
+            // public 부모 가운데 반영된 것은 그대로, 반영하지 않은 것(CRTP 중간층, 서드파티 베이스)은 그 부모들로
+            // 거슬러 올라가 가장 가까운 반영된 조상을 모은다. 타입으로 훑으므로 템플릿 특수화 부모도 치환된 모습으로
+            // 본다. 반영된 조상은 이름공간 범위의 클래스라 생성 header 가 전방 선언할 수 있다.
+            static void add_unique(std::vector<type_reference>& target, type_reference reference)
+            {
+                const auto same = [&](const type_reference& known) {
+                    return known.qualified_name == reference.qualified_name;
+                };
+                if (std::ranges::find_if(target, same) == target.end())
+                {
+                    target.push_back(std::move(reference));
+                }
+            }
+
+            static type_reference reference_to(CXCursor record, CXType type)
+            {
+                type_reference reference;
+                reference.qualified_name = strip_tag(take_string(clang_getTypeSpelling(type)));
+                reference.name = cursor_spelling(record);
+                reference.class_key = clang_getCursorKind(record) == CXCursor_ClassDecl ? "class" : "struct";
+                const std::optional<std::vector<std::string>> namespaces = enclosing_namespaces(record);
+                if (namespaces && !namespaces->empty())
+                {
+                    reference.enclosing_namespace = namespaces->back();
+                }
+                reference.nested = !enclosing_class_scopes(record).empty();
+                reference.templated = !clang_Cursor_isNull(clang_getSpecializedCursorTemplate(record));
+                return reference;
+            }
+
+            std::vector<type_reference> reflected_ancestors(CXType type, int depth = 0)
+            {
+                std::vector<type_reference> result;
+                if (depth > 32)
+                {
+                    return result;
+                }
+                struct visit_state
+                {
+                    extractor* self;
+                    std::vector<type_reference>* result;
+                    int depth;
+                } state{this, &result, depth};
+                clang_visitCXXBaseClasses(
+                    type,
+                    [](CXCursor base, CXClientData data) -> CXVisitorResult {
+                        auto& state = *static_cast<visit_state*>(data);
+                        if (clang_getCXXAccessSpecifier(base) != CX_CXXPublic)
+                        {
+                            return CXVisit_Continue;
+                        }
+                        const CXType base_type = clang_getCanonicalType(clang_getCursorType(base));
+                        const CXCursor declaration = clang_getTypeDeclaration(base_type);
+                        // 표준 라이브러리 등 시스템 header 의 부모는 반영 대상이 아니고 그 위도 볼 것이 없다.
+                        if (clang_Location_isInSystemHeader(clang_getCursorLocation(declaration)) != 0)
+                        {
+                            return CXVisit_Continue;
+                        }
+                        if (state.self->is_reflected(declaration))
+                        {
+                            add_unique(*state.result, reference_to(declaration, base_type));
+                        }
+                        else
+                        {
+                            for (type_reference& ancestor : state.self->reflected_ancestors(base_type, state.depth + 1))
+                            {
+                                add_unique(*state.result, std::move(ancestor));
+                            }
+                        }
+                        return CXVisit_Continue;
+                    },
+                    &state);
+                return result;
+            }
+
             CXTranslationUnit unit_;
             diagnostics& report_;
             std::vector<header_model> models_;
             std::map<std::string, std::size_t> index_;
             std::map<std::string, source_file> sources_;
             std::set<std::string> scopes_;
+            bool has_attribute_headers_ = false;
         };
 
         void report_clang_diagnostics(CXTranslationUnit unit, diagnostics& report)

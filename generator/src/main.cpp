@@ -1,6 +1,6 @@
 // reflgen — [[reflgen::…]] attribute 를 읽어 reflection 코드를 만드는 생성기.
 //
-//   reflgen --module NAME --output DIR [--attribute-scope NS]... [--clang-args-file FILE]
+//   reflgen --module NAME --output DIR [--attribute-scope NS]... [--attribute-header FILE]... [--clang-args-file FILE]
 //           [--depfile FILE] [--dependency-list FILE] [--discover] HEADER... [-- CLANG_ARG...]
 //   reflgen @FILE          FILE 의 한 줄을 인자 하나로 펼친다(명령줄 길이 제한을 피하려는 것)
 //   reflgen --version      판과 생성 코드 형식을 찍는다
@@ -37,7 +37,7 @@ namespace
     using namespace reflgen::generator;
 
     constexpr std::string_view usage =
-        "usage: reflgen --module NAME --output DIR [--attribute-scope NS]... "
+        "usage: reflgen --module NAME --output DIR [--attribute-scope NS]... [--attribute-header FILE]... "
         "[--clang-args-file FILE] [--depfile FILE] [--dependency-list FILE] [--discover] HEADER... "
         "[-- CLANG_ARG...]\n"
         "       reflgen --version\n";
@@ -147,6 +147,13 @@ namespace
                 if (const auto directory = value(argument))
                 {
                     options.output_directory = normalize_path(*directory);
+                }
+            }
+            else if (argument == "--attribute-header")
+            {
+                if (const auto path = value(argument))
+                {
+                    options.attribute_headers.push_back(normalize_path(*path));
                 }
             }
             else if (argument == "--attribute-scope")
@@ -413,7 +420,9 @@ namespace
             }
             const std::string base = options.output_directory + "/reflgen_" + options.module_name;
             const std::string previous_injection = cli->discover ? read_file(base + ".h") : std::string();
-            write_if_changed(base + ".h", emit_module_header(options.module_name, generated_paths), report);
+            write_if_changed(base + ".h",
+                             emit_module_header(options.module_name, generated_paths, options.attribute_headers),
+                             report);
             write_if_changed(base + ".cpp", emit_module_source(options.module_name, headers), report);
             write_if_changed(base + ".attributes.tsv", format_attribute_catalog(extracted.attributes), report,
                              byte_order_mark::without);

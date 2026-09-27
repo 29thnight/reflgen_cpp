@@ -36,6 +36,7 @@
   <PropertyGroup>
     <ReflgenModule>msbuild_test</ReflgenModule>
     <ReflgenAttributeScopes>generated_tests</ReflgenAttributeScopes>
+    <ReflgenAttributeHeaders>..\generated\test_attributes.h</ReflgenAttributeHeaders>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -61,6 +62,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\generated\fallback_types.h" />
     <ClInclude Include="..\generated\game_types.h" />
     <ClInclude Include="derived_types.h" />
     <ClInclude Include="pch.h" />
