@@ -175,6 +175,7 @@ reflgen_generate(my_game
   라이브러리의 소비자에게는 전해지지 않는다. CMake 3.25 이상.
 - **비용**: 주입 header 가 반영 대상 header 를 모두 include 하므로, 그 target 의 모든 번역 단위가 그것들을
   읽는다. 미리 컴파일된 header 로 줄인다.
+- **C 소스**: 같은 target 의 C 번역 단위(서드파티 C 코드)에는 주입하지 않는다.
 - **요구 사항**: libclang. Visual Studio 는 동봉본(`VC/Tools/Llvm`)을 자동으로 찾는다. 그 밖은
   `REFLGEN_LIBCLANG_DIR` 로 준다. C API header 는 `third_party/clang-c`(LLVM 22.1.3, Apache-2.0 WITH LLVM-exception).
 

@@ -94,11 +94,12 @@ $<$<IN_LIST:cxx_std_26,${features}>:-std=c++26\n>")
     # 이 header 를 쓰는 모든 target 에 필요하므로 PUBLIC 이다. 주입 header 도 같은 이유로 PUBLIC 이다 —
     # header 가 생성 파일을 include 하지 않으므로 reflection 은 강제 include 로만 소비자에게 간다.
     # -include 는 붙여 쓴다 — 떼어 쓰면 CMake 가 같은 옵션 조각을 하나로 합쳐 버린다.
+    # 모두 C++ 번역 단위에만 붙인다 — 같은 target 의 C 소스(서드파티 C 코드 등)가 C++ header 를 받으면 깨진다.
     target_compile_options(${target} PUBLIC
-        "$<$<CXX_COMPILER_ID:MSVC>:/wd5030>"
-        "$<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-unknown-attributes>"
-        "$<$<CXX_COMPILER_ID:GNU>:-Wno-attributes>"
-        "$<BUILD_INTERFACE:$<IF:$<STREQUAL:$<CXX_COMPILER_FRONTEND_VARIANT>,MSVC>,/FI${injection},-include${injection}>>")
+        "$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:/wd5030>"
+        "$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:Clang,AppleClang>>:-Wno-unknown-attributes>"
+        "$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:GNU>>:-Wno-attributes>"
+        "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CXX>:$<IF:$<STREQUAL:$<CXX_COMPILER_FRONTEND_VARIANT>,MSVC>,/FI${injection},-include${injection}>>>")
 endfunction()
 
 cmake_policy(POP)

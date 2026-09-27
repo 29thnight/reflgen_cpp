@@ -78,11 +78,16 @@
     <PropertyGroup>
       <_ReflgenForcedIncludes>@(_ReflgenInjections)</_ReflgenForcedIncludes>
     </PropertyGroup>
+    <!-- C 로 컴파일하는 소스(.c 기본값이거나 CompileAs=CompileAsC — 엔진에 흔한 서드파티 C 코드)는 건너뛴다.
+         주입 header 는 C++ 다. -->
     <ItemGroup Condition="'$(_ReflgenForcedIncludes)' != ''">
-      <ClCompile Condition="('%(ClCompile.PrecompiledHeader)' == 'Use' or '%(ClCompile.PrecompiledHeader)' == 'Create') and '%(ClCompile.PrecompiledHeaderFile)' != ''">
+      <ClCompile Condition="'%(ClCompile.CompileAs)' == 'CompileAsC' or ('%(ClCompile.Extension)' == '.c' and '%(ClCompile.CompileAs)' != 'CompileAsCpp')">
+        <_ReflgenCompiledAsC>true</_ReflgenCompiledAsC>
+      </ClCompile>
+      <ClCompile Condition="'%(ClCompile._ReflgenCompiledAsC)' != 'true' and ('%(ClCompile.PrecompiledHeader)' == 'Use' or '%(ClCompile.PrecompiledHeader)' == 'Create') and '%(ClCompile.PrecompiledHeaderFile)' != ''">
         <ForcedIncludeFiles>%(ClCompile.PrecompiledHeaderFile);%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
-      <ClCompile Condition="('%(ClCompile.PrecompiledHeader)' != 'Use' and '%(ClCompile.PrecompiledHeader)' != 'Create') or '%(ClCompile.PrecompiledHeaderFile)' == ''">
+      <ClCompile Condition="'%(ClCompile._ReflgenCompiledAsC)' != 'true' and (('%(ClCompile.PrecompiledHeader)' != 'Use' and '%(ClCompile.PrecompiledHeader)' != 'Create') or '%(ClCompile.PrecompiledHeaderFile)' == '')">
         <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
     </ItemGroup>

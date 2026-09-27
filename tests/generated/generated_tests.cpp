@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+extern "C" int reflgen_generated_c_value(); // c_unit.c — 같은 타깃의 C 소스에는 주입이 붙지 않는다
+
 namespace
 {
     using reflgen_test::check;
@@ -21,6 +23,9 @@ namespace
     static_assert(!reflgen::reflectable<generated_tests::plain>);
     static_assert(reflgen::reflectable<generated_tests::limits::slot>);
     static_assert(!reflgen::reflectable<generated_tests::limits>);
+
+    const test c_sources("generated: C sources of the target build without the C++ injection",
+                         [] { check_equal(reflgen_generated_c_value(), 42); });
 
     const test schema_names("generated: schema names come from the attribute or the qualified name", [] {
         check_equal(reflgen::schema_of<generated_tests::stats>.name, std::string_view("tests.stats"));

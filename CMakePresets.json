@@ -16,22 +16,22 @@
     {
       "name": "msvc-cpp20",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_CXX_COMPILER": "cl", "REFLGEN_TEST_CXX_STANDARD": "20" }
+      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl", "REFLGEN_TEST_CXX_STANDARD": "20" }
     },
     {
       "name": "msvc-cpp23",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_CXX_COMPILER": "cl", "REFLGEN_TEST_CXX_STANDARD": "23" }
+      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl", "REFLGEN_TEST_CXX_STANDARD": "23" }
     },
     {
       "name": "clang-cl-cpp20",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang-cl", "REFLGEN_TEST_CXX_STANDARD": "20" }
+      "cacheVariables": { "CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl", "REFLGEN_TEST_CXX_STANDARD": "20" }
     },
     {
       "name": "clang-cl-cpp23",
       "inherits": "base",
-      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang-cl", "REFLGEN_TEST_CXX_STANDARD": "23" }
+      "cacheVariables": { "CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl", "REFLGEN_TEST_CXX_STANDARD": "23" }
     }
   ],
   "buildPresets": [

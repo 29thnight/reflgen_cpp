@@ -95,7 +95,12 @@ if(REFLGEN_BUILD_TESTS)
         add_test(NAME reflgen_generator_tests COMMAND reflgen_generator_tests)
 
         # end-to-end: attribute 만 단 header → 생성 → 컴파일 → 실행.
-        add_executable(reflgen_generated_tests tests/generated/generated_tests.cpp ${reflgen_harness_sources})
+        # C 소스를 섞는다 — 강제 include 는 C++ 번역 단위에만 붙어야 한다.
+        enable_language(C)
+        add_executable(reflgen_generated_tests
+            tests/generated/generated_tests.cpp
+            tests/generated/c_unit.c
+            ${reflgen_harness_sources})
         target_include_directories(reflgen_generated_tests PRIVATE tests tests/generated)
         target_link_libraries(reflgen_generated_tests PRIVATE reflgen::reflgen)
         reflgen_configure_target(reflgen_generated_tests)

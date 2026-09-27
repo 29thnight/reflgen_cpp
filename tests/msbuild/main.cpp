@@ -7,6 +7,8 @@
 #include "lib_types.h"
 #include "reflgen/json.h"
 
+extern "C" int reflgen_msbuild_c_value(); // c_unit.c — C 번역 단위에는 주입이 붙지 않는다
+
 int main()
 {
     static_assert(reflgen::reflectable<generated_tests::stats>);
@@ -28,7 +30,7 @@ int main()
     const bool propagated = point_text == R"({"x":1,"y":2})" && tagged_text == R"({"x":1,"y":2,"tag":7})" &&
                             msbuild_lib::length_squared(point) == 5;
 
-    const bool ok = registered && serialized && propagated;
+    const bool ok = registered && serialized && propagated && reflgen_msbuild_c_value() == 42;
     std::printf("%s\n%s\n%s\nmsbuild integration: %s\n", text.c_str(), point_text.c_str(), tagged_text.c_str(),
                 ok ? "ok" : "FAILED");
     return ok ? 0 : 1;
