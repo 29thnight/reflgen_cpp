@@ -82,7 +82,8 @@ jobs:
           & $vcpkg install reflgen --overlay-ports=$overlay --triplet x64-windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $installed = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
-          foreach ($path in 'tools\reflgen\reflgen.exe', 'tools\reflgen\libclang.dll', 'include\reflgen\reflgen.h',
+          foreach ($path in 'tools\reflgen\reflgen.exe', 'tools\reflgen\libclang.dll',
+                            'tools\reflgen\clang\include\stddef.h', 'include\reflgen\reflgen.h',
                             'share\reflgen\msbuild\reflgen.targets', 'share\reflgen\reflgen-config.cmake') {
             if (-not (Test-Path (Join-Path $installed $path))) { throw "the vcpkg port did not install $path" }
           }

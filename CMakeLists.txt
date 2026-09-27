@@ -130,6 +130,15 @@ if(REFLGEN_BUILD_TESTS)
                 "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/reflgen/diagnostics"
                 -P "${PROJECT_SOURCE_DIR}/tests/generated/check_diagnostics.cmake")
 
+        # 반영 선언 밖의 clang 오류는 넘기고 안의 오류로는 멈춘다(MSVC 로만 빌드하는 코드베이스).
+        add_test(NAME reflgen_generator_tolerance
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DSOURCE=${PROJECT_SOURCE_DIR}/tests/generated"
+                "-DINCLUDE=${PROJECT_SOURCE_DIR}/include"
+                "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/reflgen/tolerance"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_tolerance.cmake")
+
         # 편집기 자동완성용 attribute 카탈로그.
         add_test(NAME reflgen_generator_catalog
             COMMAND "${CMAKE_COMMAND}"
@@ -210,6 +219,10 @@ if(TARGET reflgen_cli)
         install(FILES third_party/clang-c/LICENSE.TXT
             DESTINATION ${CMAKE_INSTALL_DATADIR}/reflgen/licenses
             RENAME libclang-LICENSE.TXT)
+    endif()
+    # 생성기 옆 clang/include — libclang 과 같은 판의 clang 내장 header(생성기가 -resource-dir 로 준다).
+    if(EXISTS "${REFLGEN_CLANG_RESOURCE_INCLUDE}/stddef.h")
+        install(DIRECTORY "${REFLGEN_CLANG_RESOURCE_INCLUDE}/" DESTINATION ${CMAKE_INSTALL_BINDIR}/clang/include)
     endif()
 endif()
 install(EXPORT reflgen-targets

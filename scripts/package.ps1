@@ -34,7 +34,7 @@ try {
 
     # 배포물이 기대는 배치 — 하나라도 빠지면 소비자 쪽에서 조용히 깨진다.
     $required = @(
-        'bin\reflgen.exe', 'bin\libclang.dll', 'include\reflgen\reflgen.h', 'include\reflgen\core\version.h',
+        'bin\reflgen.exe', 'bin\libclang.dll', 'bin\clang\include\stddef.h', 'include\reflgen\reflgen.h', 'include\reflgen\core\version.h',
         'share\reflgen\msbuild\reflgen.targets', 'share\reflgen\licenses\libclang-LICENSE.TXT',
         'lib\cmake\reflgen\reflgen-config.cmake', 'LICENSE')
     foreach ($path in $required) {

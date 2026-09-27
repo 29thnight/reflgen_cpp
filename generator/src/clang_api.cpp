@@ -85,6 +85,14 @@ namespace reflgen::generator
         return position_of(clang_getCursorLocation(cursor)).file;
     }
 
+    file_offset expansion_of(CXSourceLocation location)
+    {
+        CXFile file = nullptr;
+        unsigned offset = 0;
+        clang_getExpansionLocation(location, &file, nullptr, nullptr, &offset);
+        return {file != nullptr ? normalize_path(take_string(clang_getFileName(file))) : std::string(), offset};
+    }
+
     CXFile file_handle_of(CXSourceLocation location)
     {
         CXFile file = nullptr;

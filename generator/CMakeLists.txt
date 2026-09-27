@@ -44,7 +44,9 @@ add_executable(reflgen_cli
 set_target_properties(reflgen_cli PROPERTIES OUTPUT_NAME reflgen)
 if(WIN32)
     # 경로를 UTF-8 로 다루게 한다(매니페스트 머리말 참고). MSVC 계열 링커가 소스 목록의 .manifest 를 넣는다.
-    target_sources(reflgen_cli PRIVATE src/reflgen.manifest)
+    target_sources(reflgen_cli PRIVATE src/reflgen.manifest src/executable_windows.cpp)
+else()
+    target_sources(reflgen_cli PRIVATE src/executable_posix.cpp)
 endif()
 target_include_directories(reflgen_cli SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/third_party/clang-c/include")
 target_link_libraries(reflgen_cli PRIVATE reflgen_generator_core "${REFLGEN_LIBCLANG}")
@@ -58,9 +60,10 @@ foreach(reflgen_tool_target reflgen_generator_core reflgen_cli)
     endif()
 endforeach()
 
+get_filename_component(reflgen_libclang_lib_dir "${REFLGEN_LIBCLANG}" DIRECTORY)
+
 # Windows 는 실행 파일 옆에 libclang.dll 이 있어야 한다.
 if(WIN32)
-    get_filename_component(reflgen_libclang_lib_dir "${REFLGEN_LIBCLANG}" DIRECTORY)
     find_file(REFLGEN_LIBCLANG_DLL libclang.dll HINTS "${reflgen_libclang_lib_dir}/../bin" "${reflgen_libclang_lib_dir}")
     if(REFLGEN_LIBCLANG_DLL)
         add_custom_command(TARGET reflgen_cli POST_BUILD
@@ -69,6 +72,28 @@ if(WIN32)
     else()
         message(WARNING "reflgen: libclang.dll was not found next to ${REFLGEN_LIBCLANG}; copy it next to reflgen.exe")
     endif()
+endif()
+
+# clang 의 내장 header(<lib>/clang/<판>/include — immintrin.h·stddef.h 등)를 생성기 옆 clang/include 에 둔다. libclang 은
+# 자기 위치에서 이것을 찾는데 생성기 옆으로 옮긴 libclang 에는 그 자리가 없다 — 생성기가 -resource-dir 로 직접 준다.
+# 없으면 MSVC 의 intrin header 가 대신 쓰여 __m128 같은 타입이 clang 이 아는 것과 달라진다. libclang 과 같은 판이어야 한다.
+file(GLOB reflgen_clang_resource_candidates LIST_DIRECTORIES true "${reflgen_libclang_lib_dir}/clang/*/include")
+set(reflgen_clang_resource_include "")
+if(reflgen_clang_resource_candidates)
+    list(SORT reflgen_clang_resource_candidates COMPARE NATURAL ORDER DESCENDING)
+    list(GET reflgen_clang_resource_candidates 0 reflgen_clang_resource_include)
+endif()
+set(REFLGEN_CLANG_RESOURCE_INCLUDE "${reflgen_clang_resource_include}" CACHE PATH
+    "clang's builtin header directory matching libclang (<lib>/clang/<version>/include)")
+if(EXISTS "${REFLGEN_CLANG_RESOURCE_INCLUDE}/stddef.h")
+    message(STATUS "reflgen: clang builtin headers = ${REFLGEN_CLANG_RESOURCE_INCLUDE}")
+    add_custom_command(TARGET reflgen_cli POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${REFLGEN_CLANG_RESOURCE_INCLUDE}"
+                "$<TARGET_FILE_DIR:reflgen_cli>/clang/include"
+        VERBATIM)
+else()
+    message(WARNING "reflgen: clang's builtin headers were not found next to ${REFLGEN_LIBCLANG}; "
+                    "set REFLGEN_CLANG_RESOURCE_INCLUDE to <lib>/clang/<version>/include")
 endif()
 
 add_executable(reflgen::cli ALIAS reflgen_cli)

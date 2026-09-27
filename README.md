@@ -184,6 +184,13 @@ reflgen_generate(my_game
 - **C 소스**: 같은 target 의 C 번역 단위(서드파티 C 코드)에는 주입하지 않는다.
 - **요구 사항**: libclang. Visual Studio 는 동봉본(`VC/Tools/Llvm`)을 자동으로 찾는다. 그 밖은
   `REFLGEN_LIBCLANG_DIR` 로 준다. C API header 는 `third_party/clang-c`(LLVM 22.1.3, Apache-2.0 WITH LLVM-exception).
+  libclang 과 같은 판의 clang 내장 header(`immintrin.h`·`stddef.h` 등)를 생성기 옆 `clang/include` 에 함께 둔다 —
+  생성기가 `-resource-dir` 로 주고 빌드 시스템이 준 MSVC·Windows SDK include 보다 먼저 찾는다(clang-cl 의 순서).
+- **MSVC 로만 빌드하는 코드**: 생성기는 clang 으로 읽으므로 MSVC 에서만 되는 코드(`__FUNCSIG__` 표기를 못 박은
+  `static_assert`, clang 이 상수 식으로 받지 않는 enum 캐스트 등)에서 clang 오류가 난다. 반영 선언 밖의 오류는 넘기고
+  수만 알린다(`note RG0101`) — 생성 코드는 반영 선언의 이름과 attribute 만 옮기고 컴파일은 사용자의 컴파일러가 한다.
+  반영 선언 안의 오류(RG0100)나, 밖의 오류(부모 클래스 등) 때문에 clang 이 무효로 본 반영 선언(RG0102)은 실패다 —
+  clang 이 그 선언을 잘못 읽었을 수 있다. 실패하면 넘겼던 오류도 위치와 함께 모두 알린다.
 
 진단은 MSVC 형식(`file(line,col): error RG0002: …`)이라 VS Error List 에서 원본으로 바로 간다. 생성기는 편집기
 자동완성에 쓸 attribute 카탈로그(`reflgen_<module>.attributes.tsv` — attribute 이름공간의 타입, 생성자 시그니처,
@@ -211,7 +218,9 @@ namespace editor
 | RG0005 | 지원하지 않는 선언(클래스·멤버 함수 template, union, 익명 이름공간) |
 | RG0006 | 오버로드된 메서드 |
 | RG0007 | 생성 파일 이름 충돌(같은 이름의 header 둘) |
-| RG0100 | Clang 이 보고한 컴파일 오류 |
+| RG0100 | Clang 이 보고한 컴파일 오류 — 반영 선언 안이거나 파싱이 멈춘 것 |
+| RG0101 | (알림) 반영 선언 밖이라 넘긴 Clang 오류 |
+| RG0102 | 밖의 오류(부모 클래스·멤버 타입) 때문에 Clang 이 무효로 본 반영 선언 |
 
 ### MSBuild(.vcxproj) 연동
 

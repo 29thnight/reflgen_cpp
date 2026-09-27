@@ -3,7 +3,9 @@
 // Ninja 출력이 이 형식을 알아보고 원본 위치로 이동시킨다.
 //
 // 번호는 한 번 정하면 바꾸지 않는다(문서·검색의 기준이 된다):
-//   RG0001  입력·옵션 오류          RG0100  Clang 이 보고한 컴파일 오류
+//   RG0001  입력·옵션 오류          RG0100  Clang 이 보고한 컴파일 오류(반영 선언 안이거나 파싱이 멈춘 것)
+//                                   RG0101  반영 선언 밖이라 넘긴 Clang 오류(알림)
+//                                   RG0102  밖의 오류로 Clang 이 무효로 본 반영 선언
 //   RG0002  private 멤버에 friend 없음
 //   RG0003  (폐지) header 가 생성 파일을 include 하지 않음 — 이제 빌드가 강제 include 한다
 //   RG0004  반영할 수 없는 멤버(bit-field, 참조, 익명 union 등)
@@ -20,6 +22,7 @@ namespace reflgen::generator
 {
     enum class severity
     {
+        note, // 빌드 도구가 경고로 세지 않는 알림 — MSVC 형식의 error·warning 이 아니다
         warning,
         error,
     };
@@ -50,6 +53,11 @@ namespace reflgen::generator
             report(severity::warning, code, std::move(position), std::move(message));
         }
 
+        void note(std::string_view code, source_position position, std::string message)
+        {
+            report(severity::note, code, std::move(position), std::move(message));
+        }
+
         bool has_errors() const noexcept
         {
             for (const diagnostic& entry : entries_)
@@ -68,7 +76,9 @@ namespace reflgen::generator
         {
             for (const diagnostic& entry : entries_)
             {
-                const char* level = entry.level == severity::error ? "error" : "warning";
+                const char* level = entry.level == severity::error     ? "error"
+                                    : entry.level == severity::warning ? "warning"
+                                                                       : "note";
                 if (entry.position.file.empty())
                 {
                     std::fprintf(stream, "reflgen : %s %s: %s\n", level, entry.code.c_str(), entry.message.c_str());

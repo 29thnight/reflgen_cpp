@@ -31,6 +31,14 @@ namespace reflgen::generator
     std::size_t offset_of(CXSourceLocation location);
     std::string file_of(CXCursor cursor);
 
+    // 매크로를 편 자리(정규화한 파일 경로와 파일 안 offset) — 매크로 정의가 아니라 그것을 쓴 곳이다.
+    struct file_offset
+    {
+        std::string file;
+        std::size_t offset = 0;
+    };
+    file_offset expansion_of(CXSourceLocation location);
+
     struct index_deleter
     {
         void operator()(void* index) const noexcept { clang_disposeIndex(index); }

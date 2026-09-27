@@ -55,6 +55,23 @@ namespace reflgen::generator
             std::vector<attribute_group> groups;
         };
 
+        // 반영 선언이 차지하는 원본 구간(매크로를 편 자리 기준) — clang 오류가 그 안에 있는지 가른다.
+        struct declaration_extent
+        {
+            std::string file;
+            std::size_t begin = 0;
+            std::size_t end = 0;
+        };
+
+        // clang 이 보고한 오류 하나.
+        struct clang_error
+        {
+            source_position position; // 진단에 찍는 원본 위치
+            file_offset expansion;    // 반영 선언 구간과 견주는 위치
+            std::string message;
+            bool fatal = false; // 파싱이 거기서 멈췄다
+        };
+
         // 클래스 하나의 멤버를 도는 동안 쓰는 문맥.
         struct member_context
         {
@@ -84,6 +101,8 @@ namespace reflgen::generator
             }
 
             void run() { visit_scope(clang_getTranslationUnitCursor(unit_)); }
+
+            const std::vector<declaration_extent>& reflected_extents() const noexcept { return extents_; }
 
             // 선언 이름 앞에 [[reflgen::<directive>]] 가 있는가 — 카탈로그가 attribute 타입을 가를 때 쓴다.
             bool declares(CXCursor cursor, std::string_view directive)
@@ -286,6 +305,7 @@ namespace reflgen::generator
                                         "generated header; skipped");
                     return;
                 }
+                note_declaration(cursor, position);
 
                 class_model result;
                 result.qualified_name = type_name_of(cursor);
@@ -474,6 +494,7 @@ namespace reflgen::generator
                                     "'" + cursor_spelling(cursor) + "' is in an anonymous namespace; skipped");
                     return;
                 }
+                note_declaration(cursor, position);
 
                 enum_model result;
                 result.qualified_name = type_name_of(cursor);
@@ -504,6 +525,23 @@ namespace reflgen::generator
                     return CXChildVisit_Continue;
                 });
                 model_for(cursor)->enums.push_back(std::move(result));
+            }
+
+            // 반영 선언의 구간을 적는다(그 안의 clang 오류는 넘기지 않는다). clang 이 선언을 무효로 보면 밖의 오류(부모
+            // 클래스, 멤버 타입) 때문에 잘못 읽었을 수 있다 — 부모를 건너뛰면 부모의 필드가 서술에서 빠진다.
+            void note_declaration(CXCursor cursor, const source_position& position)
+            {
+                const CXSourceRange range = clang_getCursorExtent(cursor);
+                const file_offset begin = expansion_of(clang_getRangeStart(range));
+                const file_offset end = expansion_of(clang_getRangeEnd(range));
+                extents_.push_back({begin.file, begin.offset, end.offset});
+                if (clang_isInvalidDeclaration(cursor) != 0)
+                {
+                    report_.error("RG0102", position,
+                                  "clang could not read '" + cursor_spelling(cursor) +
+                                      "': an error in a declaration it depends on (a base class, a member type) made "
+                                      "it invalid; the clang errors follow as notes");
+                }
             }
 
             // enum 이름 뒤, 본문('{')이나 끝(';') 앞에 ':' 가 있으면 enum-base 를 적은 것이다.
@@ -634,10 +672,12 @@ namespace reflgen::generator
             std::map<std::string, source_file> sources_;
             std::set<std::string> scopes_;
             bool has_attribute_headers_ = false;
+            std::vector<declaration_extent> extents_;
         };
 
-        void report_clang_diagnostics(CXTranslationUnit unit, diagnostics& report)
+        std::vector<clang_error> clang_errors_of(CXTranslationUnit unit)
         {
+            std::vector<clang_error> errors;
             const unsigned count = clang_getNumDiagnostics(unit);
             for (unsigned i = 0; i < count; ++i)
             {
@@ -645,11 +685,60 @@ namespace reflgen::generator
                 const CXDiagnosticSeverity level = clang_getDiagnosticSeverity(diagnostic);
                 if (level >= CXDiagnostic_Error)
                 {
-                    report.error("RG0100", position_of(clang_getDiagnosticLocation(diagnostic)),
-                                 "clang: " + take_string(clang_getDiagnosticSpelling(diagnostic)));
+                    const CXSourceLocation location = clang_getDiagnosticLocation(diagnostic);
+                    errors.push_back({position_of(location), expansion_of(location),
+                                      take_string(clang_getDiagnosticSpelling(diagnostic)),
+                                      level == CXDiagnostic_Fatal});
                 }
                 clang_disposeDiagnostic(diagnostic);
             }
+            return errors;
+        }
+
+        // clang 오류를 반영 선언과 가른다. MSVC 로만 빌드하는 코드를 clang 으로 읽으면 반영과 무관한 곳에서 오류가
+        // 난다(__FUNCSIG__ 표기를 못 박은 static_assert, clang 이 상수 식으로 받지 않는 enum 캐스트 등). 그것으로 생성을
+        // 멈추면 그런 코드베이스에서는 생성기를 쓸 수 없다 — 생성 코드는 반영 선언의 이름과 attribute 만 옮기고,
+        // 컴파일은 사용자의 컴파일러가 원본을 읽어 한다. 반영 선언 안의 오류는 clang 이 그 선언을 잘못 읽었을 수
+        // 있으므로(멤버가 빠지거나 바뀐다) 오류다. 치명 오류는 파싱이 멈췄다는 뜻이라 늘 오류다.
+        //
+        // 생성이 실패하면(반영 선언이 무효였거나 안에 오류가 있으면) 넘긴 오류도 하나씩 알린다 — 원인이 거기 있을 수
+        // 있다. 성공하면 수와 첫 오류만 알린다.
+        void report_clang_errors(const std::vector<clang_error>& errors, const std::vector<declaration_extent>& extents,
+                                 diagnostics& report)
+        {
+            std::vector<const clang_error*> ignored;
+            for (const clang_error& error : errors)
+            {
+                const bool inside = std::ranges::any_of(extents, [&](const declaration_extent& extent) {
+                    return extent.file == error.expansion.file && extent.begin <= error.expansion.offset &&
+                           error.expansion.offset <= extent.end;
+                });
+                if (error.fatal || inside)
+                {
+                    report.error("RG0100", error.position, "clang: " + error.message);
+                }
+                else
+                {
+                    ignored.push_back(&error);
+                }
+            }
+            if (ignored.empty())
+            {
+                return;
+            }
+            if (report.has_errors())
+            {
+                for (const clang_error* error : ignored)
+                {
+                    report.note("RG0101", error->position, "clang: " + error->message);
+                }
+                return;
+            }
+            const source_position& where = ignored.front()->position;
+            report.note("RG0101", {},
+                        std::to_string(ignored.size()) + (ignored.size() == 1 ? " clang error" : " clang errors") +
+                            " outside the reflected declarations did not affect the generated code (first: " +
+                            where.file + "(" + std::to_string(where.line) + "): " + ignored.front()->message + ")");
         }
 
         // "-std=c++23" 의 순위. 알 수 없는 표기는 0.
@@ -686,7 +775,20 @@ namespace reflgen::generator
         std::vector<std::string> clang_arguments_for(const extract_options& options)
         {
             // -fparse-all-comments: 카탈로그가 `//` 주석도 attribute 설명으로 쓴다(기본은 doc 주석만 붙는다).
-            std::vector<std::string> arguments = {"-x", "c++", "-Wno-unknown-attributes", "-fparse-all-comments"};
+            // -ferror-limit=0: 오류가 많아도 끝까지 파싱한다 — 반영 선언 밖의 오류는 넘기므로(report_clang_errors)
+            // 한도에서 멈추면 뒤에 오는 반영 선언을 놓친다.
+            std::vector<std::string> arguments = {"-x", "c++", "-Wno-unknown-attributes", "-fparse-all-comments",
+                                                  "-ferror-limit=0"};
+            if (!options.resource_directory.empty())
+            {
+                // 내장 header 를 빌드 시스템이 주는 -isystem(MSVC·Windows SDK include)보다 먼저 찾는다 — clang-cl 의
+                // 순서다. clang 은 -isystem 을 내장 header 보다 먼저 찾으므로 두지 않으면 MSVC 의 xmmintrin.h 가 이겨
+                // __m128 이 clang 이 아는 타입과 달라진다.
+                arguments.push_back("-resource-dir");
+                arguments.push_back(options.resource_directory);
+                arguments.push_back("-isystem");
+                arguments.push_back(options.resource_directory + "/include");
+            }
             std::string standard = "-std=c++20";
             bool has_standard = false;
             for (const std::string& argument : options.clang_arguments)
@@ -755,9 +857,9 @@ namespace reflgen::generator
             return {};
         }
 
-        report_clang_diagnostics(unit.get(), report);
         extractor walker(unit.get(), options, report);
         walker.run();
+        report_clang_errors(clang_errors_of(unit.get()), walker.reflected_extents(), report);
 
         std::set<std::string> scopes(options.attribute_scopes.begin(), options.attribute_scopes.end());
         scopes.insert("reflgen");

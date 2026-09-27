@@ -16,6 +16,7 @@
 #include "catalog.h"
 #include "diagnostics.h"
 #include "emit.h"
+#include "executable.h"
 #include "extract.h"
 #include "clang_api.h"
 #include "reflgen/core/version.h"
@@ -224,6 +225,13 @@ namespace
         if (report.has_errors())
         {
             return std::nullopt;
+        }
+
+        // 생성기 옆 clang/include 에 둔 clang 내장 header — 없으면(개발 중 다른 곳의 실행 파일 등) libclang 이 스스로 찾는다.
+        const std::filesystem::path executable = executable_path();
+        if (!executable.empty() && std::filesystem::exists(executable.parent_path() / "clang" / "include" / "stddef.h"))
+        {
+            options.resource_directory = normalize_path((executable.parent_path() / "clang").string());
         }
         return cli;
     }

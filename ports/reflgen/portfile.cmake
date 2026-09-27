@@ -3,6 +3,7 @@
 # 설치 배치(vcpkg):
 #   include/reflgen/...                    라이브러리
 #   tools/reflgen/reflgen.exe, libclang.dll 생성기
+#   tools/reflgen/clang/include             clang 내장 header(libclang 과 같은 판) — 생성기가 파싱에 쓴다
 #   share/reflgen/msbuild/reflgen.targets  .vcxproj 연동 — tools/reflgen 의 생성기를 스스로 찾는다
 #   share/reflgen/reflgen-config.cmake     find_package(reflgen) — reflgen_generate() 가 같은 생성기를 쓴다
 #
@@ -33,9 +34,10 @@ vcpkg_cmake_configure(
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(CONFIG_PATH lib/cmake/reflgen)
 
-# bin/ 의 reflgen.exe 와 libclang.dll 을 tools/reflgen/ 으로 옮긴다.
+# bin/ 의 reflgen.exe, libclang.dll, clang/include(clang 내장 header)를 tools/reflgen/ 으로 옮긴다.
 vcpkg_copy_tools(TOOL_NAMES reflgen AUTO_CLEAN)
-file(COPY "${CURRENT_PACKAGES_DIR}/bin/libclang.dll" DESTINATION "${CURRENT_PACKAGES_DIR}/tools/reflgen")
+file(COPY "${CURRENT_PACKAGES_DIR}/bin/libclang.dll" "${CURRENT_PACKAGES_DIR}/bin/clang"
+     DESTINATION "${CURRENT_PACKAGES_DIR}/tools/reflgen")
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/bin" "${CURRENT_PACKAGES_DIR}/lib")
 
 vcpkg_install_copyright(FILE_LIST

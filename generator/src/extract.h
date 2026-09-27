@@ -17,6 +17,8 @@ namespace reflgen::generator
         std::vector<std::string> attribute_headers;
         std::string output_directory; // 정규화한 절대 경로
         std::string module_name;
+        // clang 내장 header 를 담은 resource 디렉터리(그 아래 include/). 비면 libclang 이 스스로 찾는다.
+        std::string resource_directory;
     };
 
     struct extract_result
