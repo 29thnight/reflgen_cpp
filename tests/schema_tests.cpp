@@ -81,7 +81,27 @@ namespace schemas
     {
         int x;
     };
+
+    // 다른 라이브러리의 static reflect() — 흔한 이름이다. reflgen 스키마를 돌려주지 않으므로 reflgen 레시피가 아니다.
+    struct foreign_recipe
+    {
+        static consteval int reflect() { return 0; }
+        int value = 1;
+    };
+
+    // 같은 것을 가진 타입을 밖에서 서술한다(다른 라이브러리에서 reflgen 으로 옮겨 가는 중인 타입).
+    struct migrating
+    {
+        static consteval int reflect() { return 0; }
+        int value = 2;
+    };
 } // namespace schemas
+
+template<>
+struct reflgen::reflection<schemas::migrating>
+{
+    static constexpr auto value = reflgen::schema<schemas::migrating>(reflgen::field<&schemas::migrating::value>);
+};
 
 template<>
 struct reflgen::reflection<schemas::third_party>
@@ -103,6 +123,10 @@ namespace
     static_assert(!reflgen::reflectable<int>);
     // 물려받은 reflect() 는 자기 서술로 치지 않는다.
     static_assert(!reflgen::detail::member_reflection_is_own<schemas::forgot_reflect>());
+    // reflgen 스키마를 돌려주지 않는 reflect() 는 레시피가 아니다 — 서술이 없는 타입이고, 밖에서 서술할 수 있다.
+    static_assert(!reflgen::reflectable<schemas::foreign_recipe>);
+    static_assert(reflgen::reflectable<schemas::migrating>);
+    static_assert(reflgen::schema_of<schemas::migrating>.field_count == 1);
 
     const test local_schema("schema: local fields, names and type name", [] {
         constexpr const auto& schema = reflgen::schema_of<schemas::creature>;

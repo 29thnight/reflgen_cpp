@@ -77,6 +77,41 @@ namespace generated_tests
         int rank = 1;
     };
 
+    // 다른 라이브러리의 static reflect() 를 가진 채 [[reflgen::reflect]] 로 옮겨 가는 타입(CreatorEngine 의 meta 레시피
+    // 같은 것) — 그 reflect() 는 reflgen 레시피가 아니므로 생성된 서술이 쓰인다.
+    struct [[reflgen::reflect]] migrating
+    {
+        static consteval int reflect() { return 0; }
+        int value = 3;
+    };
+
+    // 외래 reflect() 를 가진 중간층 — reflgen 레시피가 아니므로 그 위의 반영된 조상(entity)까지 거슬러 올라가야 한다.
+    struct foreign_layer : entity
+    {
+        static consteval int reflect() { return 0; }
+    };
+
+    struct [[reflgen::reflect]] over_foreign_layer : foreign_layer
+    {
+        int own = 2;
+    };
+
+    // 손으로 쓴 reflgen 레시피를 가진 부모 — 반영된 조상이다.
+    struct recipe_base
+    {
+        static consteval auto reflect()
+        {
+            return reflgen::schema<recipe_base>(reflgen::field<&recipe_base::base_value>);
+        }
+
+        int base_value = 5;
+    };
+
+    struct [[reflgen::reflect]] over_recipe : recipe_base
+    {
+        int own = 1;
+    };
+
     namespace nested
     {
         struct [[reflgen::reflect]] marker

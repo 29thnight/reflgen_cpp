@@ -529,7 +529,8 @@ namespace reflgen::generator
                 return false;
             }
 
-            // 반영된 클래스인가 — [[reflgen::reflect]] 를 달았거나 클래스 안 static reflect() 레시피가 있다.
+            // 반영된 클래스인가 — [[reflgen::reflect]] 를 달았거나 reflgen 스키마를 돌려주는 static reflect() 레시피가
+            // 있다. 다른 라이브러리의 reflect()(흔한 이름이다)는 라이브러리처럼 레시피로 치지 않는다.
             bool is_reflected(CXCursor record)
             {
                 if (declares(record, "reflect"))
@@ -541,7 +542,9 @@ namespace reflgen::generator
                     if (clang_getCursorKind(child) == CXCursor_CXXMethod && clang_CXXMethod_isStatic(child) != 0 &&
                         cursor_spelling(child) == "reflect")
                     {
-                        has_recipe = true;
+                        const std::string result = take_string(
+                            clang_getTypeSpelling(clang_getCanonicalType(clang_getCursorResultType(child))));
+                        has_recipe = result.find("reflgen::type_schema<") != std::string::npos;
                         return CXChildVisit_Break;
                     }
                     return CXChildVisit_Continue;

@@ -141,6 +141,23 @@ namespace
         check_equal(loaded_hero->inventory.at("potion"), 3);
     });
 
+    const test foreign_reflect("generated: a foreign static reflect() does not shadow the generated description", [] {
+        check_equal(reflgen::json::to_string(generated_tests::migrating{}), std::string(R"({"value":3})"));
+    });
+
+    const test foreign_layer("generated: a base with a foreign reflect() is walked through to the reflected ancestor",
+                             [] {
+                                 generated_tests::over_foreign_layer value;
+                                 value.name = "mage";
+                                 check_equal(reflgen::json::to_string(value),
+                                             std::string(R"({"name":"mage","own":2})"));
+                             });
+
+    const test recipe_ancestor("generated: a base with a hand-written reflgen recipe is a reflected ancestor", [] {
+        check_equal(reflgen::json::to_string(generated_tests::over_recipe{}),
+                    std::string(R"({"base_value":5,"own":1})"));
+    });
+
     // 반영하지 않는 중간층(stamped<Self, Base>)을 건너 가장 가까운 반영된 조상(entity)을 부모로 적는다.
     const test nearest_reflected_ancestor("generated: bases skip unreflected layers to the nearest reflected ancestor",
                                           [] {

@@ -16,9 +16,30 @@
 
 namespace reflgen
 {
+    namespace detail
+    {
+        // static reflect() 는 흔한 이름이다(다른 리플렉션 라이브러리도 쓴다) — reflgen 스키마를 돌려주는 것만 reflgen
+        // 레시피로 본다. 다른 것을 돌려주는 reflect() 를 가진 타입은 서술이 없는 타입이고, reflection<T> 나 생성기로
+        // 밖에서 서술할 수 있다(다른 라이브러리에서 reflgen 으로 옮겨 가는 중인 코드).
+        template<class T>
+        consteval bool returns_reflgen_schema() noexcept
+        {
+            if constexpr (has_member_reflection<T>)
+            {
+                return is_type_schema<std::remove_cvref_t<decltype(access::reflect<T>())>>::value;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        template<class T>
+        concept has_reflgen_recipe = returns_reflgen_schema<T>();
+    } // namespace detail
+
     template<class T>
-    concept reflectable =
-        std::is_class_v<T> && (detail::has_member_reflection<T> || detail::has_external_reflection<T>);
+    concept reflectable = std::is_class_v<T> && (detail::has_reflgen_recipe<T> || detail::has_external_reflection<T>);
 
     namespace detail
     {
@@ -30,10 +51,9 @@ namespace reflgen
         template<class T>
         consteval bool member_reflection_is_own() noexcept
         {
-            if constexpr (has_member_reflection<T>)
+            if constexpr (has_reflgen_recipe<T>)
             {
-                using result = decltype(access::reflect<T>());
-                static_assert(is_type_schema<result>::value, "reflect() must return reflgen::schema<T>(...)");
+                using result = std::remove_cvref_t<decltype(access::reflect<T>())>;
                 return std::is_same_v<typename result::type, T>;
             }
             else
