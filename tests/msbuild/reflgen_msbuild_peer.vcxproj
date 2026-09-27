@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MSBuild 연동 시험의 라이브러리 — reflgen_msbuild_test.vcxproj 가 ProjectReference 로 참조한다. 여기서 생성한
-     서술(lib_types.h)을 참조하는 쪽이 강제 include 로 받아야 한다. reflgen_msbuild_peer.vcxproj 와는 서로의 header 를
-     include 하는 순환이라 ReflgenReference 로 서술만 주고받는다. -->
+<!-- MSBuild 연동 시험의 두 번째 라이브러리 — reflgen_msbuild_lib.vcxproj 와 서로의 header 를 include 한다. 이런 순환은
+     ProjectReference 로 이을 수 없으므로 둘은 ReflgenReference 로 서로의 서술만 받는다: 빌드 순서를 걸지 않고, 상대의
+     생성만 기다린다. 병렬 빌드(/m)에서 교착 없이, 생성은 프로젝트마다 한 번만 돌아야 한다(run_msbuild_test.cmake). -->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -15,8 +15,8 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
-    <ProjectGuid>{0E3C1F7A-8D52-4B6E-9A41-5C7D2B9E3F18}</ProjectGuid>
-    <RootNamespace>reflgen_msbuild_lib</RootNamespace>
+    <ProjectGuid>{5A8D3C21-7F46-4E0B-B93D-1E6F2A7C4D95}</ProjectGuid>
+    <RootNamespace>reflgen_msbuild_peer</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -32,7 +32,7 @@
     <IntDir>$(ReflgenTestWork)obj\$(ProjectName)\</IntDir>
   </PropertyGroup>
   <PropertyGroup>
-    <ReflgenModule>msbuild_lib</ReflgenModule>
+    <ReflgenModule>msbuild_peer</ReflgenModule>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -43,14 +43,13 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="lib_peer.cpp" />
-    <ClCompile Include="lib_types.cpp" />
+    <ClCompile Include="peer_types.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="lib_types.h" />
+    <ClInclude Include="peer_types.h" />
   </ItemGroup>
   <ItemGroup>
-    <ReflgenReference Include="reflgen_msbuild_peer.vcxproj" />
+    <ReflgenReference Include="reflgen_msbuild_lib.vcxproj" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="..\..\msbuild\reflgen.targets" />

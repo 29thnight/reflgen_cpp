@@ -67,10 +67,15 @@
     <ClInclude Include="derived_types.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="plain.h" />
+    <!-- 지웠는데 프로젝트에 남은 항목(흔하다) — 빌드를 막지도, 생성기를 매번 다시 돌리지도 않아야 한다. -->
+    <ClInclude Include="removed_long_ago.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="reflgen_msbuild_lib.vcxproj">
       <Project>{0E3C1F7A-8D52-4B6E-9A41-5C7D2B9E3F18}</Project>
+    </ProjectReference>
+    <ProjectReference Include="reflgen_msbuild_peer.vcxproj">
+      <Project>{5A8D3C21-7F46-4E0B-B93D-1E6F2A7C4D95}</Project>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

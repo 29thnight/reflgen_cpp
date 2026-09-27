@@ -2,6 +2,7 @@
 // MSBuild 연동 시험의 라이브러리 쪽 — 이 프로젝트를 참조하는 실행 파일이 이 header 로 reflection 을 쓴다.
 // 생성 코드는 라이브러리의 IntDir 에 있으므로 참조하는 쪽에 주입이 전해져야 한다.
 #include "reflgen/reflgen.h"
+#include <string>
 
 namespace msbuild_lib
 {
@@ -12,4 +13,7 @@ namespace msbuild_lib
     };
 
     int length_squared(const point& value);
+
+    // reflgen_msbuild_peer 의 타입을 그쪽 서술로 직렬화한다(lib_peer.cpp) — 두 라이브러리는 서로의 header 를 include 한다.
+    std::string badge_text();
 } // namespace msbuild_lib

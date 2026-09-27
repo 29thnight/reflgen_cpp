@@ -12,6 +12,13 @@
   .obj·.pch 처럼 빌드 중간 산출물이다. ProjectReference 로 참조하는 reflgen 프로젝트의 주입 header 도 함께
   강제 include 한다(그쪽 것이 먼저) — 참조하는 프로젝트도 이 파일을 가져와야 한다.
 
+  다른 프로젝트의 header 를 include 하는 번역 단위는 그 프로젝트의 주입도 받아야 한다 — 받지 않으면 같은 타입이 번역
+  단위마다 다르게 보인다(reflectable<T> 가 한쪽에서만 참이다). ProjectReference 가 없는 프로젝트(include 경로로만
+  header 를 여는 라이브러리, 서로의 header 를 include 하는 라이브러리)는 ReflgenReference 로 잇는다:
+    <ItemGroup><ReflgenReference Include="..\Render\Render.vcxproj" /></ItemGroup>
+  빌드 순서를 걸지 않는다 — 그 프로젝트의 생성만 먼저 돌리고(컴파일·링크는 기다리지 않는다) 그 프로젝트 자신의 주입
+  header 를 받는다. 전이하지 않으므로 서로 참조해도(순환) 된다. 링크는 따로 잇는다.
+
   속성(모두 선택):
     ReflgenExecutable        reflgen.exe 경로. 설치·NuGet·vcpkg 배치면 자동으로 찾는다.
     ReflgenIncludeDirectory  reflgen/reflgen.h 가 있는 include 디렉터리. 자동으로 찾는다.
@@ -83,26 +90,42 @@
       <_ReflgenForcedIncludes>@(_ReflgenInjections)</_ReflgenForcedIncludes>
     </PropertyGroup>
     <!-- C 로 컴파일하는 소스(.c 기본값이거나 CompileAs=CompileAsC — 엔진에 흔한 서드파티 C 코드)는 건너뛴다.
-         주입 header 는 C++ 다. -->
+         주입 header 는 C++ 다. 생성된 등록 함수 정의도 건너뛴다 — 스스로 include 한다(ReflgenReference 로 생성이
+         먼저 돌았으면 이 항목이 여기서 이미 보인다). -->
     <ItemGroup Condition="'$(_ReflgenForcedIncludes)' != ''">
-      <ClCompile Condition="'%(ClCompile.CompileAs)' == 'CompileAsC' or ('%(ClCompile.Extension)' == '.c' and '%(ClCompile.CompileAs)' != 'CompileAsCpp')">
-        <_ReflgenCompiledAsC>true</_ReflgenCompiledAsC>
+      <ClCompile Condition="'%(ClCompile.CompileAs)' == 'CompileAsC' or ('%(ClCompile.Extension)' == '.c' and '%(ClCompile.CompileAs)' != 'CompileAsCpp') or '%(ClCompile.Identity)' == '$(_ReflgenModuleSource)'">
+        <_ReflgenNoInjection>true</_ReflgenNoInjection>
       </ClCompile>
-      <ClCompile Condition="'%(ClCompile._ReflgenCompiledAsC)' != 'true' and ('%(ClCompile.PrecompiledHeader)' == 'Use' or '%(ClCompile.PrecompiledHeader)' == 'Create') and '%(ClCompile.PrecompiledHeaderFile)' != ''">
+      <ClCompile Condition="'%(ClCompile._ReflgenNoInjection)' != 'true' and ('%(ClCompile.PrecompiledHeader)' == 'Use' or '%(ClCompile.PrecompiledHeader)' == 'Create') and '%(ClCompile.PrecompiledHeaderFile)' != ''">
         <ForcedIncludeFiles>%(ClCompile.PrecompiledHeaderFile);%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
-      <ClCompile Condition="'%(ClCompile._ReflgenCompiledAsC)' != 'true' and (('%(ClCompile.PrecompiledHeader)' != 'Use' and '%(ClCompile.PrecompiledHeader)' != 'Create') or '%(ClCompile.PrecompiledHeaderFile)' == '')">
+      <ClCompile Condition="'%(ClCompile._ReflgenNoInjection)' != 'true' and (('%(ClCompile.PrecompiledHeader)' != 'Use' and '%(ClCompile.PrecompiledHeader)' != 'Create') or '%(ClCompile.PrecompiledHeaderFile)' == '')">
         <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
     </ItemGroup>
   </Target>
 
   <!-- 이 프로젝트가 강제 include 할 주입 header 들을 돌려준다 — 참조하는 프로젝트가 부른다(ProjectReference 로
-       이어진 reflgen 프로젝트의 서술이 참조하는 쪽까지 전해진다). 참조하는 reflgen 프로젝트의 것이 먼저(의존
-       순서), 자기 것이 마지막이다: 다른 프로젝트의 타입을 부모로 둔 타입은 부모의 서술이 먼저 보여야 컴파일된다. -->
+       이어진 reflgen 프로젝트의 서술이 참조하는 쪽까지 전해진다). ProjectReference 로 받은 것, ReflgenReference 로 받은
+       것, 자기 것 순이다. -->
   <Target Name="ReflgenGetInjections" DependsOnTargets="_ReflgenCollectInjections" Returns="@(_ReflgenInjections)" />
 
-  <Target Name="_ReflgenCollectInjections" DependsOnTargets="AssignProjectConfiguration">
+  <!-- 이 프로젝트 자신의 주입 header 만 돌려준다 — ReflgenReference 로 잇는 프로젝트가 부른다. 생성을 먼저 돌린다
+       (IntelliSense 의 design-time build 에서는 돌지 않는다). 다른 프로젝트를 부르지 않으므로 서로 불러도 순환하지 않는다. -->
+  <Target Name="ReflgenGetOwnInjection" DependsOnTargets="ReflgenGenerate;_ReflgenEnsureInjection" Returns="@(_ReflgenOwnInjection)" />
+
+  <!-- 아직 생성하기 전이면(처음 여는 프로젝트의 IntelliSense, 또는 참조하는 쪽이 먼저 물을 때) 빈 주입 header 를
+       둔다 — 빌드에서는 ReflgenGenerate 가 컴파일 전에 채운다. -->
+  <Target Name="_ReflgenEnsureInjection">
+    <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="'@(ClInclude)' != '' and !Exists('$(_ReflgenInjection)')" />
+    <WriteLinesToFile File="$(_ReflgenInjection)" Lines="#pragma once"
+                      Condition="'@(ClInclude)' != '' and !Exists('$(_ReflgenInjection)')" />
+    <ItemGroup>
+      <_ReflgenOwnInjection Include="$(_ReflgenInjection)" Condition="'@(ClInclude)' != ''" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_ReflgenCollectInjections" DependsOnTargets="AssignProjectConfiguration;_ReflgenEnsureInjection">
     <!-- reflgen 을 쓰지 않는 참조(target 이 없는 프로젝트)는 건너뛴다. -->
     <MSBuild Projects="@(ProjectReferenceWithConfiguration)"
              Targets="ReflgenGetInjections"
@@ -112,14 +135,44 @@
              Condition="'@(ProjectReferenceWithConfiguration)' != ''">
       <Output TaskParameter="TargetOutputs" ItemName="_ReflgenReferencedInjection" />
     </MSBuild>
-    <!-- 아직 생성하기 전이면(처음 여는 프로젝트의 IntelliSense, 또는 참조하는 쪽이 먼저 물을 때) 빈 주입 header 를
-         둔다 — 빌드에서는 ReflgenGenerate 가 컴파일 전에 채운다. -->
-    <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="'@(ClInclude)' != '' and !Exists('$(_ReflgenInjection)')" />
-    <WriteLinesToFile File="$(_ReflgenInjection)" Lines="#pragma once"
-                      Condition="'@(ClInclude)' != '' and !Exists('$(_ReflgenInjection)')" />
+
+    <!-- ReflgenReference 도 ProjectReference 와 같은 규칙으로 구성을 정한다 — 전역 속성이 다르면 MSBuild 가 같은
+         프로젝트를 다른 구성으로 한 번 더 평가하고, 생성이 두 번(동시에) 같은 파일을 쓴다. -->
+    <PropertyGroup>
+      <_ReflgenOnlyEnabledReferences>$(OnlyReferenceAndBuildProjectsEnabledInSolutionConfiguration)</_ReflgenOnlyEnabledReferences>
+      <_ReflgenOnlyEnabledReferences Condition="'$(_ReflgenOnlyEnabledReferences)' == ''">true</_ReflgenOnlyEnabledReferences>
+      <_ReflgenUnsetParentConfiguration>$(ShouldUnsetParentConfigurationAndPlatform)</_ReflgenUnsetParentConfiguration>
+      <_ReflgenUnsetParentConfiguration Condition="'$(_ReflgenUnsetParentConfiguration)' == '' and ('$(BuildingInsideVisualStudio)' == 'true' or '$(BuildingSolutionFile)' == 'true')">true</_ReflgenUnsetParentConfiguration>
+      <_ReflgenUnsetParentConfiguration Condition="'$(_ReflgenUnsetParentConfiguration)' == ''">false</_ReflgenUnsetParentConfiguration>
+    </PropertyGroup>
+    <AssignProjectConfiguration ProjectReferences="@(ReflgenReference)"
+                                CurrentProject="$(MSBuildProjectFullPath)"
+                                CurrentProjectConfiguration="$(Configuration)"
+                                CurrentProjectPlatform="$(Platform)"
+                                DefaultToVcxPlatformMapping="$(DefaultToVcxPlatformMapping)"
+                                VcxToDefaultPlatformMapping="$(VcxToDefaultPlatformMapping)"
+                                OutputType="$(OutputType)"
+                                ResolveConfigurationPlatformUsingMappings="false"
+                                SolutionConfigurationContents="$(CurrentSolutionConfigurationContents)"
+                                AddSyntheticProjectReferencesForSolutionDependencies="false"
+                                OnlyReferenceAndBuildProjectsEnabledInSolutionConfiguration="$(_ReflgenOnlyEnabledReferences)"
+                                ShouldUnsetParentConfigurationAndPlatform="$(_ReflgenUnsetParentConfiguration)"
+                                Condition="'@(ReflgenReference)' != ''">
+      <Output TaskParameter="AssignedProjects" ItemName="_ReflgenReferenceWithConfiguration" />
+      <Output TaskParameter="UnassignedProjects" ItemName="_ReflgenReferenceWithConfiguration" />
+    </AssignProjectConfiguration>
+    <MSBuild Projects="@(_ReflgenReferenceWithConfiguration)"
+             Targets="ReflgenGetOwnInjection"
+             BuildInParallel="$(BuildInParallel)"
+             Properties="%(_ReflgenReferenceWithConfiguration.SetConfiguration);%(_ReflgenReferenceWithConfiguration.SetPlatform)"
+             RemoveProperties="%(_ReflgenReferenceWithConfiguration.GlobalPropertiesToRemove)"
+             Condition="'@(_ReflgenReferenceWithConfiguration)' != ''">
+      <Output TaskParameter="TargetOutputs" ItemName="_ReflgenReferencedInjection" />
+    </MSBuild>
+
     <ItemGroup>
       <_ReflgenInjectionCandidate Include="@(_ReflgenReferencedInjection)" />
-      <_ReflgenInjectionCandidate Include="$(_ReflgenInjection)" Condition="'@(ClInclude)' != ''" />
+      <_ReflgenInjectionCandidate Include="@(_ReflgenOwnInjection)" />
       <!-- 다이아몬드 참조로 같은 header 가 두 번 오면 처음 것만 남긴다(순서는 그대로). -->
       <_ReflgenInjections Include="@(_ReflgenInjectionCandidate->Distinct())" />
     </ItemGroup>
@@ -132,6 +185,9 @@
     <!-- 프로젝트의 header 전부가 후보다. [[reflgen::reflect]] 가 있는 것만 생성기가 고른다(discover 옵션). -->
     <ItemGroup>
       <_ReflgenHeader Include="@(ClInclude->'%(FullPath)')" />
+      <!-- 최신 여부는 있는 파일로만 가린다 — 지웠는데 프로젝트에 남은 항목이 입력에 있으면 MSBuild 는 target 을
+           늘 오래됐다고 보아 빌드마다 생성기를 다시 돌린다. 생성기에는 전부 넘긴다(없는 파일은 거기서 거른다). -->
+      <_ReflgenExistingHeader Include="@(_ReflgenHeader)" Condition="Exists('%(FullPath)')" />
     </ItemGroup>
 
     <!-- 생성된 등록 함수도 컴파일한다. 미리 컴파일된 header 는 쓰지 않는다(생성 파일은 pch.h 를 모른다).
@@ -208,7 +264,7 @@
        다시 부르지 않으려는 것) 생성 파일의 시각으로는 가릴 수 없다. -->
   <Target Name="_ReflgenRun"
           Condition="'@(_ReflgenHeader)' != ''"
-          Inputs="@(_ReflgenHeader);@(_ReflgenDependency);$(ReflgenExecutable);$(_ReflgenArgumentsFile);$(_ReflgenResponseFile)"
+          Inputs="@(_ReflgenExistingHeader);@(_ReflgenDependency);$(ReflgenExecutable);$(_ReflgenArgumentsFile);$(_ReflgenResponseFile)"
           Outputs="$(_ReflgenStamp)">
     <Error Condition="'$(ReflgenExecutable)' == '' or !Exists('$(ReflgenExecutable)')"
            Code="RG0001"

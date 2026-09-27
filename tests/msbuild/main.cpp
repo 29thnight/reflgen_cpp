@@ -6,6 +6,7 @@
 #include "fallback_types.h"
 #include "game_types.h"
 #include "lib_types.h"
+#include "peer_types.h"
 #include "reflgen/json.h"
 
 extern "C" int reflgen_msbuild_c_value(); // c_unit.c — C 번역 단위에는 주입이 붙지 않는다
@@ -31,8 +32,12 @@ int main()
     const bool propagated = point_text == R"({"x":1,"y":2})" && tagged_text == R"({"x":1,"y":2,"tag":7})" &&
                             msbuild_lib::length_squared(point) == 5;
 
-    const bool ok = registered && serialized && propagated && reflgen_msbuild_c_value() == 42;
-    std::printf("%s\n%s\n%s\nmsbuild integration: %s\n", text.c_str(), point_text.c_str(), tagged_text.c_str(),
-                ok ? "ok" : "FAILED");
+    // 서로의 header 를 include 하는 두 라이브러리(ReflgenReference) — 각자 상대의 서술로 직렬화했다.
+    const std::string badge_text = msbuild_lib::badge_text();
+    const bool peers = badge_text == R"({"where":{"x":1,"y":2},"rank":3})" && msbuild_peer::point_text() == point_text;
+
+    const bool ok = registered && serialized && propagated && peers && reflgen_msbuild_c_value() == 42;
+    std::printf("%s\n%s\n%s\n%s\nmsbuild integration: %s\n", text.c_str(), point_text.c_str(), tagged_text.c_str(),
+                badge_text.c_str(), ok ? "ok" : "FAILED");
     return ok ? 0 : 1;
 }

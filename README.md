@@ -239,6 +239,18 @@ namespace editor
   라이브러리의 타입을 게임 실행 파일에서 직렬화할 수 있다. 참조하는 쪽의 것이 먼저, 자기 것이 마지막이라 다른
   프로젝트의 타입을 부모로 둔 타입도 컴파일된다. 간접 참조까지 따라가고 겹치면 한 번만 넣는다. 참조하는 쪽도
   `reflgen.targets` 를 가져와야 한다(reflgen 을 쓰지 않는 참조는 건너뛴다).
+- **참조 없이 header 만 여는 프로젝트**: 다른 프로젝트의 header 를 include 하는 번역 단위는 그 프로젝트의 주입도
+  받아야 한다 — 받지 않으면 같은 타입이 번역 단위마다 다르게 보인다(`reflectable<T>` 가 한쪽에서만 참이다).
+  `ProjectReference` 없이 include 경로로만 잇는 라이브러리, 서로의 header 를 include 하는 라이브러리(순환)는
+  `ReflgenReference` 로 잇는다. 빌드 순서를 걸지 않고 그 프로젝트의 생성만 먼저 돌린 뒤 그 프로젝트 자신의 주입
+  header 를 받는다(전이하지 않는다). 구성은 `ProjectReference` 와 같은 규칙으로 정하므로 솔루션 병렬 빌드에서도 생성이
+  프로젝트마다 한 번만 돈다. 링크는 따로 잇는다.
+
+  ```xml
+  <ItemGroup>
+    <ReflgenReference Include="..\Render\Render.vcxproj" />
+  </ItemGroup>
+  ```
 - `C5030`(모르는 attribute) 경고를 끄고, ClangCL 도구 집합에는 `-Wno-unknown-attributes` 를 준다.
 
 | 속성 | 기본값 |
