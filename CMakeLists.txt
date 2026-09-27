@@ -175,6 +175,14 @@ if(REFLGEN_BUILD_TESTS)
                     "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
                     "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/msbuild_test"
                     -P "${PROJECT_SOURCE_DIR}/tests/msbuild/run_msbuild_test.cmake")
+
+            # 배포 배치(cmake 설치·vcpkg·NuGet)마다 생성기와 include 를 스스로 찾는지.
+            add_test(NAME reflgen_msbuild_layouts
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DMSBUILD=${REFLGEN_MSBUILD_EXECUTABLE}"
+                    "-DSOURCE=${PROJECT_SOURCE_DIR}"
+                    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/msbuild_layouts"
+                    -P "${PROJECT_SOURCE_DIR}/tests/msbuild/check_layouts.cmake")
         endif()
     endif()
 endif()
@@ -196,6 +204,10 @@ if(TARGET reflgen_cli)
     install(TARGETS reflgen_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(REFLGEN_LIBCLANG_DLL)
         install(FILES "${REFLGEN_LIBCLANG_DLL}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+        # libclang 을 재배포하므로 LLVM 라이선스(Apache-2.0 WITH LLVM-exception)를 함께 둔다.
+        install(FILES third_party/clang-c/LICENSE.TXT
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/reflgen/licenses
+            RENAME libclang-LICENSE.TXT)
     endif()
 endif()
 install(EXPORT reflgen-targets

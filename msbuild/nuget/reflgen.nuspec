@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NuGet 패키지 — cmake 설치 배치(include\ bin\ share\)를 그대로 담고, build\native\reflgen.targets(shim)가
+     share\reflgen\msbuild\reflgen.targets 를 가져온다. scripts\package.ps1 이 $stage$ 와 $version$ 을 채운다. -->
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>reflgen</id>
+    <version>$version$</version>
+    <title>reflgen</title>
+    <authors>29thnight</authors>
+    <license type="expression">MIT AND Apache-2.0 WITH LLVM-exception</license>
+    <projectUrl>https://github.com/29thnight/reflgen_cpp</projectUrl>
+    <description>Macro-free, attribute-driven C++20 reflection for Visual C++ projects. Installing the package wires the reflgen code generator into the build: headers only carry [[reflgen::...]] attributes, and the generated reflection is force-included at compile time. Includes the generator (reflgen.exe with libclang) and the header-only library.</description>
+    <tags>native cpp reflection serialization codegen attributes msbuild</tags>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+  </metadata>
+  <files>
+    <file src="$stage$\include\**" target="include" />
+    <file src="$stage$\bin\**" target="bin" />
+    <file src="$stage$\share\**" target="share" />
+    <file src="$stage$\LICENSE" target="LICENSE" />
+    <file src="reflgen.targets" target="build\native" />
+  </files>
+</package>

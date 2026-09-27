@@ -1,6 +1,7 @@
 # 저장소의 시험을 로컬과 같은 방법으로 돌린다.
 #   cpp          컴파일러 × 표준 행렬(scripts/test.ps1) — 라이브러리, 생성기, 생성 코드, MSBuild 연동
 #   vs-extension VS 확장의 C# 시험과 VSIX 빌드(산출물로 올린다)
+#   package      배포물(zip·NuGet)을 만들어 올리고, vcpkg port 를 이 커밋에서 실제로 설치해 본다
 # 로컬 검증 환경(VS 18, MSVC 19.5x)과 맞추려고 VS 2026 이미지를 고정한다.
 name: ci
 
@@ -49,3 +50,41 @@ jobs:
           name: Reflgen.VisualStudio.vsix
           path: vs/src/Reflgen.VisualStudio/bin/Release/net472/Reflgen.VisualStudio.vsix
           if-no-files-found: error
+
+  package:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # vcpkg_from_git 이 이 저장소에서 커밋을 가져온다
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build the release artifacts
+        shell: pwsh
+        run: ./scripts/package.ps1
+      - name: Consume the NuGet package from a project without reflgen settings
+        shell: pwsh
+        run: ./tests/package/check_nuget_consumer.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reflgen-packages
+          path: |
+            build/package/*.zip
+            build/package/*.nupkg
+          if-no-files-found: error
+      - name: Install the vcpkg port from this commit
+        shell: pwsh
+        run: |
+          $overlay = Join-Path $env:RUNNER_TEMP 'overlay-ports'
+          ./scripts/make-overlay-port.ps1 -Destination $overlay -Local
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          & $vcpkg install reflgen --overlay-ports=$overlay --triplet x64-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installed = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
+          foreach ($path in 'tools\reflgen\reflgen.exe', 'tools\reflgen\libclang.dll', 'include\reflgen\reflgen.h',
+                            'share\reflgen\msbuild\reflgen.targets', 'share\reflgen\reflgen-config.cmake') {
+            if (-not (Test-Path (Join-Path $installed $path))) { throw "the vcpkg port did not install $path" }
+          }
+          & (Join-Path $installed 'tools\reflgen\reflgen.exe') --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

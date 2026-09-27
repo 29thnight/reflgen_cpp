@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- reflgen.nuspec 을 dotnet pack 으로 묶기 위한 껍데기 — 빌드할 코드는 없다. scripts\package.ps1 이
+       -p:ReflgenVersion=<판> -p:ReflgenStage=<설치 배치> 로 부른다(명령줄 -p 값 안의 ';' 는 속성 구분자라서
+       NuspecProperties 를 여기서 조립한다). -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <NoBuild>true</NoBuild>
+    <NuspecFile>reflgen.nuspec</NuspecFile>
+    <NuspecProperties>version=$(ReflgenVersion);stage=$(ReflgenStage)</NuspecProperties>
+    <!-- 네이티브 패키지라 lib\<TFM> 이 없다(NU5128), include\·bin\ 은 NuGet 이 모르는 폴더다(NU5100). -->
+    <NoWarn>$(NoWarn);NU5100;NU5128</NoWarn>
+  </PropertyGroup>
+</Project>

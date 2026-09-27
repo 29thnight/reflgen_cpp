@@ -32,13 +32,28 @@
       "name": "clang-cl-cpp23",
       "inherits": "base",
       "cacheVariables": { "CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl", "REFLGEN_TEST_CXX_STANDARD": "23" }
+    },
+    {
+      "name": "release",
+      "displayName": "Release artifacts (generator + headers + targets)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "REFLGEN_BUILD_TESTS": "OFF",
+        "REFLGEN_BUILD_EXAMPLES": "OFF",
+        "REFLGEN_BUILD_GENERATOR": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "msvc-cpp20", "configurePreset": "msvc-cpp20" },
     { "name": "msvc-cpp23", "configurePreset": "msvc-cpp23" },
     { "name": "clang-cl-cpp20", "configurePreset": "clang-cl-cpp20" },
-    { "name": "clang-cl-cpp23", "configurePreset": "clang-cl-cpp23" }
+    { "name": "clang-cl-cpp23", "configurePreset": "clang-cl-cpp23" },
+    { "name": "release", "configurePreset": "release" }
   ],
   "testPresets": [
     { "name": "msvc-cpp20", "configurePreset": "msvc-cpp20", "output": { "outputOnFailure": true } },

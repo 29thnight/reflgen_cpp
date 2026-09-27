@@ -13,7 +13,7 @@
   강제 include 한다(그쪽 것이 먼저) — 참조하는 프로젝트도 이 파일을 가져와야 한다.
 
   속성(모두 선택):
-    ReflgenExecutable        reflgen.exe 경로. 설치 배치(<prefix>\bin)면 자동으로 찾는다.
+    ReflgenExecutable        reflgen.exe 경로. 설치·NuGet·vcpkg 배치면 자동으로 찾는다.
     ReflgenIncludeDirectory  reflgen/reflgen.h 가 있는 include 디렉터리. 자동으로 찾는다.
     ReflgenModule            등록 함수 reflgen::generated::register_<module>() 의 이름. 기본은 프로젝트 이름.
     ReflgenAttributeScopes   reflgen 외에 스키마로 옮길 attribute 이름공간(';' 로 가른다).
@@ -24,10 +24,12 @@
     <!-- VS 확장이 이 프로젝트가 reflgen 을 쓰는지 알아보는 표지. -->
     <ReflgenTargetsImported>true</ReflgenTargetsImported>
 
-    <!-- 저장소 배치(msbuild\ 옆의 include\)와 설치 배치(<prefix>\share\reflgen\msbuild\) 둘 다 찾는다. -->
+    <!-- 저장소 배치(msbuild\ 옆의 include\), 설치 배치(<prefix>\share\reflgen\msbuild\ — NuGet 패키지도 이 배치를
+         담는다), vcpkg 배치(생성기가 <installed>\tools\reflgen\)를 모두 찾는다. -->
     <ReflgenIncludeDirectory Condition="'$(ReflgenIncludeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)..\include\reflgen\reflgen.h')">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\include'))</ReflgenIncludeDirectory>
     <ReflgenIncludeDirectory Condition="'$(ReflgenIncludeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\include\reflgen\reflgen.h')">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\..\..\include'))</ReflgenIncludeDirectory>
     <ReflgenExecutable Condition="'$(ReflgenExecutable)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\bin\reflgen.exe')">$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)..\..\..\bin\reflgen.exe'))</ReflgenExecutable>
+    <ReflgenExecutable Condition="'$(ReflgenExecutable)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\tools\reflgen\reflgen.exe')">$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)..\..\..\tools\reflgen\reflgen.exe'))</ReflgenExecutable>
 
     <!-- module 이름은 C++ 식별자여야 한다(등록 함수 이름이 된다). -->
     <ReflgenModule Condition="'$(ReflgenModule)' == ''">$([System.Text.RegularExpressions.Regex]::Replace('$(ProjectName)', '[^A-Za-z0-9_]', '_'))</ReflgenModule>
