@@ -1,6 +1,7 @@
 #pragma once
 // 코드 생성기 end-to-end 시험용 타입. 손으로 쓴 reflect() 가 하나도 없다 — 서술은 전부
 // [[reflgen::…]] attribute 에서 생성된다.
+#include "class_head_macro.h"
 #include "reflgen/reflgen.h"
 #include "test_attributes.h"
 #include <map>
@@ -110,6 +111,13 @@ namespace generated_tests
     struct [[reflgen::reflect]] over_recipe : recipe_base
     {
         int own = 1;
+    };
+
+    // 클래스 머리를 매크로로 적는 코드(엔진의 `cbuffer` = struct alignas(16) 같은 것) — 선언의 시작이 다른 header 의
+    // 매크로 안이다(class_head_macro.h).
+    GENERATED_TESTS_ALIGNED_STRUCT [[reflgen::reflect]] aligned_block
+    {
+        int value = 4;
     };
 
     namespace nested

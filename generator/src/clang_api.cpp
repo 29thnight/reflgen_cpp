@@ -56,13 +56,16 @@ namespace reflgen::generator
         return result;
     }
 
+    // 위치는 파일 위치(clang_getFileLocation)로 읽는다 — 매크로가 펼친 토큰이면 매크로를 쓴 자리다(매크로 인자면 인자를
+    // 적은 자리). spelling 위치는 매크로 정의를 가리켜, 클래스 머리를 매크로로 적은 선언(엔진의 cbuffer = struct
+    // alignas(16))에서 다른 파일의 offset 을 이 파일의 token 에 대어 attribute 를 엉뚱한 구간에서 찾았다.
     source_position position_of(CXSourceLocation location)
     {
         CXFile file = nullptr;
         unsigned line = 0;
         unsigned column = 0;
         unsigned offset = 0;
-        clang_getSpellingLocation(location, &file, &line, &column, &offset);
+        clang_getFileLocation(location, &file, &line, &column, &offset);
         source_position position;
         position.file = file != nullptr ? normalize_path(take_string(clang_getFileName(file))) : std::string();
         position.line = line;
@@ -76,7 +79,7 @@ namespace reflgen::generator
         unsigned line = 0;
         unsigned column = 0;
         unsigned offset = 0;
-        clang_getSpellingLocation(location, &file, &line, &column, &offset);
+        clang_getFileLocation(location, &file, &line, &column, &offset);
         return offset;
     }
 
@@ -96,7 +99,7 @@ namespace reflgen::generator
     CXFile file_handle_of(CXSourceLocation location)
     {
         CXFile file = nullptr;
-        clang_getSpellingLocation(location, &file, nullptr, nullptr, nullptr);
+        clang_getFileLocation(location, &file, nullptr, nullptr, nullptr);
         return file;
     }
 

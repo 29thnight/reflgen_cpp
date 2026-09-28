@@ -141,6 +141,11 @@ namespace
         check_equal(loaded_hero->inventory.at("potion"), 3);
     });
 
+    const test macro_class_head("generated: a class head written through a macro is still found", [] {
+        static_assert(reflgen::reflectable<generated_tests::aligned_block>);
+        check_equal(reflgen::json::to_string(generated_tests::aligned_block{}), std::string(R"({"value":4})"));
+    });
+
     const test foreign_reflect("generated: a foreign static reflect() does not shadow the generated description", [] {
         check_equal(reflgen::json::to_string(generated_tests::migrating{}), std::string(R"({"value":3})"));
     });
