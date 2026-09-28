@@ -35,6 +35,40 @@ namespace
                     std::string("{\n  \"e\": [],\n  \"k\": [\n    1,\n    2\n  ]\n}"));
     });
 
+    // 표기 힌트 — 들여쓴 출력에서 다음 컨테이너(안쪽 컨테이너까지)를 한 줄로 적는다. 데이터는 그대로다.
+    const test inline_hint("json: prefer_inline writes the next container on one line", [] {
+        std::string text;
+        reflgen::json::writer out(text, 2);
+        out.begin_object(2);
+        out.write_key("p");
+        out.prefer_inline();
+        out.begin_object(2);
+        out.write_key("x");
+        out.write_int(1);
+        out.write_key("y");
+        out.begin_array(2);
+        out.write_int(2);
+        out.write_int(3);
+        out.end_array();
+        out.end_object();
+        out.write_key("q");
+        out.begin_array(1);
+        out.write_int(4);
+        out.end_array();
+        out.end_object();
+        check_equal(text, std::string("{\n  \"p\": {\"x\": 1, \"y\": [2, 3]},\n  \"q\": [\n    4\n  ]\n}"));
+
+        // 한 줄 출력(들여쓰기 0)에서는 아무것도 바뀌지 않는다.
+        std::string compact;
+        reflgen::json::writer plain(compact);
+        plain.prefer_inline();
+        plain.begin_array(2);
+        plain.write_int(1);
+        plain.write_int(2);
+        plain.end_array();
+        check_equal(compact, std::string("[1,2]"));
+    });
+
     const test writer_protocol("json: writer rejects protocol misuse", [] {
         std::string text;
         check_throws(

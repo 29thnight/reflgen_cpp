@@ -385,12 +385,17 @@ struct reflgen::container_traits<ring_buffer<T>>
 
 ```
 writer: write_null/bool/int/uint/float/string/bytes, begin_array(n)/end_array, begin_object(n)/write_key/end_object
+        (선택) write_float32 — float 값. 기본은 write_float 로 넘긴다
+        (선택) prefer_inline — 다음 컨테이너를 한 줄로 적어도 된다는 표기 힌트. 기본은 무시
 reader: peek, read_*, begin_array → while(next_element) … → end_array,
         begin_object → while(next_key(key)) … → end_object, skip_value
+        (선택) read_float32 — float 값. 기본은 read_float 를 float 으로 좁힌다
 ```
 
 - `begin_*` 의 크기는 쓰기에서는 정확한 값, 읽기에서는 힌트(reserve 용)다. 신뢰할 수 없는 입력의 크기는
   남은 입력 길이로 상한을 검사해 넘긴다.
+- 텍스트 포맷은 `write_float32`·`read_float32` 를 덮어써 float 을 float 의 최단 표기로 적고 float 으로 바로 읽는다
+  (JSON 백엔드가 그렇다 — `0.1f` 는 `0.1`, 읽을 때 double 을 거친 이중 반올림이 없다). `prefer_inline` 은 사용자 serializer 가 부른다(벡터·색 같은 작은 값을 YAML flow·한 줄 JSON 으로).
 - 중첩 깊이 상한을 둔다. JSON·바이너리 백엔드는 reader·writer 모두 기본 512 이고 생성자 인자
   (`to_string(value, indent, max_depth)` 등)로 바꾼다. writer 상한은 순환이 아닌 아주 깊은 구조가
   stack overflow 대신 오류로 끝나게 한다.

@@ -74,16 +74,23 @@ namespace reflgen::detail
     template<class T>
     T read_floating(reader& in)
     {
-        const double value = in.read_float();
-        if constexpr (std::numeric_limits<T>::max() < std::numeric_limits<double>::max())
+        if constexpr (std::is_same_v<T, float>)
         {
-            // 무한·NaN 은 그대로 둔다(바이너리 포맷은 담을 수 있다). 유한값이 넘치는 것만 막는다.
-            if (std::isfinite(value) && std::fabs(value) > static_cast<double>((std::numeric_limits<T>::max)()))
-            {
-                throw_out_of_range<T>(std::to_string(value));
-            }
+            return in.read_float32(); // 텍스트 포맷은 float 으로 바로 해석한다(reader::read_float32)
         }
-        return static_cast<T>(value);
+        else
+        {
+            const double value = in.read_float();
+            if constexpr (std::numeric_limits<T>::max() < std::numeric_limits<double>::max())
+            {
+                // 무한·NaN 은 그대로 둔다(바이너리 포맷은 담을 수 있다). 유한값이 넘치는 것만 막는다.
+                if (std::isfinite(value) && std::fabs(value) > static_cast<double>((std::numeric_limits<T>::max)()))
+                {
+                    throw_out_of_range<T>(std::to_string(value));
+                }
+            }
+            return static_cast<T>(value);
+        }
     }
 
     // 문자 하나는 길이 1인 문자열로 적는다 — 정수로 적으면 'A' 가 65 로 남아 파일을

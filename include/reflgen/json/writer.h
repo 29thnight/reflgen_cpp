@@ -1,9 +1,10 @@
 ﻿#pragma once
 // JSON 출력 백엔드 (RFC 8259).
 //
-// 들여쓰기 0 이면 한 줄, 그 밖이면 원소마다 줄을 바꾼다. 실수는 왕복이 보장되는 최단
-// 표기(std::to_chars)로 적고, 정수와 구별되게 소수점을 붙인다("1.0") — 읽는 쪽이
-// peek() 으로 실수임을 알 수 있어야 한다. NaN·무한대는 JSON 에 표기가 없어 실패한다.
+// 들여쓰기 0 이면 한 줄, 그 밖이면 원소마다 줄을 바꾼다 — prefer_inline() 뒤에 여는 컨테이너는 안쪽까지 한 줄에
+// 적는다("a": [1, 2]). 실수는 왕복이 보장되는 최단 표기(std::to_chars — float 은 float 의 최단 표기)로 적고,
+// 정수와 구별되게 소수점을 붙인다("1.0") — 읽는 쪽이 peek() 으로 실수임을 알 수 있어야 한다. NaN·무한대는 JSON
+// 에 표기가 없어 실패한다.
 #include "reflgen/json/base64.h"
 #include "reflgen/serial/detail/utf.h"
 #include "reflgen/serial/error.h"
@@ -54,21 +55,11 @@ namespace reflgen::json
             append_number(value);
         }
 
-        void write_float(double value) override
-        {
-            if (!std::isfinite(value))
-            {
-                throw serialization_error("json: NaN and infinity have no JSON representation");
-            }
-            begin_value();
-            const std::size_t start = output_.size();
-            append_number(value);
-            const std::string_view written = std::string_view(output_).substr(start);
-            if (written.find_first_of(".eE") == std::string_view::npos)
-            {
-                output_ += ".0";
-            }
-        }
+        void write_float(double value) override { append_floating(value); }
+
+        void write_float32(float value) override { append_floating(value); }
+
+        void prefer_inline() override { inline_next_ = true; }
 
         void write_string(std::string_view value) override
         {
@@ -89,7 +80,7 @@ namespace reflgen::json
             check_depth();
             begin_value();
             output_ += '[';
-            stack_.push_back({false, false, false});
+            push_frame(false);
         }
 
         void end_array() override
@@ -106,7 +97,7 @@ namespace reflgen::json
             check_depth();
             begin_value();
             output_ += '{';
-            stack_.push_back({true, false, false});
+            push_frame(true);
         }
 
         void write_key(std::string_view key) override
@@ -116,11 +107,7 @@ namespace reflgen::json
                 throw serialization_error("json writer: write_key is only valid inside an object, before a value");
             }
             frame& top = stack_.back();
-            if (top.has_items)
-            {
-                output_ += ',';
-            }
-            newline(stack_.size());
+            separate(top);
             append_quoted(key);
             output_ += indent_ > 0 ? ": " : ":";
             top.has_items = true;
@@ -145,7 +132,49 @@ namespace reflgen::json
             bool is_object;
             bool has_items;
             bool awaiting_value;
+            bool is_inline; // 들여쓴 출력에서도 한 줄에 적는다(prefer_inline 이 연 것과 그 안쪽 전부)
         };
+
+        void push_frame(bool is_object)
+        {
+            const bool is_inline = inline_next_ || (!stack_.empty() && stack_.back().is_inline);
+            inline_next_ = false;
+            stack_.push_back({is_object, false, false, is_inline});
+        }
+
+        // 원소·키 앞의 구분 — 쉼표, 그리고 줄바꿈(한 줄 컨테이너면 들여쓴 출력에서 공백 하나).
+        void separate(frame& top)
+        {
+            if (top.has_items)
+            {
+                output_ += ',';
+                if (top.is_inline && indent_ > 0)
+                {
+                    output_ += ' ';
+                }
+            }
+            if (!top.is_inline)
+            {
+                newline(stack_.size());
+            }
+        }
+
+        template<class Floating>
+        void append_floating(Floating value)
+        {
+            if (!std::isfinite(value))
+            {
+                throw serialization_error("json: NaN and infinity have no JSON representation");
+            }
+            begin_value();
+            const std::size_t start = output_.size();
+            append_number(value);
+            const std::string_view written = std::string_view(output_).substr(start);
+            if (written.find_first_of(".eE") == std::string_view::npos)
+            {
+                output_ += ".0";
+            }
+        }
 
         // 순환이 아니어도 아주 깊은 구조(수만 단계 연결 리스트)는 쓰는 재귀가 stack 을 넘친다.
         // 그 전에 오류로 끝낸다.
@@ -178,19 +207,16 @@ namespace reflgen::json
                 top.awaiting_value = false;
                 return;
             }
-            if (top.has_items)
-            {
-                output_ += ',';
-            }
-            newline(stack_.size());
+            separate(top);
             top.has_items = true;
         }
 
         void close(char bracket)
         {
             const bool had_items = stack_.back().has_items;
+            const bool is_inline = stack_.back().is_inline;
             stack_.pop_back();
-            if (had_items)
+            if (had_items && !is_inline)
             {
                 newline(stack_.size());
             }
@@ -269,5 +295,6 @@ namespace reflgen::json
         std::size_t max_depth_;
         std::vector<frame> stack_;
         bool root_started_ = false;
+        bool inline_next_ = false;
     };
 } // namespace reflgen::json

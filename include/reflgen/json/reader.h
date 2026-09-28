@@ -126,6 +126,23 @@ namespace reflgen::json
             return value;
         }
 
+        // float 으로 바로 해석한다. float 범위 밖(아주 작은 값 포함)이면 double 로 읽어 기본 규칙(작으면 0, 크면 실패)을
+        // 따른다.
+        float read_float32() override
+        {
+            skip_whitespace();
+            const std::size_t start = position_;
+            const std::string_view token = scan_number();
+            float value = 0.0f;
+            const auto result = std::from_chars(token.data(), token.data() + token.size(), value);
+            if (result.ec == std::errc{} && result.ptr == token.data() + token.size())
+            {
+                return value;
+            }
+            position_ = start;
+            return reflgen::reader::read_float32();
+        }
+
         double read_float() override
         {
             skip_whitespace();

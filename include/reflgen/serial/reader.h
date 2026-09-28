@@ -17,8 +17,11 @@
 //
 // 예외가 빠져나간 reader 는 다시 쓰지 않는다. 열린 배열·객체의 상태가 실패 지점에
 // 멈춰 있어서, 이어 읽으면 틀린 자리에서 해석한다. 복구하려면 새 reader 로 다시 연다.
+#include "reflgen/serial/error.h"
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -51,6 +54,17 @@ namespace reflgen
         virtual std::int64_t read_int() = 0;
         virtual std::uint64_t read_uint() = 0;
         virtual double read_float() = 0;
+        // float 값. 텍스트 포맷은 float 으로 바로 해석한다 — double 을 거치면 두 번 반올림돼 드물게 한 칸 어긋난다.
+        // 기본은 read_float 의 값을 float 으로 좁힌다(유한값이 float 범위를 넘으면 실패한다).
+        virtual float read_float32()
+        {
+            const double value = read_float();
+            if (std::isfinite(value) && std::fabs(value) > static_cast<double>((std::numeric_limits<float>::max)()))
+            {
+                throw serialization_error("value " + std::to_string(value) + " is out of range for float");
+            }
+            return static_cast<float>(value);
+        }
         virtual std::string read_string() = 0;
         // 텍스트 포맷은 인코딩된 문자열(base64 등)을 풀어서 돌려준다.
         virtual std::vector<std::byte> read_bytes() = 0;

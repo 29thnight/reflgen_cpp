@@ -71,7 +71,14 @@ namespace reflgen
             }
             else if constexpr (kind == category::floating)
             {
-                out.write_float(static_cast<double>(value));
+                if constexpr (std::is_same_v<T, float>)
+                {
+                    out.write_float32(value);
+                }
+                else
+                {
+                    out.write_float(static_cast<double>(value));
+                }
             }
             else if constexpr (kind == category::enumeration)
             {

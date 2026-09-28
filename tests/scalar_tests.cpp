@@ -77,6 +77,24 @@ namespace
         check_equal(reflgen_test::binary_round_trip(infinity), infinity);
     });
 
+    // float 은 float 의 가장 짧은 왕복 표기로 적는다 — double 로 넓혀 적으면 0.1f 가 0.10000000149011612 가 된다.
+    const test float_precision("scalar: float values are written in their own shortest form", [] {
+        check_equal(reflgen::json::to_string(0.1f), std::string("0.1"));
+        check_equal(reflgen::json::to_string(0.9945219f), std::string("0.9945219"));
+        check_equal(reflgen::json::to_string(1.0f), std::string("1.0"));
+        check_equal(reflgen::json::from_string<float>("0.9945219"), 0.9945219f);
+        check_throws([] { reflgen::json::to_string(std::numeric_limits<float>::infinity()); }, "NaN");
+        // 바이너리 포맷은 전처럼 double 로 담는다 — 형식이 바뀌지 않는다.
+        check(reflgen::binary::to_bytes(0.5f) == reflgen::binary::to_bytes(0.5));
+
+        // 읽기도 float 으로 바로 해석한다. 이 입력은 0.5f 와 다음 float 의 한가운데를 조금 넘는다 — double 을 거치면
+        // 한가운데로 반올림된 뒤 짝수 쪽(0.5f)으로 한 번 더 반올림된다.
+        check_equal(reflgen::json::from_string<float>("0.50000002980232238769531250000001"),
+                    0.500000059604644775390625f);
+        // float 으로는 0 이 되는 아주 작은 값은 전처럼 0 이다(범위를 넘는 큰 값만 오류다).
+        check_equal(reflgen::json::from_string<float>("1e-50"), 0.0f);
+    });
+
     const test characters("scalar: characters are one-character strings", [] {
         check_round_trip('A');
         check_round_trip(u8'z');
