@@ -297,24 +297,63 @@ namespace reflgen
             using type = type_list<Base>;
         };
 
+        // ★ 서술 평가는 서술을 쓰는 번역 단위마다 타입마다 일어난다 — 컴파일 시간이 곧 이 코드의 비용이다.
+        //   MSVC 의 std::tuple 은 재귀 상속이라 원소 N 개짜리 하나가 N 단의 클래스를 실체화한다(각 단이 긴 NTTP
+        //   인자 목록을 진다). 그래서 레시피 인자 전부를 std::tuple 에 담았다가 std::apply + std::tuple_cat 으로
+        //   고르지 않는다 — 필드 18·메서드 5 개짜리 타입 하나가 1.8 초 걸렸다. 인자는 평평한 묶음(leaf 다중 상속,
+        //   1 단)에 참조로 두고, 고를 위치를 상수 배열로 셈한 뒤 결과 튜플을 한 번에 만든다(0.44 초).
+        template<std::size_t I, class E>
+        struct entry_leaf
+        {
+            const E& value;
+        };
+
+        template<class Sequence, class... Es>
+        struct entry_pack;
+
+        template<std::size_t... I, class... Es>
+        struct entry_pack<std::index_sequence<I...>, Es...> : entry_leaf<I, Es>...
+        {
+        };
+
+        template<std::size_t I, class E>
+        consteval const E& entry_at(const entry_leaf<I, E>& leaf) noexcept
+        {
+            return leaf.value;
+        }
+
+        template<template<class> class Predicate, class... Es>
+        inline constexpr std::size_t picked_count = (std::size_t{Predicate<Es>::value} + ... + 0);
+
+        template<template<class> class Predicate, class... Es>
+        consteval auto picked_positions()
+        {
+            constexpr bool matches[] = {Predicate<Es>::value..., false};
+            std::array<std::size_t, picked_count<Predicate, Es...>> positions{};
+            std::size_t next = 0;
+            for (std::size_t i = 0; i < sizeof...(Es); ++i)
+            {
+                if (matches[i])
+                {
+                    positions[next++] = i;
+                }
+            }
+            return positions;
+        }
+
+        template<template<class> class Predicate, class... Es, std::size_t... I>
+        consteval auto pick(const entry_pack<std::index_sequence_for<Es...>, Es...>& entries, std::index_sequence<I...>)
+        {
+            constexpr auto positions = picked_positions<Predicate, Es...>();
+            return std::tuple<std::remove_cvref_t<decltype(entry_at<positions[I]>(entries))>...>{
+                entry_at<positions[I]>(entries)...};
+        }
+
         // 레시피 인자에서 한 종류만 골라 순서를 보존한 튜플로 만든다.
         template<template<class> class Predicate, class... Es>
-        consteval auto pick(const std::tuple<Es...>& entries)
+        consteval auto pick(const entry_pack<std::index_sequence_for<Es...>, Es...>& entries)
         {
-            return std::apply(
-                [](const auto&... entry) {
-                    return std::tuple_cat([&] {
-                        if constexpr (Predicate<std::remove_cvref_t<decltype(entry)>>::value)
-                        {
-                            return std::tuple{entry};
-                        }
-                        else
-                        {
-                            return std::tuple<>{};
-                        }
-                    }()...);
-                },
-                entries);
+            return pick<Predicate, Es...>(entries, std::make_index_sequence<picked_count<Predicate, Es...>>{});
         }
 
         template<class T, class E>
@@ -344,21 +383,24 @@ namespace reflgen
         // 곧 오류 설명이다(consteval 안에서 문자열 메시지를 띄울 표준 수단이 없다).
         inline void member_name_unavailable_use_named() {}
 
-        template<class Tuple>
-        consteval void check_names(const Tuple& descriptors)
+        consteval void check_name(std::string_view name)
         {
-            std::apply(
-                [](const auto&... descriptor) {
-                    (
-                        [&] {
-                            if (descriptor.name.empty())
-                            {
-                                member_name_unavailable_use_named();
-                            }
-                        }(),
-                        ...);
-                },
-                descriptors);
+            if (name.empty())
+            {
+                member_name_unavailable_use_named();
+            }
+        }
+
+        template<class... Descriptors, std::size_t... I>
+        consteval void check_names(const std::tuple<Descriptors...>& descriptors, std::index_sequence<I...>)
+        {
+            (detail::check_name(std::get<I>(descriptors).name), ...);
+        }
+
+        template<class... Descriptors>
+        consteval void check_names(const std::tuple<Descriptors...>& descriptors)
+        {
+            detail::check_names(descriptors, std::index_sequence_for<Descriptors...>{});
         }
     } // namespace detail
 
@@ -370,9 +412,9 @@ namespace reflgen
 
         // 이 함수는 서술을 쓰는 자리에서 실체화된다 — 사용자 코드의 전역 이름(fields, methods 등)을 가리지 않게
         // 흔한 이름을 피한다(MSVC C4459).
-        const std::tuple<Entries...> schema_entries{entries...};
-        const auto field_entries = detail::pick<detail::is_field_descriptor>(schema_entries);
-        const auto method_entries = detail::pick<detail::is_method_descriptor>(schema_entries);
+        const detail::entry_pack<std::index_sequence_for<Entries...>, Entries...> schema_entries{{entries}...};
+        const auto field_entries = detail::pick<detail::is_field_descriptor, Entries...>(schema_entries);
+        const auto method_entries = detail::pick<detail::is_method_descriptor, Entries...>(schema_entries);
         detail::check_names(field_entries);
         detail::check_names(method_entries);
 
