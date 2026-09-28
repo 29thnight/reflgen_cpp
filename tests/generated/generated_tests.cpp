@@ -146,6 +146,31 @@ namespace
         check_equal(reflgen::json::to_string(generated_tests::aligned_block{}), std::string(R"({"value":4})"));
     });
 
+    // 직렬화 판정은 품은 반영 타입의 필드까지 내려간다 — resource_owner 는 resource_handle 을 품고, 그것은 직렬화기가
+    // 없는 opaque_resource 를 품는다.
+    static_assert(!reflgen::serializable<generated_tests::resource_handle>);
+    static_assert(!reflgen::serializable<generated_tests::resource_owner>);
+    static_assert(!reflgen::serializable<std::vector<generated_tests::resource_owner>>);
+    static_assert(!reflgen::deserializable<generated_tests::resource_owner>);
+
+    const test nested_unserializable(
+        "generated: a field whose reflected type holds an unserializable field is left without a serializer", [] {
+            const reflgen::type_descriptor& owner = reflgen::type_descriptor_of<generated_tests::resource_owner>();
+            check(!owner.is_serializable());
+            check(!owner.is_deserializable());
+            const reflgen::field_info* handle = owner.find_field("handle");
+            const reflgen::field_info* generation = owner.find_field("generation");
+            require(handle != nullptr && generation != nullptr);
+            check(!handle->is_serializable());
+            check(!handle->is_deserializable());
+            check(generation->is_serializable());
+            check(generation->is_deserializable());
+
+            const reflgen::type_descriptor& held = reflgen::type_descriptor_of<generated_tests::resource_handle>();
+            check(!held.find_field("raw")->is_serializable());
+            check(held.find_field("slot")->is_serializable());
+        });
+
     const test foreign_reflect("generated: a foreign static reflect() does not shadow the generated description", [] {
         check_equal(reflgen::json::to_string(generated_tests::migrating{}), std::string(R"({"value":3})"));
     });

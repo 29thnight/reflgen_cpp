@@ -34,9 +34,6 @@ namespace reflgen::detail
         }
     }
 
-    template<class Field>
-    inline constexpr bool is_transient_field = Field::template has_attribute<transient>();
-
     template<class T>
     consteval std::size_t serialized_field_count() noexcept
     {
@@ -77,35 +74,6 @@ namespace reflgen::detail
         return true;
     }
 
-    // 필드가 모두 쓰일 수 있는가(한 단계만 본다 — 재귀 타입에서 판정이 끝나야 한다).
-    template<class T>
-    consteval bool object_fields_serializable() noexcept
-    {
-        bool result = true;
-        for_each_field<T>([&](const auto& field) {
-            using field_type = std::remove_cvref_t<decltype(field)>;
-            if constexpr (!is_transient_field<field_type>)
-            {
-                result = result && is_serializable<typename field_type::value_type>();
-            }
-        });
-        return result;
-    }
-
-    template<class T>
-    consteval bool object_fields_deserializable() noexcept
-    {
-        bool result = true;
-        for_each_field<T>([&](const auto& field) {
-            using field_type = std::remove_cvref_t<decltype(field)>;
-            if constexpr (!is_transient_field<field_type>)
-            {
-                result = result && is_deserializable<typename field_type::value_type>();
-            }
-        });
-        return result;
-    }
-
     // transient 는 "읽지도 쓰지도 않는다", required 는 "입력에 반드시 있다" — 둘이 한 필드에
     // 붙으면 그 타입은 어떤 입력으로도 읽히지 않는다. 런타임에 매번 실패하는 대신 막는다.
     template<class T>
@@ -134,7 +102,8 @@ namespace reflgen::detail
             using field_type = std::remove_cvref_t<decltype(field)>;
             if constexpr (!is_transient_field<field_type>)
             {
-                static_assert(is_serializable<typename field_type::value_type>(),
+                // 얕은 판정 — 품은 서술된 클래스의 필드는 그 클래스를 쓸 때 단정된다(오류가 그 필드를 가리킨다).
+                static_assert(is_serializable_shallow<typename field_type::value_type>(),
                               "a field of this type cannot be serialized; mark it reflgen::transient or specialize "
                               "reflgen::serializer for its type");
                 const std::string_view key = serialized_key(field);
@@ -165,7 +134,7 @@ namespace reflgen::detail
                 using field_type = std::remove_cvref_t<decltype(field)>;
                 if constexpr (!is_transient_field<field_type>)
                 {
-                    static_assert(is_deserializable<typename field_type::value_type>(),
+                    static_assert(is_deserializable_shallow<typename field_type::value_type>(),
                                   "a field of this type cannot be deserialized; mark it reflgen::transient or "
                                   "specialize reflgen::serializer for its type");
                     if (!matched && key == serialized_key(field))

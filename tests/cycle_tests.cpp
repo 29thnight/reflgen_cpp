@@ -74,6 +74,44 @@ namespace cycles
         }
     };
 
+    // 직렬화 판정은 품은 반영 타입의 필드까지 내려간다 — 자기 자신이나 서로를 가리키는 타입에서도 끝나야 한다.
+    struct opaque
+    {
+        void* native = nullptr;
+    };
+
+    struct broken_link
+    {
+        std::unique_ptr<broken_link> next;
+        opaque handle;
+
+        static consteval auto reflect()
+        {
+            return reflgen::schema<broken_link>(reflgen::field<&broken_link::next>,
+                                                reflgen::field<&broken_link::handle>);
+        }
+    };
+
+    struct ping;
+
+    struct pong
+    {
+        std::unique_ptr<ping> back;
+        int hits = 0;
+
+        static consteval auto reflect()
+        {
+            return reflgen::schema<pong>(reflgen::field<&pong::back>, reflgen::field<&pong::hits>);
+        }
+    };
+
+    struct ping
+    {
+        std::vector<std::unique_ptr<pong>> forth;
+
+        static consteval auto reflect() { return reflgen::schema<ping>(reflgen::field<&ping::forth>); }
+    };
+
     std::unique_ptr<link> make_chain(std::size_t length)
     {
         std::unique_ptr<link> head;
@@ -114,6 +152,17 @@ namespace
     using reflgen_test::check_throws;
     using reflgen_test::require;
     using reflgen_test::test;
+
+    // 재귀 타입에서 직렬화 판정이 끝나고, 되돌아온 타입 때문에 거짓이 되지 않는다.
+    static_assert(reflgen::serializable<cycles::node> && reflgen::deserializable<cycles::node>);
+    static_assert(reflgen::serializable<cycles::link> && reflgen::deserializable<cycles::link>);
+    static_assert(reflgen::serializable<cycles::holder>);
+    static_assert(reflgen::serializable<cycles::dancer> && reflgen::deserializable<cycles::dancer>);
+    static_assert(reflgen::serializable<cycles::ping> && reflgen::deserializable<cycles::ping>);
+    static_assert(reflgen::serializable<cycles::pong> && reflgen::deserializable<cycles::pong>);
+    // 순환 안쪽의 직렬화기 없는 필드는 순환을 도는 타입 전부를 직렬화할 수 없게 한다.
+    static_assert(!reflgen::serializable<cycles::broken_link> && !reflgen::deserializable<cycles::broken_link>);
+    static_assert(!reflgen::serializable<std::unique_ptr<cycles::broken_link>>);
 
     template<class F>
     std::string failure_path(F&& action)

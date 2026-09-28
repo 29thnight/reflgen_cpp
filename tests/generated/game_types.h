@@ -120,6 +120,25 @@ namespace generated_tests
         int value = 4;
     };
 
+    // 직렬화기가 없는 타입(opaque_resource)을 반영 타입이 두 단계 아래에 품는다 — 게임 엔진의 Material → 재질
+    // 정보 → 수학 벡터 모양. 등록 함수(이 target 에 컴파일된다)가 멈추지 않고, 그 필드들만 직렬화기 없이 남는다.
+    struct opaque_resource
+    {
+        void* native = nullptr;
+    };
+
+    struct [[reflgen::reflect]] resource_handle
+    {
+        opaque_resource raw;
+        int slot = 0;
+    };
+
+    struct [[reflgen::reflect]] resource_owner
+    {
+        resource_handle handle;
+        int generation = 1;
+    };
+
     namespace nested
     {
         struct [[reflgen::reflect]] marker

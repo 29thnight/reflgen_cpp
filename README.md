@@ -404,6 +404,9 @@ reflgen::register_type<fireball>();                      // 다형 포인터로 
 ```
 
 - 표는 전부 `constexpr` 이다 — 정적 초기화 순서 문제가 없다.
+- reflgen 으로 쓸 수 없는 필드(직렬화기가 없는 타입, 또는 그런 필드를 품은 반영 타입)는 쓰기·읽기 썽크 없이 남는다
+  — `field.is_serializable()` 이 거짓이고 쓰면 `serialization_error` 다. 판정은 품은 반영 타입의 필드까지 내려간다
+  (`reflgen::serializable<T>`). 같은 타입을 `json::to_string` 처럼 직접 쓰면 실제로 못 쓰는 필드에서 컴파일 오류다.
 - 등록은 명시 호출이다. 정적 라이브러리의 자동 등록 객체는 링커가 버릴 수 있어서 쓰지 않는다.
 - 다형 직렬화는 동적 타입을 RTTI 로 찾는다. RTTI 는 다형 타입에서만 쓴다(`-fno-rtti` 빌드도 나머지는 동작).
 
