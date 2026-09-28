@@ -24,6 +24,10 @@ function(build_and_run build_file work output_variable)
             message(FATAL_ERROR "${module} was generated ${run_count} times in one build of ${build_file}:\n${output}")
         endif()
     endforeach()
+    # ReflgenRegistration=false 인 peer 는 등록 함수를 컴파일하지 않는다(다른 둘은 한다).
+    if(output MATCHES "reflgen_msbuild_peer\\.cpp" OR NOT output MATCHES "reflgen_msbuild_lib\\.cpp")
+        message(FATAL_ERROR "ReflgenRegistration did not decide which register functions compile:\n${output}")
+    endif()
 
     execute_process(COMMAND "${work}/bin/reflgen_msbuild_test.exe" RESULT_VARIABLE result OUTPUT_VARIABLE program
                     ERROR_VARIABLE program)

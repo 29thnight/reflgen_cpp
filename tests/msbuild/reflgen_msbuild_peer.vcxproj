@@ -33,6 +33,8 @@
   </PropertyGroup>
   <PropertyGroup>
     <ReflgenModule>msbuild_peer</ReflgenModule>
+    <!-- 서술만 쓴다 — 등록 함수를 컴파일하지 않는다(run_msbuild_test.cmake 가 본다). -->
+    <ReflgenRegistration>false</ReflgenRegistration>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>

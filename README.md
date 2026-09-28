@@ -156,6 +156,11 @@ reflgen_generate(my_game
     ATTRIBUTE_HEADERS include/game/attributes.h) # 그 attribute 타입(game::tooltip)의 정의
 ```
 
+- **서술만 쓰는 코드베이스**: 등록 함수(`reflgen_<module>.cpp`)는 반영 타입마다 런타임 서술자(필드 표, 쓰기·읽기
+  썽크)를 만든다. 자기 직렬화·등록을 가진 엔진처럼 서술(`schema_of`·`for_each_field`)만 쓰면
+  `NO_REGISTRATION`(CMake)·`ReflgenRegistration=false`(MSBuild)로 등록 함수를 컴파일하지 않는다 — 쓰지 않을
+  서술자의 컴파일 시간을 치르지 않는다. 생성과 주입은 그대로다.
+
 - **반영 범위**: `[[reflgen::reflect]]` 클래스의 non-static data member 전부(C++26 native reflection 과 같은 결과).
   `[[reflgen::ignore]]` 로 뺀다. 메서드는 `[[reflgen::reflect]]` 를 단 것만. `public` 부모 가운데 반영된 것은
   `base<>` 로 이어지고, 반영하지 않는 부모(CRTP 중간층, 서드파티 베이스)는 건너 그 위의 가장 가까운 반영된 조상으로
@@ -271,6 +276,7 @@ namespace editor
 | `ReflgenAttributeScopes` | 없음(`reflgen` 만) |
 | `ReflgenAttributeHeaders` | 없음 — 사용자 attribute 타입을 정의한 header. 주입 header 가 include 한다 |
 | `ReflgenOutputDirectory` | `$(IntDir)reflgen\` |
+| `ReflgenRegistration` | `true` — `false` 면 등록 함수를 컴파일하지 않는다(서술만 쓰는 코드베이스, 아래) |
 
 ### Visual Studio 확장
 

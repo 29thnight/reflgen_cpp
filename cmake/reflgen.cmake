@@ -5,7 +5,12 @@
 #       [MODULE game]                      # 등록 함수 이름: reflgen::generated::register_game()
 #       [ATTRIBUTE_SCOPES game editor]     # reflgen 외에 스키마로 옮길 attribute 이름공간
 #       [ATTRIBUTE_HEADERS include/game/attributes.h] # 그 이름공간의 attribute 타입 정의 — 주입 header 가 include
-#       [OUTPUT_DIRECTORY dir])            # 구성(config)마다 그 아래 <config>/ 에 만든다
+#       [OUTPUT_DIRECTORY dir]             # 구성(config)마다 그 아래 <config>/ 에 만든다
+#       [NO_REGISTRATION])                 # 등록 함수를 컴파일하지 않는다 — 서술만 쓴다(아래)
+#
+# NO_REGISTRATION: 등록 함수(reflgen_<module>.cpp)를 만들되 컴파일하지 않는다. 서술(schema_of·for_each_field)만 쓰고
+# reflgen 의 등록소·직렬화는 쓰지 않는 코드베이스(자기 직렬화·등록을 가진 엔진)용이다 — 쓰지 않을 런타임 서술자의
+# 컴파일 시간을 치르지 않는다.
 #
 # header 는 아무것도 include 하지 않는다 — attribute 만 단다. 생성물을 묶은 주입 header
 # (<OUTPUT_DIRECTORY>/<config>/reflgen_<module>.h)를 target 과 그것을 링크하는 target 의 모든 번역 단위에
@@ -21,7 +26,8 @@ cmake_policy(PUSH)
 cmake_policy(VERSION 3.25)
 
 function(reflgen_generate target)
-    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "MODULE;OUTPUT_DIRECTORY" "HEADERS;ATTRIBUTE_SCOPES;ATTRIBUTE_HEADERS")
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "NO_REGISTRATION" "MODULE;OUTPUT_DIRECTORY"
+                          "HEADERS;ATTRIBUTE_SCOPES;ATTRIBUTE_HEADERS")
     if(NOT ARG_HEADERS)
         message(FATAL_ERROR "reflgen_generate(${target}): HEADERS is required")
     endif()
@@ -56,7 +62,8 @@ function(reflgen_generate target)
         list(APPEND outputs "${output_directory}/${stem}.reflgen.h")
     endforeach()
     set(injection "${output_directory}/reflgen_${module}.h")
-    list(APPEND outputs "${injection}" "${output_directory}/reflgen_${module}.cpp")
+    set(module_source "${output_directory}/reflgen_${module}.cpp")
+    list(APPEND outputs "${injection}" "${module_source}")
 
     # 컴파일에 쓰는 include 경로·정의·표준을 생성기의 파싱에도 그대로 준다. 목록은 generator
     # expression 이라 구성(configure) 뒤에야 정해지므로 파일로 넘긴다. 표준은 CXX_STANDARD 와
@@ -96,7 +103,12 @@ $<$<IN_LIST:cxx_std_26,${features}>:-std=c++26\n>")
         COMMENT "reflgen: generating reflection for ${target}"
         VERBATIM)
 
-    target_sources(${target} PRIVATE ${outputs})
+    # NO_REGISTRATION 이면 등록 함수만 target 에서 뺀다 — 생성은 그대로 돈다(다른 출력이 target 에 있다).
+    set(compiled_outputs ${outputs})
+    if(ARG_NO_REGISTRATION)
+        list(REMOVE_ITEM compiled_outputs "${module_source}")
+    endif()
+    target_sources(${target} PRIVATE ${compiled_outputs})
     # [[reflgen::…]] 는 컴파일러에게 모르는 attribute 다 — 경고(/W4·-Werror 에서 오류)를 끈다.
     # 이 header 를 쓰는 모든 target 에 필요하므로 PUBLIC 이다. 주입 header 도 같은 이유로 PUBLIC 이다 —
     # header 가 생성 파일을 include 하지 않으므로 reflection 은 강제 include 로만 소비자에게 간다.

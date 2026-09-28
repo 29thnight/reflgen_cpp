@@ -121,6 +121,22 @@ if(REFLGEN_BUILD_TESTS)
             ATTRIBUTE_HEADERS tests/generated/test_attributes.h)
         add_test(NAME reflgen_generated_tests COMMAND reflgen_generated_tests)
 
+        # 서술만 쓰는 target(description_only.h 머리말) — 등록 함수가 소스에서 빠졌는지 본다.
+        add_library(reflgen_description_only STATIC tests/generated/description_only.cpp)
+        target_include_directories(reflgen_description_only PRIVATE tests/generated)
+        target_link_libraries(reflgen_description_only PRIVATE reflgen::reflgen)
+        reflgen_configure_target(reflgen_description_only)
+        reflgen_generate(reflgen_description_only
+            MODULE description_only
+            HEADERS tests/generated/description_only.h
+            NO_REGISTRATION)
+        file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/description_only_sources_$<CONFIG>.txt"
+             CONTENT "$<JOIN:$<TARGET_PROPERTY:reflgen_description_only,SOURCES>,\n>\n")
+        add_test(NAME reflgen_no_registration
+            COMMAND "${CMAKE_COMMAND}"
+                "-DSOURCES=${CMAKE_CURRENT_BINARY_DIR}/description_only_sources_$<CONFIG>.txt"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/generated/check_no_registration.cmake")
+
         # 잘못 쓴 header 에 대한 진단(코드·위치·실패 종료).
         add_test(NAME reflgen_generator_diagnostics
             COMMAND "${CMAKE_COMMAND}"
