@@ -378,6 +378,34 @@ struct reflgen::container_traits<ring_buffer<T>>
 맵 규약과 자세한 설명은 [container_traits.h](include/reflgen/serial/container_traits.h). 모양 자체가 다른
 타입(예: 색을 `"#rrggbb"` 로)은 `reflgen::serializer<T>` 를 특수화한다(`write`/`read` 두 함수).
 
+반영 타입의 봉투(헤더·버전·훅)만 바꾸고 필드는 reflgen 에 맡기려면 객체 몸통 함수를 쓴다:
+
+```cpp
+template<>
+struct reflgen::serializer<save_file>
+{
+    static void write(reflgen::writer& out, const save_file& value)
+    {
+        out.begin_object(1 + reflgen::serialized_field_count<save_file>());
+        out.write_key("version");
+        out.write_int(2);
+        reflgen::write_fields(out, value);                     // 필드마다 키와 값(부모 먼저)
+        out.end_object();
+    }
+
+    static void read(reflgen::reader& in, save_file& value)
+    {
+        in.begin_object();
+        for (std::string key; in.next_key(key);)
+        {
+            if (key == "version") { in.read_int(); }
+            else if (!reflgen::read_field(in, value, key)) { in.skip_value(); } // 필드가 아닌 키는 소비하지 않는다
+        }
+        in.end_object();
+    }
+};
+```
+
 ## 새 포맷 백엔드
 
 `reflgen::writer` / `reflgen::reader` 의 순수 가상 함수를 구현한다.

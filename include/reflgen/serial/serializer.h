@@ -322,6 +322,38 @@ namespace reflgen
         deserialize(in, value);
         return value;
     }
+
+    // ── 객체 몸통 — 사용자 serializer 가 봉투(헤더·버전·훅)를 두르고 필드는 reflgen 에 맡길 때 ──────────
+    //
+    //   out.begin_object(1 + reflgen::serialized_field_count<T>());
+    //   out.write_key("version");
+    //   out.write_int(2);
+    //   reflgen::write_fields(out, value);
+    //   out.end_object();
+    //
+    // 읽기는 키마다 read_field 를 부른다. 거절한 키(필드가 아니거나 transient 인 것)는 소비하지 않으므로 부르는
+    // 쪽이 처리한다(skip_value 등). required 검사는 하지 않는다 — 봉투가 판단한다.
+
+    // transient 가 아닌 필드의 수(부모 몫 포함) — write_fields 가 쓰는 키의 수다.
+    template<reflectable T>
+    consteval std::size_t serialized_field_count() noexcept
+    {
+        return detail::serialized_field_count<T>();
+    }
+
+    // 필드마다 키와 값(부모 먼저). begin_object·end_object 는 부르는 쪽 몫이다.
+    template<reflectable T>
+    void write_fields(writer& out, const T& value)
+    {
+        detail::write_fields(out, value);
+    }
+
+    // key 가 필드의 키면 그 값을 읽어 value 에 넣고 true. 아니면 아무것도 소비하지 않고 false.
+    template<reflectable T>
+    bool read_field(reader& in, T& value, std::string_view key)
+    {
+        return detail::read_field_at(in, value, key) != field_count<T>();
+    }
 } // namespace reflgen
 
 // 꼬리 include — 순서의 이유는 runtime/type_descriptor.h 끝의 설명을 볼 것.

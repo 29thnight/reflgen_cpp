@@ -136,7 +136,56 @@ namespace objects
             return reflgen::schema<node>(reflgen::field<&node::label>, reflgen::field<&node::children>);
         }
     };
+    // 봉투를 직접 쓰는 타입 — 사용자 serializer 가 헤더(version)를 앞에 두고 필드는 reflgen 에 맡긴다.
+    struct versioned
+    {
+        int level = 1;
+        std::string name = "x";
+        int frame = 0; // transient — 쓰지도 읽지도 않는다
+
+        bool operator==(const versioned&) const = default;
+
+        static consteval auto reflect()
+        {
+            return reflgen::schema<versioned>(reflgen::field<&versioned::level>, reflgen::field<&versioned::name>,
+                                              reflgen::field<&versioned::frame>.with(reflgen::transient{}));
+        }
+    };
 } // namespace objects
+
+template<>
+struct reflgen::serializer<objects::versioned>
+{
+    static void write(reflgen::writer& out, const objects::versioned& value)
+    {
+        out.begin_object(1 + reflgen::serialized_field_count<objects::versioned>());
+        out.write_key("version");
+        out.write_int(2);
+        reflgen::write_fields(out, value);
+        out.end_object();
+    }
+
+    static void read(reflgen::reader& in, objects::versioned& value)
+    {
+        in.begin_object();
+        std::string key;
+        while (in.next_key(key))
+        {
+            if (key == "version")
+            {
+                if (in.read_int() != 2)
+                {
+                    throw reflgen::serialization_error("unsupported version");
+                }
+            }
+            else if (!reflgen::read_field(in, value, key))
+            {
+                in.skip_value();
+            }
+        }
+        in.end_object();
+    }
+};
 
 template<>
 struct reflgen::reflection<objects::vendor_config>
@@ -237,6 +286,28 @@ namespace
     const test recursive_types("object: recursive types", [] {
         objects::node tree{"root", {{"a", {}}, {"b", {{"c", {}}}}}};
         check_round_trip(tree);
+    });
+
+    // 공개 객체 몸통 API — 사용자 serializer 가 헤더를 두르고 필드 쓰기·읽기는 reflgen 에 맡긴다.
+    const test custom_envelope("object: a custom serializer wraps the fields reflgen writes and reads", [] {
+        static_assert(reflgen::serialized_field_count<objects::versioned>() == 2);
+        objects::versioned value;
+        value.level = 7;
+        value.name = "mage";
+        value.frame = 3;
+        check_equal(reflgen::json::to_string(value), std::string(R"({"version":2,"level":7,"name":"mage"})"));
+
+        // 모르는 키는 read_field 가 거절하고(소비하지 않는다) 호출자가 건너뛴다. transient 필드는 읽지 않는다.
+        const auto loaded = reflgen::json::from_string<objects::versioned>(
+            R"({"zzz":[1,{"a":2}],"name":"rogue","version":2,"frame":9,"level":4})");
+        check_equal(loaded.level, 4);
+        check_equal(loaded.name, std::string("rogue"));
+        check_equal(loaded.frame, 0);
+
+        objects::versioned round = value;
+        round.frame = 0;
+        check_round_trip(round);
+        check_throws([] { reflgen::json::from_string<objects::versioned>(R"({"version":3})"); }, "unsupported version");
     });
 
     const test binary_skips_unknown("object: binary format skips unknown keys too", [] {

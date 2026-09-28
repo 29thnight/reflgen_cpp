@@ -91,36 +91,137 @@ namespace reflgen::detail
     }
 
     template<class T>
-    void write_object(writer& out, const T& value)
+    consteval void check_object_contract() noexcept
     {
         static_assert(serialized_keys_unique<T>(),
                       "two serialized fields of this type share a key; rename one with reflgen::serialized_name");
         static_assert(attributes_consistent<T>(), "a field is both reflgen::transient and reflgen::required");
+    }
 
-        out.begin_object(serialized_field_count<T>());
-        for_each_field<T>([&](const auto& field) {
-            using field_type = std::remove_cvref_t<decltype(field)>;
-            if constexpr (!is_transient_field<field_type>)
+    // ★ 필드마다 실체화되는 것은 함수 하나(write_one_field·read_one_field)다 — 필드 방문 람다·with_path 람다를 겹겹이 두면
+    //   Debug 빌드의 코드 생성이 필드 수에 몇 배로 붙는다. 부모의 필드는 부모 타입의 함수가 맡는다 — 자식 타입마다
+    //   부모 필드를 다시 실체화하지 않는다. 순서는 for_each_field 와 같다(부모 먼저, base<> 선언 순서).
+    template<class Owner, class Field>
+    void write_one_field(writer& out, const Owner& value, const Field& field)
+    {
+        if constexpr (!is_transient_field<Field>)
+        {
+            // 얕은 판정 — 품은 서술된 클래스의 필드는 그 클래스를 쓸 때 단정된다(오류가 그 필드를 가리킨다).
+            static_assert(is_serializable_shallow<typename Field::value_type>(),
+                          "a field of this type cannot be serialized; mark it reflgen::transient or specialize "
+                          "reflgen::serializer for its type");
+            const std::string_view key = serialized_key(field);
+            out.write_key(key);
+            const path_scope scope(key);
+            serialize(out, value.*Field::pointer);
+        }
+    }
+
+    template<class T>
+    void write_own_and_base_fields(writer& out, const T& value)
+    {
+        if constexpr (reflectable<T>)
+        {
+            [&]<class... Bases>(type_list<Bases...>) {
+                (write_own_and_base_fields<Bases>(out, static_cast<const Bases&>(value)), ...);
+            }(direct_bases_t<T>{});
+            std::apply([&](const auto&... fields) { (write_one_field(out, value, fields), ...); }, schema_of<T>.fields);
+        }
+    }
+
+    // 객체 몸통 — transient 가 아닌 필드마다 키와 값(부모 먼저). begin_object·end_object 는 부르는 쪽 몫이다.
+    template<class T>
+    void write_fields(writer& out, const T& value)
+    {
+        check_object_contract<T>();
+        write_own_and_base_fields(out, value);
+    }
+
+    template<class Owner, class Field>
+    bool read_one_field(reader& in, Owner& value, const Field& field, std::string_view key)
+    {
+        if constexpr (is_transient_field<Field>)
+        {
+            return false;
+        }
+        else
+        {
+            static_assert(is_deserializable_shallow<typename Field::value_type>(),
+                          "a field of this type cannot be deserialized; mark it reflgen::transient or "
+                          "specialize reflgen::serializer for its type");
+            if (key != serialized_key(field))
             {
-                // 얕은 판정 — 품은 서술된 클래스의 필드는 그 클래스를 쓸 때 단정된다(오류가 그 필드를 가리킨다).
-                static_assert(is_serializable_shallow<typename field_type::value_type>(),
-                              "a field of this type cannot be serialized; mark it reflgen::transient or specialize "
-                              "reflgen::serializer for its type");
-                const std::string_view key = serialized_key(field);
-                out.write_key(key);
-                with_path(key, [&] { serialize(out, value.*field_type::pointer); });
+                return false;
             }
-        });
+            const path_scope scope(key);
+            deserialize(in, value.*Field::pointer);
+            return true;
+        }
+    }
+
+    // T 와 그 부모들의 필드 가운데 key 인 것의 순번(for_each_field<T> 순서). 없으면 field_count<T>().
+    template<class T>
+    std::size_t read_own_and_base_field(reader& in, T& value, std::string_view key)
+    {
+        constexpr std::size_t none = field_count<T>();
+        if constexpr (!reflectable<T>)
+        {
+            return none;
+        }
+        else
+        {
+            std::size_t found = none;
+            std::size_t offset = 0;
+            [&]<class... Bases>(type_list<Bases...>) {
+                (
+                    [&] {
+                        if (found == none)
+                        {
+                            const std::size_t index =
+                                read_own_and_base_field<Bases>(in, static_cast<Bases&>(value), key);
+                            if (index != field_count<Bases>())
+                            {
+                                found = offset + index;
+                            }
+                        }
+                        offset += field_count<Bases>();
+                    }(),
+                    ...);
+            }(direct_bases_t<T>{});
+            if (found != none)
+            {
+                return found;
+            }
+            // 찾으면 멈춘다(|| 의 단락).
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (void)((read_one_field(in, value, std::get<I>(schema_of<T>.fields), key) &&
+                        ((found = offset + I), true)) ||
+                       ...);
+            }(std::make_index_sequence<std::tuple_size_v<std::remove_cvref_t<decltype(schema_of<T>.fields)>>>{});
+            return found;
+        }
+    }
+
+    // key 가 transient 가 아닌 필드의 키면 그 값을 읽고 필드의 순번(for_each_field 순서)을 돌려준다. 아니면 아무것도
+    // 소비하지 않고 field_count<T>() 를 돌려준다.
+    template<class T>
+    std::size_t read_field_at(reader& in, T& value, std::string_view key)
+    {
+        check_object_contract<T>();
+        return read_own_and_base_field(in, value, key);
+    }
+
+    template<class T>
+    void write_object(writer& out, const T& value)
+    {
+        out.begin_object(serialized_field_count<T>());
+        write_fields(out, value);
         out.end_object();
     }
 
     template<class T>
     void read_object(reader& in, T& value)
     {
-        static_assert(serialized_keys_unique<T>(),
-                      "two serialized fields of this type share a key; rename one with reflgen::serialized_name");
-        static_assert(attributes_consistent<T>(), "a field is both reflgen::transient and reflgen::required");
-
         constexpr std::size_t count = field_count<T>();
         std::array<bool, count> seen{};
 
@@ -128,27 +229,14 @@ namespace reflgen::detail
         std::string key;
         while (in.next_key(key))
         {
-            bool matched = false;
-            std::size_t index = 0;
-            for_each_field<T>([&](const auto& field) {
-                using field_type = std::remove_cvref_t<decltype(field)>;
-                if constexpr (!is_transient_field<field_type>)
-                {
-                    static_assert(is_deserializable_shallow<typename field_type::value_type>(),
-                                  "a field of this type cannot be deserialized; mark it reflgen::transient or "
-                                  "specialize reflgen::serializer for its type");
-                    if (!matched && key == serialized_key(field))
-                    {
-                        matched = true;
-                        seen[index] = true;
-                        with_path(key, [&] { deserialize(in, value.*field_type::pointer); });
-                    }
-                }
-                ++index;
-            });
-            if (!matched)
+            const std::size_t index = read_field_at(in, value, key);
+            if (index == count)
             {
                 in.skip_value();
+            }
+            else
+            {
+                seen[index] = true;
             }
         }
         in.end_object();
