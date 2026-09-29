@@ -42,7 +42,8 @@ namespace reflgen
         T min;
         T max;
 
-        constexpr range(T min_value, T max_value) noexcept : min(min_value), max(max_value) {}
+        // 중괄호로 초기화한다 — windows.h 를 NOMINMAX 없이 include 한 번역 단위에서는 min( max( 가 함수형 매크로다.
+        constexpr range(T min_value, T max_value) noexcept : min{min_value}, max{max_value} {}
     };
 
     // 직렬화 키 이름을 멤버 이름과 다르게 둔다. 멤버 이름을 바꿔도 파일 호환을

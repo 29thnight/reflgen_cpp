@@ -81,7 +81,7 @@ namespace reflgen::detail
         else
         {
             const double value = in.read_float();
-            if constexpr (std::numeric_limits<T>::max() < std::numeric_limits<double>::max())
+            if constexpr ((std::numeric_limits<T>::max)() < (std::numeric_limits<double>::max)())
             {
                 // 무한·NaN 은 그대로 둔다(바이너리 포맷은 담을 수 있다). 유한값이 넘치는 것만 막는다.
                 if (std::isfinite(value) && std::fabs(value) > static_cast<double>((std::numeric_limits<T>::max)()))
