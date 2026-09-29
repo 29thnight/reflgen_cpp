@@ -139,6 +139,21 @@ namespace generated_tests
         int generation = 1;
     };
 
+    // 등록 header 시험 — tint 의 serializer 특수화는 이 header 가 아니라 registration_serializers.h 에 있다. 등록 함수의
+    // 번역 단위가 그것을 보려면 등록 header(REGISTRATION_HEADERS)로 넘겨야 한다.
+    struct tint
+    {
+        float r = 1.0f;
+        float g = 0.5f;
+        float b = 0.0f;
+    };
+
+    struct [[reflgen::reflect]] tinted
+    {
+        tint color;
+        int strength = 2;
+    };
+
     namespace nested
     {
         struct [[reflgen::reflect]] marker

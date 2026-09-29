@@ -5,12 +5,22 @@
 #       [MODULE game]                      # 등록 함수 이름: reflgen::generated::register_game()
 #       [ATTRIBUTE_SCOPES game editor]     # reflgen 외에 스키마로 옮길 attribute 이름공간
 #       [ATTRIBUTE_HEADERS include/game/attributes.h] # 그 이름공간의 attribute 타입 정의 — 주입 header 가 include
+#       [REGISTRATION_HEADERS include/game/serializers.h] # 등록 함수가 맨 앞에서 include(아래)
 #       [OUTPUT_DIRECTORY dir]             # 구성(config)마다 그 아래 <config>/ 에 만든다
 #       [NO_REGISTRATION])                 # 등록 함수를 컴파일하지 않는다 — 서술만 쓴다(아래)
 #
 # NO_REGISTRATION: 등록 함수(reflgen_<module>.cpp)를 만들되 컴파일하지 않는다. 서술(schema_of·for_each_field)만 쓰고
 # reflgen 의 등록소·직렬화는 쓰지 않는 코드베이스(자기 직렬화·등록을 가진 엔진)용이다 — 쓰지 않을 런타임 서술자의
 # 컴파일 시간을 치르지 않는다.
+#
+# REGISTRATION_HEADERS: 등록 함수(reflgen_<module>.cpp)가 서술자를 만들기 전에 include 하는 header. 등록소의 서술자는
+# 등록 함수의 번역 단위에서 만들어지고, 그 번역 단위는 HEADERS 만 본다 — 다른 번역 단위와 같은 서술이 되려면 그곳도
+# 같은 것을 보아야 한다. 둘이 여기 들어간다:
+#   - 반영 타입의 header 가 include 하지 않는 곳에 둔 reflgen::serializer 특수화(보지 못하면 그 필드는 직렬화기 없이
+#     남는다).
+#   - 반영 타입의 header 가 전방 선언만 하는 서술된 필드 타입(std::shared_ptr<Material> 등)의 header(불완전하면 그
+#     타입의 서술이 실체화되며 컴파일이 멈춘다).
+# 반영 클래스가 없는 모듈의 등록 함수는 include 하지 않는다.
 #
 # header 는 아무것도 include 하지 않는다 — attribute 만 단다. 생성물을 묶은 주입 header
 # (<OUTPUT_DIRECTORY>/<config>/reflgen_<module>.h)를 target 과 그것을 링크하는 target 의 모든 번역 단위에
@@ -27,7 +37,7 @@ cmake_policy(VERSION 3.25)
 
 function(reflgen_generate target)
     cmake_parse_arguments(PARSE_ARGV 1 ARG "NO_REGISTRATION" "MODULE;OUTPUT_DIRECTORY"
-                          "HEADERS;ATTRIBUTE_SCOPES;ATTRIBUTE_HEADERS")
+                          "HEADERS;ATTRIBUTE_SCOPES;ATTRIBUTE_HEADERS;REGISTRATION_HEADERS")
     if(NOT ARG_HEADERS)
         message(FATAL_ERROR "reflgen_generate(${target}): HEADERS is required")
     endif()
@@ -90,6 +100,10 @@ $<$<IN_LIST:cxx_std_26,${features}>:-std=c++26\n>")
     foreach(attribute_header IN LISTS ARG_ATTRIBUTE_HEADERS)
         get_filename_component(attribute_header "${attribute_header}" ABSOLUTE)
         list(APPEND scope_arguments --attribute-header "${attribute_header}")
+    endforeach()
+    foreach(registration_header IN LISTS ARG_REGISTRATION_HEADERS)
+        get_filename_component(registration_header "${registration_header}" ABSOLUTE)
+        list(APPEND scope_arguments --registration-header "${registration_header}")
     endforeach()
 
     # HEADERS 가 include 하는 파일(상수·부모 클래스를 담은 공용 header 등)은 생성기가 depfile 로 알린다.

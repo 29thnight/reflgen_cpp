@@ -359,12 +359,25 @@ namespace reflgen::generator
         return out.take();
     }
 
-    std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers)
+    std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers,
+                                   const std::vector<std::string>& registration_headers)
     {
         text_builder out;
         out.line(banner);
         // 주입 header 가 생성 파일을 모두 include 한다. 강제 include 를 받지 않는 빌드에서도 컴파일되게 직접 부른다.
         out.line("#include \"reflgen_" + module_name + ".h\"");
+        const bool has_classes =
+            std::ranges::any_of(headers, [](const header_model& header) { return !header.classes.empty(); });
+        // 사용자 serializer 특수화 등 — 서술자를 만들기 전에 보여야 한다(다른 번역 단위와 같은 서술자가 되게). 반영
+        // 클래스가 없으면 서술자를 만들지 않으므로 include 하지 않는다 — 빌드 설정이 모든 프로젝트에 같은 등록 header 를
+        // 주어도 빈 등록 함수는 그 header 의 include 경로 없이 컴파일된다.
+        if (has_classes)
+        {
+            for (const std::string& header : registration_headers)
+            {
+                out.line("#include \"" + header + "\"");
+            }
+        }
         out.line("#include \"reflgen/runtime/registry.h\"");
         // 등록은 완전한 타입이 필요하다 — 주입 header 는 전방 선언만 보므로 원본 header 를 여기서 include 한다.
         for (const header_model& header : headers)

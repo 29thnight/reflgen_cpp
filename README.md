@@ -161,6 +161,18 @@ reflgen_generate(my_game
   `NO_REGISTRATION`(CMake)·`ReflgenRegistration=false`(MSBuild)로 등록 함수를 컴파일하지 않는다 — 쓰지 않을
   서술자의 컴파일 시간을 치르지 않는다. 생성과 주입은 그대로다.
 
+- **등록 함수가 보아야 할 header**: 등록소의 서술자는 등록 함수의 번역 단위에서 만들어지고, 그 번역 단위는 모듈의
+  반영 header 만 본다. 다른 번역 단위와 같은 서술이 되도록 모자라는 것을 `REGISTRATION_HEADERS`(CMake)·
+  `ReflgenRegistrationHeaders`(MSBuild)로 넘긴다 — 등록 함수가 맨 앞에서 include 한다.
+  - 반영 타입의 header 가 include 하지 않는 곳에 둔 `reflgen::serializer` 특수화. 넘기지 않으면 그 필드는 등록소의
+    서술자에서 직렬화기 없이 남는다.
+  - 반영 타입의 header 가 전방 선언만 하는 서술된 필드 타입(`std::shared_ptr<Material>` 등)의 header. 넘기지
+    않으면 그 타입의 서술이 불완전한 타입으로 실체화되며 컴파일이 멈춘다.
+
+  다른 모듈의 서술(주입 header)은 스스로 본다 — CMake 는 링크한 target 의 강제 include 로, MSBuild 는 참조하는
+  reflgen 프로젝트의 주입 header 를 모은 `reflgen_<module>.references.h` 로. 반영 클래스가 없는 모듈의 등록 함수는
+  등록 header 를 include 하지 않는다(모든 프로젝트에 같은 설정을 주어도 된다).
+
 - **반영 범위**: `[[reflgen::reflect]]` 클래스의 non-static data member 전부(C++26 native reflection 과 같은 결과).
   `[[reflgen::ignore]]` 로 뺀다. 메서드는 `[[reflgen::reflect]]` 를 단 것만. `public` 부모 가운데 반영된 것은
   `base<>` 로 이어지고, 반영하지 않는 부모(CRTP 중간층, 서드파티 베이스)는 건너 그 위의 가장 가까운 반영된 조상으로
@@ -277,6 +289,7 @@ namespace editor
 | `ReflgenAttributeHeaders` | 없음 — 사용자 attribute 타입을 정의한 header. 주입 header 가 include 한다 |
 | `ReflgenOutputDirectory` | `$(IntDir)reflgen\` |
 | `ReflgenRegistration` | `true` — `false` 면 등록 함수를 컴파일하지 않는다(서술만 쓰는 코드베이스, 아래) |
+| `ReflgenRegistrationHeaders` | 등록 함수가 서술자를 만들기 전에 include 하는 header(`;` 로 가른다) — 사용자 serializer 특수화(아래) |
 
 ### Visual Studio 확장
 

@@ -118,7 +118,8 @@ if(REFLGEN_BUILD_TESTS)
             MODULE generated_tests
             HEADERS tests/generated/game_types.h tests/generated/fallback_types.h
             ATTRIBUTE_SCOPES generated_tests
-            ATTRIBUTE_HEADERS tests/generated/test_attributes.h)
+            ATTRIBUTE_HEADERS tests/generated/test_attributes.h
+            REGISTRATION_HEADERS tests/generated/registration_serializers.h)
         add_test(NAME reflgen_generated_tests COMMAND reflgen_generated_tests)
 
         # 서술만 쓰는 target(description_only.h 머리말) — 등록 함수가 소스에서 빠졌는지 본다.

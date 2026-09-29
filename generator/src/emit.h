@@ -18,5 +18,9 @@ namespace reflgen::generator
     std::string emit_module_header(const std::string& module_name, const std::vector<std::string>& generated_paths,
                                    const std::vector<std::string>& attribute_headers);
 
-    std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers);
+    // registration_headers: 등록 함수의 번역 단위가 서술자를 만들기 전에 include 할 header(절대 경로) — 사용자
+    // serializer 특수화가 그 번역 단위에도 보여야 등록소의 서술자가 다른 번역 단위의 서술과 같다. 반영 클래스가 없는
+    // 모듈은 서술자를 만들지 않으므로 include 하지 않는다.
+    std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers,
+                                   const std::vector<std::string>& registration_headers);
 } // namespace reflgen::generator

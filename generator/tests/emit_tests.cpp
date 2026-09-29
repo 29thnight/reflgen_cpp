@@ -69,10 +69,31 @@ namespace
         });
 
     const test module_source("emit: the registration source sees complete types and offers both overloads", [] {
-        const std::string text = reflgen::generator::emit_module_source("game", {player_header(false)});
+        const std::string text = reflgen::generator::emit_module_source("game", {player_header(false)}, {});
         check(text.find("#include \"C:/src/player.h\"") != std::string::npos, text);
         check(text.find("#include \"reflgen/runtime/registry.h\"") != std::string::npos, text);
         check(text.find("target.add<::game::player>();") != std::string::npos, text);
         check(text.find("register_game(::reflgen::default_registry());") != std::string::npos, text);
     });
+
+    // 등록 header 는 서술자를 만들기 전에 — 반영 타입의 header 와 등록소 header 보다 앞에 온다.
+    const test module_source_registration_headers(
+        "emit: registration headers come first in the registration source", [] {
+            const std::string text =
+                reflgen::generator::emit_module_source("game", {player_header(false)}, {"C:/src/serializers.h"});
+            const std::size_t registration = text.find("#include \"C:/src/serializers.h\"");
+            check(registration != std::string::npos, text);
+            check(registration < text.find("#include \"reflgen/runtime/registry.h\""), text);
+            check(registration < text.find("#include \"C:/src/player.h\""), text);
+        });
+
+    // 반영 클래스가 없는 모듈은 서술자를 만들지 않는다 — 등록 header 를 include 하지 않는다. 빌드 설정이 모든 프로젝트에
+    // 같은 등록 header 를 주어도(그 header 의 include 경로가 없는 프로젝트라도) 빈 등록 함수는 컴파일된다.
+    const test module_source_without_classes(
+        "emit: a module without reflected classes does not include registration headers", [] {
+            const std::string text =
+                reflgen::generator::emit_module_source("game", {{"C:/src/plain.h", {}, {}}}, {"C:/src/serializers.h"});
+            check(text.find("serializers.h") == std::string::npos, text);
+            check(text.find("static_cast<void>(target);") != std::string::npos, text);
+        });
 } // namespace

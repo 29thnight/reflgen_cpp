@@ -15,6 +15,9 @@ namespace reflgen::generator
         // 사용자 이름공간의 attribute 타입을 정의한 header — 주입 header 가 include 한다. 없으면 사용자 attribute 를
         // 쓰는 타입은 원본 header 가 필요하다(생성 코드가 attribute 타입을 볼 길이 그것뿐이다).
         std::vector<std::string> attribute_headers;
+        // 등록 함수의 번역 단위(reflgen_<module>.cpp)가 맨 앞에서 include 하는 header — 사용자 serializer 특수화처럼
+        // 등록소의 서술자가 보아야 하는데 반영 타입의 header 가 include 하지 않는 것. 생성에는 쓰지 않는다.
+        std::vector<std::string> registration_headers;
         std::string output_directory; // 정규화한 절대 경로
         std::string module_name;
         // clang 내장 header 를 담은 resource 디렉터리(그 아래 include/). 비면 libclang 이 스스로 찾는다.

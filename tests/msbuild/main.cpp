@@ -36,8 +36,22 @@ int main()
     const std::string badge_text = msbuild_lib::badge_text();
     const bool peers = badge_text == R"({"where":{"x":1,"y":2},"rank":3})" && msbuild_peer::point_text() == point_text;
 
-    const bool ok = registered && serialized && propagated && peers && reflgen_msbuild_c_value() == 42;
-    std::printf("%s\n%s\n%s\n%s\nmsbuild integration: %s\n", text.c_str(), point_text.c_str(), tagged_text.c_str(),
-                badge_text.c_str(), ok ? "ok" : "FAILED");
+    // 등록소의 서술자는 등록 함수의 번역 단위에서 만들어진다 — 그곳도 참조하는 프로젝트의 서술을 보아야 한다.
+    // 못 보면 부모(lib.point)의 필드가 빠진 서술자가 되고, 같은 타입의 서술이 번역 단위마다 달라진다.
+    const reflgen::type_descriptor* tagged = reflgen::default_registry().find("app.tagged_point");
+    std::string described;
+    if (tagged != nullptr && tagged->is_serializable())
+    {
+        reflgen::json::writer out(described);
+        const auto instance = tagged->create();
+        tagged->serialize(out, instance.get());
+    }
+    const bool registration_sees_references =
+        tagged != nullptr && tagged->fields().size() == 3 && described == tagged_text;
+
+    const bool ok = registered && serialized && propagated && peers && registration_sees_references &&
+                    reflgen_msbuild_c_value() == 42;
+    std::printf("%s\n%s\n%s\n%s\n%s\nmsbuild integration: %s\n", text.c_str(), point_text.c_str(), tagged_text.c_str(),
+                badge_text.c_str(), described.c_str(), ok ? "ok" : "FAILED");
     return ok ? 0 : 1;
 }

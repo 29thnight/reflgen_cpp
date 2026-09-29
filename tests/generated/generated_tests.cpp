@@ -171,6 +171,26 @@ namespace
             check(held.find_field("slot")->is_serializable());
         });
 
+    // 등록소의 서술자는 등록 함수의 번역 단위에서 만들어진다 — 이 번역 단위는 서술자를 만들지 않고(type_descriptor_of
+    // 를 부르지 않는다) 등록소에서 찾기만 한다. tint 의 특수화는 REGISTRATION_HEADERS 로만 그 번역 단위에 닿는다.
+    const test registration_headers(
+        "generated: registration headers reach the register function's translation unit", [] {
+            reflgen::registry registry;
+            reflgen::generated::register_generated_tests(registry);
+            const reflgen::type_descriptor* tinted = registry.find("generated_tests::tinted");
+            require(tinted != nullptr);
+            const reflgen::field_info* color = tinted->find_field("color");
+            require(color != nullptr);
+            check(color->is_serializable());
+            check(color->is_deserializable());
+
+            std::string text;
+            reflgen::json::writer out(text);
+            const auto instance = tinted->create();
+            tinted->serialize(out, instance.get());
+            check_equal(text, std::string(R"({"color":"#1.000000,0.500000,0.000000","strength":2})"));
+        });
+
     const test foreign_reflect("generated: a foreign static reflect() does not shadow the generated description", [] {
         check_equal(reflgen::json::to_string(generated_tests::migrating{}), std::string(R"({"value":3})"));
     });
