@@ -438,11 +438,27 @@ for (const reflgen::field_info& field : type.fields())   // 상속 필드 포함
 {
     field.name(); field.key(); field.type_name(); field.attributes().find<reflgen::range<int>>();
     void* address = field.address(&object);
+    if (const reflgen::enum_descriptor* values = field.enumeration()) // 열거형 필드면 열거자 표
+    {
+        values->write(address, values->find("angry")->value);      // 값은 long long 으로 오간다
+    }
 }
+for (const reflgen::method_info& method : type.methods()) // 상속 메서드 포함, 부모 우선
+{
+    method.name(); method.parameters(); method.return_type(); method.is_const();
+}
+int amount = 5, total = 0;
+void* arguments[] = {&amount};                            // 파라미터 타입의 객체를 가리킨다
+type.find_method("heal")->invoke(&object, arguments, &total); // 반환값은 total 에(nullptr 면 버린다)
 reflgen::register_type<fireball>();                      // 다형 포인터로 읽고 쓸 파생 타입
 ```
 
 - 표는 전부 `constexpr` 이다 — 정적 초기화 순서 문제가 없다.
+- 메서드 호출은 타입을 지운 포인터로 한다: 인자는 파라미터 타입(참조·cv 를 뗀)의 객체를 가리키고, 값 파라미터는
+  그 객체를 복사하고(복사할 수 없는 타입이면 옮긴다), 참조 파라미터는 그 객체를 받고, rvalue 참조 파라미터는 그
+  객체에서 옮긴다. 인자 수가 틀리거나 대입할 수 없는 반환 타입에 결과 자리를 주면 `std::invalid_argument` 다.
+  인자 칸으로 부를 수 없는 메서드(`&&` 한정자·`volatile`·C 가변 인자)는 `methods()` 에 없다 — 컴파일 때 서술
+  (`schema_of`)에는 남는다.
 - reflgen 으로 쓸 수 없는 필드(직렬화기가 없는 타입, 또는 그런 필드를 품은 반영 타입)는 쓰기·읽기 썽크 없이 남는다
   — `field.is_serializable()` 이 거짓이고 쓰면 `serialization_error` 다. 판정은 품은 반영 타입의 필드까지 내려간다
   (`reflgen::serializable<T>`). 같은 타입을 `json::to_string` 처럼 직접 쓰면 실제로 못 쓰는 필드에서 컴파일 오류다.
