@@ -1,17 +1,42 @@
 # reflgen
 
-매크로 없는 C++20 리플렉션과, 포맷을 갈아 끼울 수 있는 직렬화 라이브러리.
+Macro-free reflection for C++20, with a serialization library whose formats you can swap.
 
-- **매크로 0개** — 공개 API 는 물론 라이브러리 내부에도 `#define`·`#if` 가 없다(`#pragma once` 와 `#include` 뿐).
-  컴파일러 차이는 전처리기가 아니라 **행동 탐지**로 흡수한다.
-- **C++20 기반, C++23 지원** — 표준 라이브러리만 쓴다. C++26 정식 리플렉션(P2996)이 오면 서술을 만드는
-  방법만 바뀌고 질의·직렬화 API 는 그대로 둔다(아래 로드맵).
-- **STL 전반 직렬화** — 모든 표준 컨테이너·어댑터와 값 래퍼, 그리고 STL 모양의 사용자 컨테이너를 자동으로.
-- **포맷은 인터페이스** — `reflgen::writer` / `reflgen::reader` 를 구현하면 새 포맷이 된다. JSON 과 바이너리
-  백엔드가 기본으로 들어 있다.
-- 헤더 전용. 검증: MSVC 19.51(VS 18)·clang-cl 22 × C++20·C++23, `/W4 /WX`·`-Wextra -Wpedantic -Werror`.
+[한국어](README.ko.md)
 
-## 빠른 시작
+- **Zero macros** — neither the public API nor the library internals use `#define` or `#if` (only `#pragma once` and
+  `#include`). Compiler differences are absorbed by **detecting behavior**, not by the preprocessor.
+- **C++20 baseline, C++23 supported** — standard library only. When C++26 reflection (P2996) arrives, only the way
+  descriptions are produced changes; the query and serialization APIs stay (see the roadmap).
+- **The whole STL serializes** — every standard container, adapter and value wrapper, plus user containers shaped
+  like the STL, automatically.
+- **A format is an interface** — implement `reflgen::writer` / `reflgen::reader` and you have a new format. JSON and
+  binary backends are included.
+- Header-only library plus a code generator. Verified with MSVC 19.51 (VS 18) and clang-cl 22 × C++20 and C++23,
+  `/W4 /WX` and `-Wextra -Wpedantic -Werror`.
+
+## Install
+
+Windows x64 with Visual Studio 2022 (17.x) or 2026 (18.x). The release packages below are published on
+[GitHub Releases](https://github.com/29thnight/reflgen_cpp/releases); the generator in them ships with its own
+`libclang.dll` and the matching clang builtin headers.
+
+| Channel | For | How |
+|---|---|---|
+| NuGet `reflgen.<version>.nupkg` | `.vcxproj` projects | Add the folder that holds the package as a package source and install `reflgen` (`packages.config`). Installing imports `reflgen.targets` into the project; nothing else to set. |
+| vcpkg overlay port | vcpkg manifest projects (MSBuild or CMake) | `./scripts/make-overlay-port.ps1 -Destination <overlay-ports>` writes a port that fetches the `v<version>` tag. Add `reflgen` to `vcpkg.json`. MSBuild: import `<installed>\share\reflgen\msbuild\reflgen.targets` (it finds `tools\reflgen\reflgen.exe` itself). CMake: `find_package(reflgen CONFIG REQUIRED)`. |
+| zip `reflgen-<version>-windows-x64.zip` | anything else | A CMake install layout (`bin`, `include`, `lib\cmake`, `share`). CMake: add it to `CMAKE_PREFIX_PATH` and `find_package(reflgen)`. MSBuild: import `share\reflgen\msbuild\reflgen.targets`. |
+| VS extension `Reflgen.VisualStudio.vsix` | Visual Studio | Run the file to install it ([below](#visual-studio-extension)). |
+
+The vcpkg port builds from source, so it needs the Visual Studio component "C++ Clang tools for Windows" (the
+generator links the libclang that ships with Visual Studio). vcpkg's MSBuild integration reinstalls only when
+`vcpkg.json` or `vcpkg-configuration.json` changes — after pointing the overlay port at another version, make sure
+the installed headers actually changed.
+
+From source: `cmake --preset release`, `cmake --build --preset release`,
+`cmake --install build/release --prefix <folder>` gives the same layout as the zip. CMake 3.25 or later.
+
+## Quick start
 
 ```cpp
 #include "reflgen/reflgen.h"
@@ -34,14 +59,15 @@ std::string text = reflgen::json::to_string(item{ "potion", 3 }, 4);
 item loaded = reflgen::json::from_string<item>(text);
 ```
 
-전체 예제는 [examples/quick_start.cpp](examples/quick_start.cpp).
+The full example is [examples/quick_start.cpp](examples/quick_start.cpp). Writing `reflect()` by hand is optional —
+the [code generator](#code-generator-reflgen) produces descriptions from attributes.
 
-## 타입 서술
+## Describing types
 
-서술의 단일 창구는 `reflgen::schema_of<T>` 이고, 서술을 공급하는 길은 둘이다.
+`reflgen::schema_of<T>` is the single entry point for descriptions, and there are two ways to supply one.
 
 ```cpp
-// ① 클래스 안 레시피 — private 필드도 된다(friend struct reflgen::access; 를 두면 reflect() 도 private 가능)
+// (1) In-class recipe — private fields work too (with friend struct reflgen::access; reflect() may be private)
 class player
 {
     friend struct reflgen::access;
@@ -50,16 +76,16 @@ class player
     static consteval auto reflect()
     {
         return reflgen::schema<player>(
-            reflgen::base<entity>,                                     // 직계 부모(다중 상속 가능)
-            reflgen::field<&player::hp_>.named("hp")                   // 이름 바꾸기
-                .with(reflgen::range(0, 100), tooltip("health")),      // 속성 여러 개
+            reflgen::base<entity>,                                     // direct base (multiple inheritance works)
+            reflgen::field<&player::hp_>.named("hp")                   // rename
+                .with(reflgen::range(0, 100), tooltip("health")),      // several attributes
             reflgen::method<&player::fire>.parameters("shots"))
-            .named("game.player")                                      // 등록 키·다형 태그
-            .with(reflgen::display_name("Player"));                    // 타입 속성
+            .named("game.player")                                      // registry key and polymorphic tag
+            .with(reflgen::display_name("Player"));                    // type attribute
     }
 };
 
-// ② 외부 특수화 — 손댈 수 없는 타입, 그리고 코드 생성기의 출력이 들어갈 자리
+// (2) External specialization — for types you cannot edit, and where the code generator's output goes
 template<>
 struct reflgen::reflection<vendor::config>
 {
@@ -68,14 +94,15 @@ struct reflgen::reflection<vendor::config>
 };
 ```
 
-레시피는 **로컬**이다 — 자기 필드와 직계 부모만 적는다. 부모 필드까지 합친 순회는 질의가 계산한다
-(`reflgen::for_each_field<T>(f)`, `reflgen::for_each_field(object, f)`, 부모 우선).
+A recipe is **local** — it lists its own fields and direct bases only. Queries compute the walk that includes the
+bases' fields (`reflgen::for_each_field<T>(f)`, `reflgen::for_each_field(object, f)`, bases first).
 
-### 속성
+### Attributes
 
-속성은 **생성자 호출식**이다. 사용자 정의 속성도 `constexpr` 생성자가 있는 구조체 하나면 된다. 문자열은
-`reflgen::static_string` 에 담는다 — `std::string_view` 처럼 읽히면서 구조적 타입이라 C++26 주석 값이 될 수 있다
-(아래 [C++26 이행](#c26-이행)). `std::string_view` 로 담아도 C++20/23 에서는 동작한다.
+An attribute is a **constructor call expression**. A user-defined attribute is just a struct with a `constexpr`
+constructor. Store strings in `reflgen::static_string` — it reads like `std::string_view` but is a structural type,
+so it can become a C++26 annotation value ([C++26 migration](#c26-migration)). Storing a `std::string_view` works in
+C++20/23.
 
 ```cpp
 struct tooltip
@@ -85,39 +112,42 @@ struct tooltip
 };
 ```
 
-| 기본 속성 | 뜻 |
+| Built-in attribute | Meaning |
 |---|---|
-| `display_name("…")`, `description("…")` | 편집기 표시용 |
-| `category("…")` | 편집기가 묶어 보여 줄 분류(인스펙터의 접는 구역 등) |
-| `range(min, max)` | 값 구간(검증기·편집기용, 직렬화는 검사하지 않음) |
-| `serialized_name("…")` | 직렬화 키를 멤버 이름과 다르게 |
-| `transient()` | 직렬화 제외 |
-| `required()` | 역직렬화 입력에 반드시 있어야 함 |
-| `hidden()`, `readonly()` | 편집기 힌트 |
+| `display_name("…")`, `description("…")` | Shown by editors |
+| `category("…")` | A group an editor shows together (a collapsible inspector section, for example) |
+| `range(min, max)` | Value range (for validators and editors; serialization does not check it) |
+| `serialized_name("…")` | A serialization key different from the member name |
+| `transient()` | Not serialized |
+| `required()` | Must be present in deserialization input |
+| `hidden()`, `readonly()` | Editor hints |
 
-문자열 속성의 `.value` 는 `reflgen::static_string` 이다 — `std::string_view` 로 암시적으로 바뀌고, 비교와
-`data()`·`size()`·`begin()`·`end()` 가 된다.
+The `.value` of a string attribute is a `reflgen::static_string` — it converts implicitly to `std::string_view` and
+supports comparison, `data()`, `size()`, `begin()` and `end()`.
 
-조회: 컴파일 타임은 `field.has_attribute<A>()` / `field.attribute<A>()`, 런타임은
+Queries: at compile time `field.has_attribute<A>()` / `field.attribute<A>()`, at run time
 `field_info::attributes().find<A>()`.
 
-이 표기가 그대로 C++26 으로 이어진다 — 코드 생성기는 C++20/23 에서 `[[reflgen::range(0, 1)]]` 의 인자 토큰을
-옮겨 위 식을 만들고, C++26 에서는 같은 식이 주석(annotation) `[[=reflgen::range(0, 1)]]` 의 값이 된다.
+This notation carries over to C++26 unchanged — in C++20/23 the code generator copies the argument tokens of
+`[[reflgen::range(0, 1)]]` to build the expression above, and in C++26 the same expression becomes the value of the
+annotation `[[=reflgen::range(0, 1)]]`.
 
-### 열거형
+### Enumerations
 
-`reflgen::enum_entries<E>`, `enum_name(e)`, `enum_cast<E>("name")`. 기본은 값 범위 [-128, 128] 스캔이며
-`enum_range<E>` 특수화로 넓히거나, `reflection<E>` 로 정확한 표를 준다(비트 플래그 등).
+`reflgen::enum_entries<E>`, `enum_name(e)`, `enum_cast<E>("name")`. By default the values in [-128, 128] are
+scanned; widen that by specializing `enum_range<E>`, or give the exact table with `reflection<E>` (bit flags, for
+example).
 
-## 코드 생성기 (reflgen)
+## Code generator (reflgen)
 
-손으로 `reflect()` 를 쓰는 대신 attribute 만 달면, 빌드 때 생성기가 서술을 만든다. 매크로는 없다 —
-`[[…]]` 는 표준 attribute 문법이고, 컴파일러는 모르는 attribute 를 무시한다(경고는 `reflgen_generate()` 가 끈다).
+Instead of writing `reflect()` by hand, put attributes on declarations and the generator produces the descriptions
+at build time. There are no macros — `[[…]]` is standard attribute syntax, and compilers ignore attributes they do
+not know (`reflgen_generate()` turns that warning off).
 
-**사용자 코드에는 흔적이 남지 않는다.** header 는 생성 파일을 include 하지 않고(`.generated.h` 도,
-`GENERATED_BODY()` 도 없다), 프로젝트에 등록할 것도 없다. 생성물은 `.obj`·`.pch` 처럼 빌드 중간 산출물
-디렉터리에만 생기고, 빌드가 그것을 묶은 주입 header(`reflgen_<module>.h`)를 모든 번역 단위에 강제
-include(`/FI`, `-include`)한다.
+**Your code carries no trace of it.** Headers do not include generated files (no `.generated.h`, no
+`GENERATED_BODY()`), and nothing has to be registered in the project. Generated files live only in the build's
+intermediate directory, like `.obj` and `.pch`, and the build force-includes (`/FI`, `-include`) the injection header
+that gathers them (`reflgen_<module>.h`) into every translation unit.
 
 ```cpp
 // player.h
@@ -126,24 +156,24 @@ include(`/FI`, `-include`)한다.
 
 namespace game
 {
-    enum class [[reflgen::reflect]] element { fire, water, wind = 1 << 10 };     // 스캔 범위 밖 값도 정확한 표
+    enum class [[reflgen::reflect]] element { fire, water, wind = 1 << 10 };     // exact table, even outside the scan range
 
-    class [[reflgen::reflect("game.player")]] player : public entity               // 인자 = 등록 키·다형 태그
+    class [[reflgen::reflect("game.player")]] player : public entity               // argument = registry key and polymorphic tag
     {
-        friend struct reflgen::access;                                             // private 멤버를 반영하려면
+        friend struct reflgen::access;                                             // needed to reflect private members
 
       public:
         static constexpr int max_level = 99;
         static constexpr float max_hp = 999.0f;
 
-        [[reflgen::range(1, max_level)]] int level = 1;                            // 클래스 멤버 이름을
-        [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]] float hp = 100.0f;   // 한정 없이 그대로
-        [[reflgen::ignore]] int cache = 0;                                         // 반영에서 제외
-        [[reflgen::transient]] int frame = 0;                                      // 반영하되 저장하지 않음
-        [[reflgen::reflect]] void level_up(int amount);                            // 메서드는 표시한 것만
+        [[reflgen::range(1, max_level)]] int level = 1;                            // class member names are used
+        [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]] float hp = 100.0f;   // unqualified, as written
+        [[reflgen::ignore]] int cache = 0;                                         // left out of reflection
+        [[reflgen::transient]] int frame = 0;                                      // reflected but not saved
+        [[reflgen::reflect]] void level_up(int amount);                            // only marked methods
 
       private:
-        int secret_ = 7;                                                           // 표시가 없어도 반영된다
+        int secret_ = 7;                                                           // reflected without a mark
     };
 } // namespace game
 ```
@@ -151,72 +181,87 @@ namespace game
 ```cmake
 reflgen_generate(my_game
     HEADERS include/game/player.h include/game/item.h
-    MODULE game                       # 등록 함수: reflgen::generated::register_game()
-    ATTRIBUTE_SCOPES game             # reflgen 외에 옮길 attribute 이름공간
-    ATTRIBUTE_HEADERS include/game/attributes.h) # 그 attribute 타입(game::tooltip)의 정의
+    MODULE game                       # registration function: reflgen::generated::register_game()
+    ATTRIBUTE_SCOPES game             # attribute namespaces to carry over besides reflgen
+    ATTRIBUTE_HEADERS include/game/attributes.h) # where those attribute types (game::tooltip) are defined
 ```
 
-- **서술만 쓰는 코드베이스**: 등록 함수(`reflgen_<module>.cpp`)는 반영 타입마다 런타임 서술자(필드 표, 쓰기·읽기
-  썽크)를 만든다. 자기 직렬화·등록을 가진 엔진처럼 서술(`schema_of`·`for_each_field`)만 쓰면
-  `NO_REGISTRATION`(CMake)·`ReflgenRegistration=false`(MSBuild)로 등록 함수를 컴파일하지 않는다 — 쓰지 않을
-  서술자의 컴파일 시간을 치르지 않는다. 생성과 주입은 그대로다.
+- **Codebases that only use descriptions**: the registration function (`reflgen_<module>.cpp`) builds a runtime
+  descriptor (field table, write and read thunks) for each reflected type. An engine with its own serialization and
+  registry that only uses descriptions (`schema_of`, `for_each_field`) can skip compiling the registration function
+  with `NO_REGISTRATION` (CMake) or `ReflgenRegistration=false` (MSBuild) — it does not pay the compile time of
+  descriptors it will not use. Generation and injection stay the same.
 
-- **등록 함수가 보아야 할 header**: 등록소의 서술자는 등록 함수의 번역 단위에서 만들어지고, 그 번역 단위는 모듈의
-  반영 header 만 본다. 다른 번역 단위와 같은 서술이 되도록 모자라는 것을 `REGISTRATION_HEADERS`(CMake)·
-  `ReflgenRegistrationHeaders`(MSBuild)로 넘긴다 — 등록 함수가 맨 앞에서 include 한다.
-  - 반영 타입의 header 가 include 하지 않는 곳에 둔 `reflgen::serializer` 특수화. 넘기지 않으면 그 필드는 등록소의
-    서술자에서 직렬화기 없이 남는다.
-  - 반영 타입의 header 가 전방 선언만 하는 서술된 필드 타입(`std::shared_ptr<Material>` 등)의 header. 넘기지
-    않으면 컴파일이 `reflgen: 'Material' is described in …/Material.h but is an incomplete type where its
-    description is used …` 로 멈춘다 — 서술된 타입을 그것이 불완전한 번역 단위에서 쓰면 어디서든 같은 메시지가
-    나온다(생성된 `reflection<T>` 의 `static_assert`).
+- **Headers the registration function must see**: registry descriptors are built in the registration function's
+  translation unit, and that translation unit sees only the module's reflected headers. Hand it what it is missing,
+  so the descriptions match the other translation units, with `REGISTRATION_HEADERS` (CMake) or
+  `ReflgenRegistrationHeaders` (MSBuild) — the registration function includes them first.
+  - `reflgen::serializer` specializations placed where the reflected type's header does not include them. Without
+    them, those fields stay in the registry descriptor without a serializer.
+  - The headers of described field types that the reflected type's header only forward-declares
+    (`std::shared_ptr<Material>` and the like). Without them, compilation stops with `reflgen: 'Material' is
+    described in …/Material.h but is an incomplete type where its description is used …` — the same message appears
+    wherever a described type is used in a translation unit where it is incomplete (a `static_assert` in the
+    generated `reflection<T>`).
 
-  다른 모듈의 서술(주입 header)은 스스로 본다 — CMake 는 링크한 target 의 강제 include 로, MSBuild 는 참조하는
-  reflgen 프로젝트의 주입 header 를 모은 `reflgen_<module>.references.h` 로. 반영 클래스가 없는 모듈의 등록 함수는
-  등록 header 를 include 하지 않는다(모든 프로젝트에 같은 설정을 주어도 된다).
+  Descriptions from other modules (their injection headers) are seen automatically — in CMake through the forced
+  includes of linked targets, in MSBuild through `reflgen_<module>.references.h`, which gathers the injection headers
+  of the referenced reflgen projects. The registration function of a module without reflected classes does not
+  include the registration headers (the same setting can be given to every project).
 
-- **반영 범위**: `[[reflgen::reflect]]` 클래스의 non-static data member 전부(C++26 native reflection 과 같은 결과).
-  `[[reflgen::ignore]]` 로 뺀다. 메서드는 `[[reflgen::reflect]]` 를 단 것만. `public` 부모 가운데 반영된 것은
-  `base<>` 로 이어지고, 반영하지 않는 부모(CRTP 중간층, 서드파티 베이스)는 건너 그 위의 가장 가까운 반영된 조상으로
-  이어진다.
-- **attribute 옮기기**: `reflgen::` 과 `ATTRIBUTE_SCOPES` 의 이름공간만 스키마로 간다. 인자 없는
-  attribute(`[[reflgen::transient]]`)는 표지 타입으로 보고 `{}` 를 붙인다. 선언 맨 앞의 attribute 는 그 선언의
-  모든 멤버에, 이름 뒤의 attribute(`int x [[reflgen::ignore]], y;`)는 그 멤버에만 붙는다.
-- **인자의 이름**: 클래스 안에서 쓴 것처럼 풀린다. 생성 코드는 클래스 밖에 있으므로, 자기 클래스(부모 포함)의
-  멤버 이름은 생성기가 `T::max_hp` 처럼 한정한다. 이름공간 상수 같은 그 밖의 이름도 쓸 수 있지만, 그러면 그
-  header 의 생성물이 원본 header 를 include 한다(아래 **비용**). 인자 안의 주석은 옮기지 않는다.
-- **오류 위치**: attribute 인자에 오타가 있으면 컴파일 오류가 생성 파일이 아니라 원본 header 의 그 줄을
-  가리킨다(생성 코드가 `#line` 으로 원본을 가리킨다).
-- **등록**: 다형 포인터로 읽고 쓸 타입은 시작할 때 `reflgen::generated::register_<module>()` 를 한 번 부른다.
-  선언은 주입 header 에 있으므로 include 할 것이 없다.
-- **빌드 연동**: 생성물은 구성(config)마다 `<OUTPUT_DIRECTORY>/<config>/` 에 따로 둔다. HEADERS 가 include 하는
-  파일이 바뀌어도 다시 생성한다(depfile). 파싱 표준은 `CXX_STANDARD` 와 `cxx_std_NN` compile feature 중 높은
-  것이다. 주입(강제 include)은 target 과 그것을 링크하는 target 에 `PUBLIC`·`BUILD_INTERFACE` 로 간다 — header 가
-  생성 파일을 include 하지 않으므로 reflection 은 강제 include 로만 소비자에게 닿는다. 설치(install)할
-  라이브러리의 소비자에게는 전해지지 않는다. CMake 3.25 이상.
-- **비용(가벼운 주입)**: 주입 header 는 반영하는 타입을 **전방 선언**만 하고, 서술은 타입을 쓰는 자리(타입이
-  완전한 곳)에서 실체화된다 — 원본 header 를 모든 번역 단위에 끌고 다니지 않으므로 header 하나를 고쳐도 그것을
-  include 하는 번역 단위만 다시 컴파일되고, 원본 header 의 매크로(`windows.h` 등)가 새지 않는다. 전방 선언으로 설
-  수 없는 header — 클래스 안의 타입, 이름공간 상수를 쓰는 인자, 템플릿 특수화 부모, 기반 타입을 적지 않은 비스코프드
-  열거형, `ATTRIBUTE_HEADERS` 없이 쓴 사용자 attribute — 는 생성물이 원본 header 를 include 하고 그 까닭을 주석에
-  적는다. 등록 함수 정의(`reflgen_<module>.cpp`)만 원본 header 를 모두 include 한다.
-- **C 소스**: 같은 target 의 C 번역 단위(서드파티 C 코드)에는 주입하지 않는다.
-- **요구 사항**: libclang. Visual Studio 는 동봉본(`VC/Tools/Llvm`)을 자동으로 찾는다. 그 밖은
-  `REFLGEN_LIBCLANG_DIR` 로 준다. C API header 는 `third_party/clang-c`(LLVM 22.1.3, Apache-2.0 WITH LLVM-exception).
-  libclang 과 같은 판의 clang 내장 header(`immintrin.h`·`stddef.h` 등)를 생성기 옆 `clang/include` 에 함께 둔다 —
-  생성기가 `-resource-dir` 로 주고 빌드 시스템이 준 MSVC·Windows SDK include 보다 먼저 찾는다(clang-cl 의 순서).
-- **MSVC 로만 빌드하는 코드**: 생성기는 clang 으로 읽으므로 MSVC 에서만 되는 코드(`__FUNCSIG__` 표기를 못 박은
-  `static_assert`, clang 이 상수 식으로 받지 않는 enum 캐스트 등)에서 clang 오류가 난다. 반영 선언 밖의 오류는 넘기고
-  수만 알린다(`note RG0101`) — 생성 코드는 반영 선언의 이름과 attribute 만 옮기고 컴파일은 사용자의 컴파일러가 한다.
-  반영 선언 안의 오류(RG0100)나, 밖의 오류(부모 클래스 등) 때문에 clang 이 무효로 본 반영 선언(RG0102)은 실패다 —
-  clang 이 그 선언을 잘못 읽었을 수 있다. 실패하면 넘겼던 오류도 위치와 함께 모두 알린다. MSVC 에 없는 식 중첩
-  한도(`-fbracket-depth`)는 libclang 판마다 기본값이 달라(20 은 256, 22 는 2048) 판과 무관하게 4096 으로 준다.
+- **What is reflected**: every non-static data member of a `[[reflgen::reflect]]` class (the same result as C++26
+  native reflection). Leave one out with `[[reflgen::ignore]]`. Methods only when marked `[[reflgen::reflect]]`.
+  Reflected `public` bases become `base<>`; bases that are not reflected (a CRTP middle layer, a third-party base) are
+  skipped over to the nearest reflected ancestor above them.
+- **Carrying attributes over**: only the `reflgen::` namespace and the `ATTRIBUTE_SCOPES` namespaces go into the
+  schema. An attribute without arguments (`[[reflgen::transient]]`) is treated as a tag type and gets `{}`. An
+  attribute at the front of a declaration applies to every member it declares; one after a name
+  (`int x [[reflgen::ignore]], y;`) applies to that member only.
+- **Names in arguments** resolve as if written inside the class. The generated code lives outside the class, so the
+  generator qualifies members of the class (and its bases) as in `T::max_hp`. Other names, such as namespace
+  constants, work too, but then that header's generated file includes the source header (see **Cost** below).
+  Comments inside arguments are not carried over.
+- **Error locations**: a typo in an attribute argument is reported at that line of the source header, not in the
+  generated file (the generated code points back with `#line`).
+- **Registration**: types that are read and written through polymorphic pointers need
+  `reflgen::generated::register_<module>()` called once at startup. It is declared in the injection header, so there
+  is nothing to include.
+- **Build integration**: generated files are kept per configuration in `<OUTPUT_DIRECTORY>/<config>/`. Generation
+  reruns when a file included by `HEADERS` changes (depfile). The parsing standard is the higher of `CXX_STANDARD` and
+  the `cxx_std_NN` compile features. The injection (forced include) goes to the target and to targets that link it,
+  as `PUBLIC` `BUILD_INTERFACE` — headers do not include generated files, so reflection reaches consumers only through
+  the forced include. It does not reach consumers of an installed library. CMake 3.25 or later.
+- **Cost (light injection)**: the injection header only **forward-declares** the reflected types, and a description
+  is instantiated where the type is used (where it is complete). Source headers are not dragged into every
+  translation unit, so editing one header recompiles only the translation units that include it, and macros from
+  source headers (`windows.h` and the like) do not leak. Headers that cannot be handled with forward declarations —
+  types nested in classes, arguments that use namespace constants, bases that are template specializations, unscoped
+  enumerations without a fixed underlying type, user attributes used without `ATTRIBUTE_HEADERS` — make the generated
+  file include the source header, and a comment says why. Only the registration function (`reflgen_<module>.cpp`)
+  includes all source headers.
+- **C sources**: C translation units in the same target (third-party C code) do not get the injection.
+- **Requirements**: libclang. With Visual Studio it finds the bundled copy (`VC/Tools/Llvm`) automatically; otherwise
+  set `REFLGEN_LIBCLANG_DIR`. The C API headers are in `third_party/clang-c` (LLVM 22.1.3, Apache-2.0 WITH
+  LLVM-exception). The clang builtin headers of the same version as libclang (`immintrin.h`, `stddef.h` and so on) sit
+  next to the generator in `clang/include` — the generator passes them with `-resource-dir`, and they are found
+  before the MSVC and Windows SDK includes the build system gives (the clang-cl order).
+- **Code that only builds with MSVC**: the generator reads code with clang, so MSVC-only code (a `static_assert` that
+  pins `__FUNCSIG__` text, an enum cast clang does not accept as a constant expression) produces clang errors. Errors
+  outside reflected declarations are skipped and only counted (`note RG0101`) — the generated code copies only the
+  names and attributes of reflected declarations, and your own compiler does the compiling. An error inside a
+  reflected declaration (RG0100), or a reflected declaration clang considers invalid because of an error outside it
+  (a base class, for example — RG0102), is a failure — clang may have misread that declaration. On failure the skipped
+  errors are reported too, with their locations. The expression nesting limit (`-fbracket-depth`), which MSVC does not
+  have and whose default differs between libclang versions (256 in 20, 2048 in 22), is set to 4096 regardless of the
+  version.
 
-진단은 MSVC 형식(`file(line,col): error RG0002: …`)이라 VS Error List 에서 원본으로 바로 간다. 생성기는 편집기
-자동완성에 쓸 attribute 카탈로그(`reflgen_<module>.attributes.tsv` — attribute 이름공간의 타입, 생성자 시그니처,
-선언 앞 주석)도 함께 내놓는다. `[[reflgen::reflect]]` 를 단 데이터 타입은 빠진다. `ATTRIBUTE_SCOPES` 의 이름공간에
-attribute 가 아닌 타입이 섞여 있으면 attribute 타입에 `[[reflgen::attribute]]` 를 단다 — 하나라도 달면 그 이름공간은
-단 것만 내보낸다.
+Diagnostics use the MSVC format (`file(line,col): error RG0002: …`), so the VS Error List jumps straight to the
+source.
+The generator also writes an attribute catalog for editor completion (`reflgen_<module>.attributes.tsv` — the types
+in the attribute namespaces, their constructor signatures and the comments in front of them). Data types marked
+`[[reflgen::reflect]]` are left out. If an `ATTRIBUTE_SCOPES` namespace mixes in types that are not attributes, mark
+the attribute types `[[reflgen::attribute]]` — once any type is marked, only marked types are listed for that
+namespace.
 
 ```cpp
 namespace editor
@@ -230,151 +275,159 @@ namespace editor
 } // namespace editor
 ```
 
-| 코드 | 뜻 |
+| Code | Meaning |
 |---|---|
-| RG0001 | 입력·옵션 오류(없는 header, 같은 header 두 번 등) |
-| RG0002 | 반영할 private 멤버가 있는데 `friend struct reflgen::access;` 가 없다 |
-| RG0004 | 반영할 수 없는 멤버(bit-field, 참조, 익명 union, static 멤버, 생성자·소멸자) |
-| RG0005 | 지원하지 않는 선언(클래스·멤버 함수 template, union, 익명 이름공간) |
-| RG0006 | 오버로드된 메서드 |
-| RG0007 | 생성 파일 이름 충돌(같은 이름의 header 둘) |
-| RG0100 | Clang 이 보고한 컴파일 오류 — 반영 선언 안이거나 파싱이 멈춘 것 |
-| RG0101 | (알림) 반영 선언 밖이라 넘긴 Clang 오류 |
-| RG0102 | 밖의 오류(부모 클래스·멤버 타입) 때문에 Clang 이 무효로 본 반영 선언 |
+| RG0001 | Input or option error (a missing header, the same header twice, …) |
+| RG0002 | A private member is reflected but `friend struct reflgen::access;` is missing |
+| RG0004 | A member that cannot be reflected (bit-field, reference, anonymous union, static member, constructor or destructor) |
+| RG0005 | An unsupported declaration (class or member function template, union, anonymous namespace) |
+| RG0006 | An overloaded method |
+| RG0007 | Generated file name collision (two headers with the same name) |
+| RG0100 | A compile error reported by clang — inside a reflected declaration, or parsing stopped |
+| RG0101 | (note) A clang error skipped because it is outside reflected declarations |
+| RG0102 | A reflected declaration clang considers invalid because of an error outside it (base class, member type) |
 
-### MSBuild(.vcxproj) 연동
+### MSBuild (.vcxproj) integration
 
-프로젝트 끝(`Microsoft.Cpp.targets` 다음)이나 `Directory.Build.targets` 에서 가져온다. 그것뿐이다 — header 를
-등록하거나 표시할 것은 없다.
+Import it at the end of the project (after `Microsoft.Cpp.targets`) or from `Directory.Build.targets`. That is all —
+no header has to be registered or marked.
 
 ```xml
 <Import Project="path\to\reflgen\msbuild\reflgen.targets" />
 <PropertyGroup>
-  <ReflgenExecutable>path\to\reflgen.exe</ReflgenExecutable>  <!-- 설치 배치(<prefix>\bin)면 생략 -->
+  <ReflgenExecutable>path\to\reflgen.exe</ReflgenExecutable>  <!-- omit with an install layout (<prefix>\bin) -->
   <ReflgenAttributeScopes>editor</ReflgenAttributeScopes>
   <ReflgenAttributeHeaders>include\editor\attributes.h</ReflgenAttributeHeaders>
 </PropertyGroup>
 ```
 
-- **찾기**: 프로젝트의 header(`ClInclude`) 전부가 후보이고, 생성기가 `[[reflgen::reflect]]` 가 있는 것만 파싱한다
-  (`--discover`). 반영을 지운 header 의 옛 생성 파일은 지운다.
-- **주입**: 컴파일 전에 `ReflgenGenerate` target 이 `$(IntDir)reflgen\`(구성마다 따로)에 생성하고, 모든
-  `ClCompile` 에 `reflgen_<module>.h` 를 강제 include 한다. 미리 컴파일된 header 를 쓰는(`/Yu`·`/Yc`) 파일은 pch
-  header 를 먼저 강제 include 한다(`/Yu` 는 pch 앞에 온 것을 건너뛴다). IntelliSense(design-time build)도 같은
-  강제 include 를 본다. 생성된 등록 함수(`reflgen_<module>.cpp`)도 컴파일 목록에 들어간다(미리 컴파일된 header 없이).
-- 파싱 설정은 프로젝트의 ClCompile 설정 그대로다 — include 경로, 전처리 정의, `LanguageStandard`, 시스템 include.
-- 프로젝트의 header, 그것들이 include 하는 파일(지난 실행이 읽은 목록), 생성기, 설정 중 하나가 바뀔 때만 다시 돈다.
-- **프로젝트 사이**: `ProjectReference` 로 참조하는 reflgen 프로젝트의 주입 header 도 강제 include 한다 — 엔진
-  라이브러리의 타입을 게임 실행 파일에서 직렬화할 수 있다. 참조하는 쪽의 것이 먼저, 자기 것이 마지막이라 다른
-  프로젝트의 타입을 부모로 둔 타입도 컴파일된다. 간접 참조까지 따라가고 겹치면 한 번만 넣는다. 참조하는 쪽도
-  `reflgen.targets` 를 가져와야 한다(reflgen 을 쓰지 않는 참조는 건너뛴다).
-- **참조 없이 header 만 여는 프로젝트**: 다른 프로젝트의 header 를 include 하는 번역 단위는 그 프로젝트의 주입도
-  받아야 한다 — 받지 않으면 같은 타입이 번역 단위마다 다르게 보인다(`reflectable<T>` 가 한쪽에서만 참이다).
-  `ProjectReference` 없이 include 경로로만 잇는 라이브러리, 서로의 header 를 include 하는 라이브러리(순환)는
-  `ReflgenReference` 로 잇는다. 빌드 순서를 걸지 않고 그 프로젝트의 생성만 먼저 돌린 뒤 그 프로젝트 자신의 주입
-  header 를 받는다(전이하지 않는다). 구성은 `ProjectReference` 와 같은 규칙으로 정하므로 솔루션 병렬 빌드에서도 생성이
-  프로젝트마다 한 번만 돈다. 링크는 따로 잇는다.
+- **Discovery**: every header of the project (`ClInclude`) is a candidate, and the generator parses only those with
+  `[[reflgen::reflect]]` (`--discover`). Old generated files of headers that dropped reflection are deleted.
+- **Injection**: before compiling, the `ReflgenGenerate` target generates into `$(IntDir)reflgen\` (per configuration)
+  and force-includes `reflgen_<module>.h` into every `ClCompile`. Files that use a precompiled header (`/Yu`, `/Yc`)
+  force-include the pch header first (`/Yu` skips whatever comes before the pch). IntelliSense (design-time builds)
+  sees the same forced include. The generated registration function (`reflgen_<module>.cpp`) is added to the compile
+  list as well (without a precompiled header).
+- Parsing uses the project's ClCompile settings as they are — include paths, preprocessor definitions,
+  `LanguageStandard`, system includes.
+- It reruns only when a project header, a file those headers include (the list read by the previous run), the
+  generator, or a setting changes.
+- **Across projects**: the injection headers of reflgen projects referenced with `ProjectReference` are
+  force-included too — a game executable can serialize types from an engine library. Referenced projects come first
+  and the project's own comes last, so a type whose base lives in another project compiles. Indirect references are
+  followed and duplicates are included once. The referenced project must import `reflgen.targets` as well
+  (references that do not use reflgen are skipped).
+- **Projects that include headers without a reference**: a translation unit that includes another project's headers
+  must receive that project's injection too — otherwise the same type looks different in different translation units
+  (`reflectable<T>` is true on one side only). Libraries tied only by include paths, without `ProjectReference`, and
+  libraries that include each other's headers (cycles) are tied with `ReflgenReference`. It does not impose a build
+  order: it runs that project's generation first and then receives that project's own injection header (it is not
+  transitive). The configuration is chosen with the same rules as `ProjectReference`, so generation runs once per
+  project in parallel solution builds. Linking is set up separately.
 
   ```xml
   <ItemGroup>
     <ReflgenReference Include="..\Render\Render.vcxproj" />
   </ItemGroup>
   ```
-- `C5030`(모르는 attribute) 경고를 끄고, ClangCL 도구 집합에는 `-Wno-unknown-attributes` 를 준다.
+- Warning `C5030` (unknown attribute) is turned off, and the ClangCL toolset gets `-Wno-unknown-attributes`.
 
-| 속성 | 기본값 |
+| Property | Default |
 |---|---|
-| `ReflgenExecutable` | 설치 배치의 `<prefix>\bin\reflgen.exe` |
-| `ReflgenIncludeDirectory` | 저장소 또는 설치 배치의 `include` |
-| `ReflgenModule` | 프로젝트 이름(식별자로 바꿈) — `reflgen::generated::register_<module>()` |
-| `ReflgenAttributeScopes` | 없음(`reflgen` 만) |
-| `ReflgenAttributeHeaders` | 없음 — 사용자 attribute 타입을 정의한 header. 주입 header 가 include 한다 |
+| `ReflgenExecutable` | `<prefix>\bin\reflgen.exe` of an install layout |
+| `ReflgenIncludeDirectory` | `include` of the repository or the install layout |
+| `ReflgenModule` | The project name (made an identifier) — `reflgen::generated::register_<module>()` |
+| `ReflgenAttributeScopes` | None (`reflgen` only) |
+| `ReflgenAttributeHeaders` | None — headers that define user attribute types. The injection header includes them |
 | `ReflgenOutputDirectory` | `$(IntDir)reflgen\` |
-| `ReflgenRegistration` | `true` — `false` 면 등록 함수를 컴파일하지 않는다(서술만 쓰는 코드베이스, 아래) |
-| `ReflgenRegistrationHeaders` | 등록 함수가 서술자를 만들기 전에 include 하는 header(`;` 로 가른다) — 사용자 serializer 특수화(아래) |
+| `ReflgenRegistration` | `true` — `false` skips compiling the registration function (codebases that only use descriptions, above) |
+| `ReflgenRegistrationHeaders` | Headers the registration function includes before building descriptors (`;`-separated) — user serializer specializations and the like (above) |
 
-### Visual Studio 확장
+### Visual Studio extension
 
-VS 2022(17.x)·2026(18.x), x64. `vs/` 를 빌드해 나온 `Reflgen.VisualStudio.vsix` 를 실행해 설치한다.
+VS 2022 (17.x) and 2026 (18.x), x64. Run `Reflgen.VisualStudio.vsix` (a release asset, or build `vs/`) to install it.
 
 ```powershell
 & "<VS>\MSBuild\Current\Bin\amd64\MSBuild.exe" vs\src\Reflgen.VisualStudio\Reflgen.VisualStudio.csproj /restore /p:Configuration=Release
 dotnet test vs\tests\Reflgen.VisualStudio.Core.Tests
 ```
 
-`reflgen.targets` 를 가져온 .vcxproj 에서 쓴다. 생성 결과는 header 에도 프로젝트 파일에도 들어가지 않는다.
+It works in .vcxproj projects that import `reflgen.targets`. Generated output goes into neither headers nor project
+files.
 
-- **friend 자동 삽입** — 공개되지 않은 멤버(비정적 데이터 멤버, `[[reflgen::reflect]]` 메서드, attribute 인자에서
-  쓰는 static 멤버)를 반영하는 클래스에 `friend struct reflgen::access;` 가 없으면, 저장할 때 본문 맨 앞에 멤버
-  들여쓰기로 넣는다(저장되는 내용에 함께 들어간다). 생성 코드는 클래스 밖에 있어 이것이 필요하다.
-  header 에 더하는 것은 이 한 줄뿐이다.
+- **Inserting the friend** — when a class reflects members that are not public (non-static data members,
+  `[[reflgen::reflect]]` methods, static members used in attribute arguments) and lacks
+  `friend struct reflgen::access;`, it is inserted at the top of the class body with member indentation on save (it
+  becomes part of what is saved). The generated code lives outside the class, so it needs this. That line is the only
+  thing added to headers.
+- **Generate on save** — saving a header that has (or dropped) `[[reflgen::reflect]]` runs only that project's
+  `ReflgenGenerate` in a separate MSBuild process and puts the RG diagnostics in the Error List. It is skipped while a
+  VS build is running (that build generates). Progress goes to the "reflgen" Output pane (selected once, on the
+  first log after VS starts).
+- **Generate on first open** — a project that has never generated does so when opened. Otherwise IntelliSense sees
+  an empty injection header and underlines code that uses reflection.
+- **IntelliSense refresh** — IntelliSense does not notice changes to forced-include files outside the project
+  (`$(IntDir)`). When generated code changes, the extension calls "Rescan Solution" (Project > Rescan Solution). This
+  can be heavy in large solutions, so it can be turned off.
+- **Attribute completion** — after `[[` or `,` it suggests attribute namespaces, and after `reflgen::` it suggests
+  attributes with their constructor signatures and descriptions. The list comes from the generator's catalog (see
+  `[[reflgen::attribute]]` above); before the first generation only the built-in attributes appear.
+- Settings: Tools > Options > reflgen > General (friend insertion, generation, IntelliSense refresh, MSBuild.exe path).
 
-- **저장 시 생성** — `[[reflgen::reflect]]` 가 있는(또는 지운) header 를 저장하면 그 프로젝트의 `ReflgenGenerate`
-  만 별도 MSBuild 프로세스로 돌려 RG 진단을 Error List 에 올린다. VS 빌드가 도는 중이면 건너뛴다(그 빌드가
-  생성한다). 과정은 Output 창 "reflgen"(VS 를 띄운 뒤 첫 로그 때 한 번 그 창이 선택된다).
-- **처음 열 때 생성** — 한 번도 생성하지 않은 프로젝트는 열 때 생성한다. 그러지 않으면 IntelliSense 가 빈 주입
-  header 를 보고 reflection 을 쓰는 코드에 빨간 줄을 긋는다.
-- **IntelliSense 새로 고침** — IntelliSense 는 프로젝트 밖(`$(IntDir)`)의 강제 include 파일이 바뀐 것을 스스로
-  알아채지 못한다. 생성 코드가 바뀌면 확장이 "검색 데이터베이스 새로 고침"(Project > Rescan Solution)을 부른다.
-  큰 솔루션에서는 이것이 무거울 수 있어 끌 수 있다.
-- **attribute 자동완성** — `[[` 나 `,` 뒤에서 attribute 이름공간을, `reflgen::` 뒤에서 attribute 와 생성자
-  시그니처·설명을 제안한다. 목록은 생성기의 카탈로그에서 오며(위 `[[reflgen::attribute]]` 참고), 아직 생성하지
-  않았으면 기본 attribute 만 나온다.
-- 설정: Tools > Options > reflgen > General(friend 삽입, 생성, IntelliSense 새로 고침 켜고 끄기, MSBuild.exe 경로).
-
-| 코드 | 뜻 |
+| Code | Meaning |
 |---|---|
-| RG0901 | header 가 반영을 선언했지만 프로젝트가 `reflgen.targets` 를 가져오지 않았다 |
-| RG0902 | 생성용 MSBuild 가 형식을 알아볼 수 없는 이유로 실패했다(Output 창에 전문) |
+| RG0901 | A header declares reflection but the project does not import `reflgen.targets` |
+| RG0902 | The MSBuild run for generation failed in a way that could not be parsed (full text in the Output pane) |
 
-## 직렬화
+## Serialization
 
 ```cpp
-reflgen::serialize(writer, value);              // 포맷은 writer 구현이 정한다
-reflgen::deserialize(reader, value);            // 제자리 읽기
+reflgen::serialize(writer, value);              // the writer implementation decides the format
+reflgen::deserialize(reader, value);            // read in place
 auto value = reflgen::deserialize<T>(reader);
 
 reflgen::json::to_string(value, indent) / reflgen::json::from_string<T>(text)
 reflgen::binary::to_bytes(value)        / reflgen::binary::from_bytes<T>(bytes)
 ```
 
-읽기 의미론 — 파일 형식이 코드보다 오래 산다는 전제다.
+Reading semantics assume that file formats outlive code.
 
-- 입력에 없는 필드는 **기존 값을 유지**한다(`required` 가 붙은 필드는 실패).
-- 모르는 키는 **건너뛴다**.
-- 실패는 `reflgen::serialization_error` 이고, `path()` 에 실패 지점이 JSON Pointer 로 담긴다
-  (`"/inventory/1/count"`). 입력 위치(줄·열 / 바이트 오프셋)는 메시지에 있다.
-- 정수는 대상 타입 범위를 검사한다 — 300 이 `uint8_t` 로 조용히 잘리지 않는다.
-- 순환 참조(`shared_ptr` A→B→A, 자기 자신을 가리키는 `reference_wrapper`)는 쓰는 시점에
-  `serialization_error("cyclic reference")` 로 멈춘다. 같은 객체를 두 경로에서 가리키는 공유는 순환이
-  아니라서 각 경로에 값으로 적힌다.
+- A field missing from the input **keeps its current value** (a field marked `required` fails).
+- Unknown keys are **skipped**.
+- Failures are `reflgen::serialization_error`, and `path()` holds the failure point as a JSON Pointer
+  (`"/inventory/1/count"`). The input position (line and column, or byte offset) is in the message.
+- Integers are range-checked against the target type — 300 is not silently truncated into a `uint8_t`.
+- Cyclic references (`shared_ptr` A→B→A, a `reference_wrapper` that points to itself) stop with
+  `serialization_error("cyclic reference")` when written. Sharing — the same object reached by two paths — is not a
+  cycle, and each path writes it as a value.
 
-### 지원 타입
+### Supported types
 
-| 범주 | 타입 | 모양 |
+| Category | Types | Shape |
 |---|---|---|
-| 스칼라 | `bool`, 정수 전 폭, 실수, `std::byte`, `nullptr_t`, `monostate` | 값 |
-| 문자 | `char`·`wchar_t`·`char8/16/32_t` | 한 글자 문자열 |
-| 열거형 | 모든 열거형 | 이름(없으면 정수) |
-| 문자열 | `basic_string` 전 문자 타입, 문자 배열 | UTF-8 문자열 |
-| 쓰기 전용 | `string_view`, C 문자열, 범위 뷰 | |
-| 시퀀스 | `vector`·`deque`·`list`·`forward_list`·`(unordered_)(multi)set`·`valarray` | 배열 |
-| 크기 고정 | `array`·C 배열·`span` | 배열(원소 수 일치 필요) |
-| 맵 | 유일 키 + 문자열·정수·열거형 키 | 객체 `{"3": …}` |
-| 맵 | multimap, 구조체 키 | `[[k, v], …]` |
-| 어댑터 | `stack`·`queue`·`priority_queue` | 속 컨테이너 순서의 배열 |
-| 바이트열 | 연속 `std::byte` 범위 | base64(JSON) / 원본(바이너리) |
-| 래퍼 | `optional`, `atomic`, `reference_wrapper` | null 또는 값 |
-| 포인터 | `unique_ptr`, `shared_ptr` — 가리키는 타입은 서술을 쓰는 자리에서 완전해야 한다(불완전하면 컴파일이 이유와 고칠 곳을 말하며 멈춘다) | null 또는 값, 다형이면 `{"type","value"}` |
-| 합·곱 | `variant` → `[index, value]`, `pair`/`tuple`/튜플 모양 → 배열, `complex` → `[re, im]` | |
-| 기타 | `bitset` → `"0101"`, `chrono` → 틱 수, `filesystem::path` → 일반형 UTF-8 | |
-| C++23 | `std::expected` (`reflgen/serial/expected.h` 포함 시) → `{"value"}`/`{"error"}` | |
-| C++23 | `flat_map`·`flat_set` — 모양으로 자동 인식 | |
+| Scalars | `bool`, integers of every width, floating point, `std::byte`, `nullptr_t`, `monostate` | value |
+| Characters | `char`, `wchar_t`, `char8/16/32_t` | one-character string |
+| Enumerations | every enumeration | name (integer if there is none) |
+| Strings | `basic_string` of every character type, character arrays | UTF-8 string |
+| Write only | `string_view`, C strings, range views | |
+| Sequences | `vector`, `deque`, `list`, `forward_list`, `(unordered_)(multi)set`, `valarray` | array |
+| Fixed size | `array`, C arrays, `span` | array (element count must match) |
+| Maps | unique keys with string, integer or enumeration keys | object `{"3": …}` |
+| Maps | multimap, struct keys | `[[k, v], …]` |
+| Adapters | `stack`, `queue`, `priority_queue` | array in the underlying container's order |
+| Byte strings | contiguous ranges of `std::byte` | base64 (JSON) / raw (binary) |
+| Wrappers | `optional`, `atomic`, `reference_wrapper` | null or value |
+| Pointers | `unique_ptr`, `shared_ptr` — the pointee must be complete where the description is used (otherwise compilation stops, saying why and where to fix it) | null or value, `{"type","value"}` if polymorphic |
+| Sums and products | `variant` → `[index, value]`, `pair`/`tuple`/tuple-like → array, `complex` → `[re, im]` | |
+| Other | `bitset` → `"0101"`, `chrono` → tick count, `filesystem::path` → generic UTF-8 | |
+| C++23 | `std::expected` (with `reflgen/serial/expected.h`) → `{"value"}`/`{"error"}` | |
+| C++23 | `flat_map`, `flat_set` — recognized by shape | |
 
-### 사용자 컨테이너
+### User containers
 
-STL 과 같은 모양(`begin/end` + `clear` + `emplace_back`·`push_back`·`insert`·`insert_after` 중 하나, 맵은
-`key_type/mapped_type`)이면 **특수화 없이 자동**이다. 인터페이스가 다르면 `container_traits` 를 특수화한다:
+Anything shaped like the STL (`begin/end` + `clear` + one of `emplace_back`, `push_back`, `insert`, `insert_after`;
+maps also `key_type/mapped_type`) works **automatically, without a specialization**. For a different interface,
+specialize `container_traits`:
 
 ```cpp
 template<class T>
@@ -385,15 +438,17 @@ struct reflgen::container_traits<ring_buffer<T>>
     static std::size_t size(const ring_buffer<T>& c);
     template<class F> static void for_each(const ring_buffer<T>& c, F&& f);
     static void clear(ring_buffer<T>& c);
-    static void add(ring_buffer<T>& c, T&& item);      // 또는 assign(c, std::vector<T>&&)
-    static void reserve(ring_buffer<T>& c, std::size_t n);   // 선택
+    static void add(ring_buffer<T>& c, T&& item);      // or assign(c, std::vector<T>&&)
+    static void reserve(ring_buffer<T>& c, std::size_t n);   // optional
 };
 ```
 
-맵 규약과 자세한 설명은 [container_traits.h](include/reflgen/serial/container_traits.h). 모양 자체가 다른
-타입(예: 색을 `"#rrggbb"` 로)은 `reflgen::serializer<T>` 를 특수화한다(`write`/`read` 두 함수).
+The map contract and details are in [container_traits.h](include/reflgen/serial/container_traits.h). For a type
+whose shape itself differs (a color as `"#rrggbb"`, say), specialize `reflgen::serializer<T>` (two functions, `write`
+and `read`).
 
-반영 타입의 봉투(헤더·버전·훅)만 바꾸고 필드는 reflgen 에 맡기려면 객체 몸통 함수를 쓴다:
+To change only the envelope of a reflected type (header, version, hooks) and leave the fields to reflgen, use the
+object body functions:
 
 ```cpp
 template<>
@@ -404,7 +459,7 @@ struct reflgen::serializer<save_file>
         out.begin_object(1 + reflgen::serialized_field_count<save_file>());
         out.write_key("version");
         out.write_int(2);
-        reflgen::write_fields(out, value);                     // 필드마다 키와 값(부모 먼저)
+        reflgen::write_fields(out, value);                     // a key and a value per field (bases first)
         out.end_object();
     }
 
@@ -414,102 +469,111 @@ struct reflgen::serializer<save_file>
         for (std::string key; in.next_key(key);)
         {
             if (key == "version") { in.read_int(); }
-            else if (!reflgen::read_field(in, value, key)) { in.skip_value(); } // 필드가 아닌 키는 소비하지 않는다
+            else if (!reflgen::read_field(in, value, key)) { in.skip_value(); } // keys that are not fields are not consumed
         }
         in.end_object();
     }
 };
 ```
 
-## 새 포맷 백엔드
+## New format backends
 
-`reflgen::writer` / `reflgen::reader` 의 순수 가상 함수를 구현한다.
-데이터 모델은 JSON 모양에 부호 구분 정수와 바이트열을 더한 것이다.
+Implement the pure virtual functions of `reflgen::writer` / `reflgen::reader`. The data model is the JSON shape plus
+signed and unsigned integers and byte strings.
 
 ```
 writer: write_null/bool/int/uint/float/string/bytes, begin_array(n)/end_array, begin_object(n)/write_key/end_object
-        (선택) write_float32 — float 값. 기본은 write_float 로 넘긴다
-        (선택) prefer_inline — 다음 컨테이너를 한 줄로 적어도 된다는 표기 힌트. 기본은 무시
+        (optional) write_float32 — float values. Forwards to write_float by default
+        (optional) prefer_inline — a layout hint that the next container may be written on one line. Ignored by default
 reader: peek, read_*, begin_array → while(next_element) … → end_array,
         begin_object → while(next_key(key)) … → end_object, skip_value
-        (선택) read_float32 — float 값. 기본은 read_float 를 float 으로 좁힌다
+        (optional) read_float32 — float values. Narrows read_float to float by default
 ```
 
-- `begin_*` 의 크기는 쓰기에서는 정확한 값, 읽기에서는 힌트(reserve 용)다. 신뢰할 수 없는 입력의 크기는
-  남은 입력 길이로 상한을 검사해 넘긴다.
-- 텍스트 포맷은 `write_float32`·`read_float32` 를 덮어써 float 을 float 의 최단 표기로 적고 float 으로 바로 읽는다
-  (JSON 백엔드가 그렇다 — `0.1f` 는 `0.1`, 읽을 때 double 을 거친 이중 반올림이 없다). `prefer_inline` 은 사용자 serializer 가 부른다(벡터·색 같은 작은 값을 YAML flow·한 줄 JSON 으로).
-- 중첩 깊이 상한을 둔다. JSON·바이너리 백엔드는 reader·writer 모두 기본 512 이고 생성자 인자
-  (`to_string(value, indent, max_depth)` 등)로 바꾼다. writer 상한은 순환이 아닌 아주 깊은 구조가
-  stack overflow 대신 오류로 끝나게 한다.
+- The size given to `begin_*` is exact when writing and a hint (for reserve) when reading. Sizes from untrusted input
+  are passed on after being bounded by the remaining input length.
+- Text formats override `write_float32` and `read_float32` to write a float in the shortest float form and read it
+  straight into a float (the JSON backend does — `0.1f` is `0.1`, and reading does not round twice through double).
+  User serializers call `prefer_inline` (small values such as vectors and colors as YAML flow or one-line JSON).
+- Keep a nesting depth limit. The JSON and binary backends default to 512 for both reader and writer, changed through
+  constructor arguments (`to_string(value, indent, max_depth)` and so on). The writer limit makes a very deep
+  structure that is not a cycle end with an error instead of a stack overflow.
 
-[json/](include/reflgen/json) 과 [binary/](include/reflgen/binary) 가 참고 구현이다.
+[json/](include/reflgen/json) and [binary/](include/reflgen/binary) are the reference implementations.
 
-## 런타임 서술자와 등록소
+## Runtime descriptors and the registry
 
 ```cpp
 const reflgen::type_descriptor& type = reflgen::type_descriptor_of<player>();
-for (const reflgen::field_info& field : type.fields())   // 상속 필드 포함, 부모 우선
+for (const reflgen::field_info& field : type.fields())   // inherited fields included, bases first
 {
     field.name(); field.key(); field.type_name(); field.attributes().find<reflgen::range<int>>();
     void* address = field.address(&object);
-    if (const reflgen::enum_descriptor* values = field.enumeration()) // 열거형 필드면 열거자 표
+    if (const reflgen::enum_descriptor* values = field.enumeration()) // the enumerator table of an enum field
     {
-        values->write(address, values->find("angry")->value);      // 값은 long long 으로 오간다
+        values->write(address, values->find("angry")->value);      // values travel as long long
     }
 }
-for (const reflgen::method_info& method : type.methods()) // 상속 메서드 포함, 부모 우선
+for (const reflgen::method_info& method : type.methods()) // inherited methods included, bases first
 {
     method.name(); method.parameters(); method.return_type(); method.is_const();
 }
 int amount = 5, total = 0;
-void* arguments[] = {&amount};                            // 파라미터 타입의 객체를 가리킨다
-type.find_method("heal")->invoke(&object, arguments, &total); // 반환값은 total 에(nullptr 면 버린다)
-reflgen::register_type<fireball>();                      // 다형 포인터로 읽고 쓸 파생 타입
+void* arguments[] = {&amount};                            // each points to an object of the parameter type
+type.find_method("heal")->invoke(&object, arguments, &total); // the result goes into total (nullptr discards it)
+reflgen::register_type<fireball>();                      // a derived type read and written through polymorphic pointers
 ```
 
-- 표는 전부 `constexpr` 이다 — 정적 초기화 순서 문제가 없다.
-- 메서드 호출은 타입을 지운 포인터로 한다: 인자는 파라미터 타입(참조·cv 를 뗀)의 객체를 가리키고, 값 파라미터는
-  그 객체를 복사하고(복사할 수 없는 타입이면 옮긴다), 참조 파라미터는 그 객체를 받고, rvalue 참조 파라미터는 그
-  객체에서 옮긴다. 인자 수가 틀리거나 대입할 수 없는 반환 타입에 결과 자리를 주면 `std::invalid_argument` 다.
-  인자 칸으로 부를 수 없는 메서드(`&&` 한정자·`volatile`·C 가변 인자)는 `methods()` 에 없다 — 컴파일 때 서술
-  (`schema_of`)에는 남는다.
-- reflgen 으로 쓸 수 없는 필드(직렬화기가 없는 타입, 또는 그런 필드를 품은 반영 타입)는 쓰기·읽기 썽크 없이 남는다
-  — `field.is_serializable()` 이 거짓이고 쓰면 `serialization_error` 다. 판정은 품은 반영 타입의 필드까지 내려간다
-  (`reflgen::serializable<T>`). 같은 타입을 `json::to_string` 처럼 직접 쓰면 실제로 못 쓰는 필드에서 컴파일 오류다.
-- 등록은 명시 호출이다. 정적 라이브러리의 자동 등록 객체는 링커가 버릴 수 있어서 쓰지 않는다.
-- 다형 직렬화는 동적 타입을 RTTI 로 찾는다. RTTI 는 다형 타입에서만 쓴다(`-fno-rtti` 빌드도 나머지는 동작).
+- Every table is `constexpr` — there is no static initialization order problem.
+- Methods are called through type-erased pointers: each argument points to an object of the parameter type (with
+  references and cv removed); a value parameter copies that object (or moves it when the type cannot be copied), a
+  reference parameter receives it, and an rvalue reference parameter moves from it. A wrong argument count, or a
+  result slot for a return type that cannot be assigned, is `std::invalid_argument`. Methods that cannot be called
+  through argument slots (`&&` qualifier, `volatile`, C variadics) are not in `methods()` — they remain in the
+  compile-time description (`schema_of`).
+- Fields reflgen cannot write (a type without a serializer, or a reflected type that holds such a field) stay without
+  write and read thunks — `field.is_serializable()` is false, and writing is a `serialization_error`. The check goes
+  down into the fields of reflected types held inside (`reflgen::serializable<T>`). Writing the same type directly,
+  as with `json::to_string`, is a compile error at the field that really cannot be written.
+- Registration is an explicit call. Self-registering objects in static libraries can be discarded by the linker, so
+  they are not used.
+- Polymorphic serialization finds the dynamic type with RTTI. RTTI is used only for polymorphic types (the rest works
+  in `-fno-rtti` builds).
 
-## 빌드와 시험
+## Building and testing
 
 ```powershell
-./scripts/test.ps1                       # MSVC·clang-cl × C++20·C++23 네 조합
-./scripts/test.ps1 -Presets msvc-cpp20   # 하나만
+./scripts/test.ps1                       # MSVC and clang-cl × C++20 and C++23, four combinations
+./scripts/test.ps1 -Presets msvc-cpp20   # just one
 ```
 
-CTest 에는 생성기 end-to-end·진단·한글 경로 시험과, MSBuild 가 있으면 `.vcxproj` 연동 시험(생성·컴파일·실행 후
-다시 빌드해도 생성기가 돌지 않는지)이 들어 있다. VS 확장의 순수 로직은 `dotnet test` 로 따로 돈다.
+CTest includes the generator's end-to-end, diagnostic and non-ASCII path tests, compile-failure tests for the
+incomplete-type messages, and, when MSBuild is present, the `.vcxproj` integration test (generate, compile, run, and
+check that building again does not rerun the generator). The VS extension's pure logic runs separately with
+`dotnet test`. `./scripts/package.ps1` builds the zip and the NuGet package into `build\package`.
 
-CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한다. `.vcxproj` 는 설치된
-`<prefix>/share/reflgen/msbuild/reflgen.targets` 를 가져온다. 테스트 하네스도 매크로 없이
-`std::source_location` 으로 만들었다([tests/harness.h](tests/harness.h)).
+CMake consumers call `find_package(reflgen)` and link `reflgen::reflgen`. A `.vcxproj` imports
+`<prefix>/share/reflgen/msbuild/reflgen.targets` from the install layout. The test harness is macro-free too, built
+on `std::source_location` ([tests/harness.h](tests/harness.h)).
 
-### 인코딩
+### Encoding
 
-주석이 한글(UTF-8)이다. 공개 헤더는 **UTF-8 BOM** 을 달고 있어, `/utf-8` 없이 CP949 로 빌드하는 MSVC
-프로젝트에서도 한글 주석이 코드를 삼키지 않는다. CMake 타깃은 `/utf-8` 도 전파한다.
+Comments are in Korean (UTF-8). Public headers carry a **UTF-8 BOM**, so Korean comments do not swallow code in MSVC
+projects that build as CP949 without `/utf-8`. The CMake targets also propagate `/utf-8`.
 
-## 코딩 컨벤션
+## Coding conventions
 
-이름은 STL 컨벤션(snake_case, 멤버 후치 `_`, 템플릿 매개변수 PascalCase, 상수도 snake_case), 중괄호·공백·
-들여쓰기는 CreatorEngine 의 [.clang-format](.clang-format) 이다. 주석은 한글로, 무엇이 아니라 왜를 적는다.
+Names follow the STL convention (snake_case, trailing `_` on members, PascalCase template parameters, constants in
+snake_case too); braces, spacing and indentation follow CreatorEngine's [.clang-format](.clang-format). Comments are
+written in Korean and say why, not what.
 
-## C++26 이행
+## C++26 migration
 
-C++26 정식 리플렉션(P2996)과 주석(P3394)이 오면 스키마를 만드는 앞단만 생성기에서 `std::meta` 로 바뀐다
-(로드맵 3). 사용자 코드는 attribute 표기를 한 번 기계적으로 바꾸면 된다 — C++20/23 의 `[[…]]` 는 C++26 에서도
-유효하지만 `annotations_of` 가 보는 것은 `[[=…]]` 뿐이다. `[[=…]]` 는 C++20/23 에서 문법 오류이고 이 라이브러리는
-`#if` 를 쓰지 않으므로, 두 표기를 한 소스에 섞어 두지 않고 옮길 때 한 번에 바꾼다.
+When C++26 reflection (P2996) and annotations (P3394) arrive, only the front end that builds schemas moves from the
+generator to `std::meta` (roadmap 3). User code changes its attribute notation once, mechanically — the C++20/23
+`[[…]]` stays valid in C++26, but `annotations_of` only sees `[[=…]]`. `[[=…]]` is a syntax error in C++20/23 and this
+library does not use `#if`, so the two notations are not mixed in one source; they are switched in one go when
+migrating.
 
 | C++20/23 | C++26 |
 |---|---|
@@ -521,54 +585,62 @@ C++26 정식 리플렉션(P2996)과 주석(P3394)이 오면 스키마를 만드�
 | `[[game::tooltip("HP")]]` | `[[=game::tooltip("HP")]]` |
 | `[[using reflgen: transient, range(0, 1)]]` | `[[=reflgen::transient{}, =reflgen::range(0, 1)]]` |
 
-규칙: 인자가 있으면 식을 그대로, 없으면 `{}` 를 붙인다 — 생성기가 지금 스키마로 옮길 때 쓰는 규칙과 같다.
+Rule: with arguments, the expression is kept as written; without, `{}` is added — the same rule the generator uses
+today when it carries attributes into schemas.
 
-준비된 것:
-- 기본 속성과 지시어 타입(`reflect`·`ignore`·`attribute`, `core/directives.h`)은 모두 구조적 타입이다. 주석 값의
-  조건이 C++20 클래스 NTTP 와 같아서 `tests/annotation_readiness_tests.cpp` 가 템플릿 인자로 써 보아 컴파일로
-  확인한다.
-- 문자열은 `static_string` 이다. C++26 백엔드는 `std::define_static_string` 으로 만든 배열을 가리키게 만든다
-  (주석 값의 포인터는 문자열 리터럴을 가리킬 수 없다). `.value` 를 읽는 쪽은 바뀌지 않는다.
-- 사용자 정의 속성도 주석 값이 되려면 구조적 타입이어야 한다 — 멤버를 공개하고 문자열은 `static_string` 에 담는다.
-- 지시어 타입은 속성이 아니다 — `.with(reflgen::ignore{})` 는 컴파일 오류다(멤버를 빼려면 스키마에 적지 않는다).
+Already in place:
+- The built-in attributes and the directive types (`reflect`, `ignore`, `attribute`, `core/directives.h`) are all
+  structural types. The requirements on annotation values match those on C++20 class NTTPs, so
+  `tests/annotation_readiness_tests.cpp` checks this at compile time by using them as template arguments.
+- Strings are `static_string`. The C++26 backend makes them point to arrays built with `std::define_static_string`
+  (a pointer in an annotation value cannot point to a string literal). Code that reads `.value` does not change.
+- User-defined attributes must be structural types too in order to become annotation values — make the members public
+  and put strings in `static_string`.
+- Directive types are not attributes — `.with(reflgen::ignore{})` is a compile error (to leave a member out, do not
+  list it in the schema).
 
-아직 없는 것: 표기를 바꿔 주는 codemod(VS 확장 명령)와 네이티브 백엔드.
+Not yet available: a codemod that rewrites the notation (a VS extension command) and the native backend.
 
-## 알려진 제약
+## Known limitations
 
-- 컴파일러가 만든 타입 이름은 표준 라이브러리 타입에서 구현마다 다르다(MSVC 는 기본 템플릿 인자를 적는다).
-  파일에 남는 다형 태그는 `.named()` 로 못 박을 것.
-- `variant` 는 인덱스로 적는다 — 대안의 순서가 파일 형식의 일부다.
-- `shared_ptr` 의 공유 관계는 보존하지 않는다(읽으면 사본이 된다). 순환은 오류로 막는다.
-- raw pointer·`weak_ptr` 는 직렬화하지 않는다(소유인지 참조인지 알 수 없다). ID·handle 로 적으려면
-  `reflgen::serializer<T*>` 를 특수화한다.
-- `default_registry()` 는 모듈(DLL)마다 하나다.
-- 생성기는 클래스 template·멤버 함수 template·오버로드된 메서드·열거자 attribute·union 을 다루지 않는다(진단으로
-  알린다). 이름 없는 매개변수는 빈 이름으로 남는다.
-- 비공개 멤버를 반영하려면 `friend struct reflgen::access;` 가 있어야 한다(VS 확장이 저장할 때 넣는다). friend
-  없이 private 멤버의 포인터를 상수로 얻는 C++20 방법(명시적 인스턴스화의 접근 검사 예외로 friend 함수를
-  주입)은 Clang 에서는 되지만 MSVC 19.51 은 그 함수를 상수 평가에서 쓰지 못한다(C3779·C2131, 실측). C++26
-  백엔드에서는 `access_context::unchecked()` 로 friend 가 필요 없어진다.
-- VS 확장은 .vcxproj 만 다룬다. CMake(폴더 열기) 프로젝트는 빌드할 때 `reflgen_generate()` 가 생성한다.
-  자동완성은 attribute 이름 자리에서만 나온다 — 인자 안은 C++ IntelliSense 의 몫이다.
-- attribute 인자의 이름을 감싸는 이름공간들에서 찾을 때는 `using namespace` 를 바깥부터 모두 여는 방식이라,
-  바깥과 안쪽 이름공간에 같은 이름이 있으면 모호하다 — 그때는 한정해서 쓴다.
-- 자동 이름 추출은 `std::source_location` 이 템플릿 인자를 포함한 시그니처를 주는 구현에서 된다
-  (MSVC STL, libstdc++). 그렇지 않은 구현(libc++)에서는 `.named()` 또는 코드 생성기가 필요하다 —
-  `reflgen::name_extraction_supported` 로 확인한다. GCC·libc++ 는 아직 CI 로 검증하지 않았다.
+- Compiler-generated type names differ between implementations for standard library types (MSVC writes default
+  template arguments). Pin polymorphic tags that end up in files with `.named()`.
+- `variant` is written by index — the order of the alternatives is part of the file format.
+- `shared_ptr` sharing is not preserved (reading produces copies). Cycles are stopped with an error.
+- Raw pointers and `weak_ptr` are not serialized (it cannot be known whether they own or refer). To write them as
+  IDs or handles, specialize `reflgen::serializer<T*>`.
+- `default_registry()` is one per module (DLL).
+- The generator does not handle class templates, member function templates, overloaded methods, enumerator
+  attributes or unions (it reports them with diagnostics). Unnamed parameters keep an empty name.
+- Reflecting private members requires `friend struct reflgen::access;` (the VS extension inserts it on save). The
+  C++20 way of getting constant pointers to private members without a friend (injecting a friend function through
+  the access-check exemption of explicit instantiation) works with Clang, but MSVC 19.51 cannot use that function in
+  constant evaluation (C3779, C2131, measured). The C++26 backend no longer needs the friend, thanks to
+  `access_context::unchecked()`.
+- The VS extension handles .vcxproj only. In CMake (Open Folder) projects, `reflgen_generate()` generates at build
+  time. Completion appears only in the attribute name position — inside arguments it is up to C++ IntelliSense.
+- Names in attribute arguments are looked up in the enclosing namespaces by opening every one of them with
+  `using namespace`, from the outermost in, so a name that exists in both an outer and an inner namespace is
+  ambiguous — qualify it in that case.
+- Automatic name extraction works where `std::source_location` gives a signature that includes template arguments
+  (MSVC STL, libstdc++). Elsewhere (libc++), `.named()` or the code generator is needed — check with
+  `reflgen::name_extraction_supported`. GCC and libc++ are not yet verified in CI.
+- Release packages (generator binaries) are Windows x64 only.
 
-## 라이선스
+## License
 
-[MIT](LICENSE) © 2026 29thnight
+[MIT](LICENSE) © 2026 29thnight. The generator packages include libclang (Apache-2.0 WITH LLVM-exception); see
+`share/reflgen/licenses`.
 
-## 로드맵
+## Roadmap
 
-1. **코드 생성기** — CMake·MSBuild 연동 완료. 남은 것: 클래스 template, 오버로드된 메서드, 열거자 attribute,
-   NuGet 패키지(.vcxproj 가 import 없이 쓰게).
-2. **Visual Studio 확장** — 첫 판 완료(저장·열기 시 생성, Error List, IntelliSense 새로 고침, 자동완성, friend
-   자동 삽입). 남은 것: 솔루션 전체가 아니라 바뀐 번역 단위만 IntelliSense 를 새로 고치기, CMake(폴더 열기)
-   지원, C++26 이행 codemod, Marketplace 배포.
-3. **C++26 네이티브 백엔드** — `std::meta::nonstatic_data_members_of`(`access_context::unchecked()`) +
-   `annotations_of` 로 `schema_of<T>` 를 만든다. 질의·직렬화 API 는 바뀌지 않고 friend 도 필요 없어진다.
-   준비 완료: 속성·지시어 타입이 모두 구조적 타입, 문자열은 `static_string`([C++26 이행](#c26-이행)).
-4. GCC·libc++ CI.
+1. **Code generator** — CMake and MSBuild integration, NuGet package and vcpkg port done. Remaining: class templates,
+   overloaded methods, enumerator attributes.
+2. **Visual Studio extension** — first version done (generate on save and open, Error List, IntelliSense refresh,
+   completion, automatic friend insertion). Remaining: refreshing IntelliSense for the changed translation units
+   instead of the whole solution, CMake (Open Folder) support, the C++26 migration codemod, Marketplace publishing.
+3. **C++26 native backend** — build `schema_of<T>` from `std::meta::nonstatic_data_members_of`
+   (`access_context::unchecked()`) + `annotations_of`. The query and serialization APIs do not change and the friend
+   is no longer needed. Ready: attributes and directive types are all structural, strings are `static_string`
+   ([C++26 migration](#c26-migration)).
+4. GCC and libc++ CI.
