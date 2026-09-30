@@ -7,8 +7,8 @@ namespace reflgen
 {
     inline constexpr int version_major = 1;
     inline constexpr int version_minor = 0;
-    inline constexpr int version_patch = 0;
-    inline constexpr std::string_view version_string = "1.0.0";
+    inline constexpr int version_patch = 1;
+    inline constexpr std::string_view version_string = "1.0.1";
 
     // 생성 코드의 형식. 생성기가 만드는 코드가 기대는 header 의 모양이 바뀌면 올린다. 생성기는 자기 형식을 주입
     // header 의 static_assert 에 적으므로, 다른 형식의 생성기로 만든 코드는 컴파일에서 멈춘다 — 생성기와 header 의

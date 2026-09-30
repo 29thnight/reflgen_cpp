@@ -40,6 +40,9 @@
     <Compile Include="..\Reflgen.VisualStudio.Core\IsExternalInit.cs" Link="IsExternalInit.cs" />
     <!-- 확장자 없는 원본은 VSIX 안에서 원래 이름으로 들어가므로 대상 경로를 적어 준다. -->
     <Content Include="..\..\..\LICENSE" Link="LICENSE.txt" TargetPath="LICENSE.txt" IncludeInVSIX="true" />
+    <!-- 확장 관리자의 목록 아이콘(32×32 로 줄여 보인다)과 상세 화면 미리보기 — NuGet 패키지와 같은 그림(scripts\make-icon.py). -->
+    <Content Include="..\..\..\assets\icon.png" Link="icon.png" TargetPath="icon.png" IncludeInVSIX="true" />
+    <Content Include="..\..\..\assets\preview.png" Link="preview.png" TargetPath="preview.png" IncludeInVSIX="true" />
   </ItemGroup>
 
 </Project>

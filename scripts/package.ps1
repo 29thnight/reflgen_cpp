@@ -56,6 +56,19 @@ try {
         "-p:BaseIntermediateOutputPath=$work\obj\" "-p:BaseOutputPath=$work\bin\" 2>&1
     if ($LASTEXITCODE -ne 0) { $pack | Write-Host; throw 'dotnet pack failed' }
 
+    # 패키지 안의 배치 — nuget.org 가 보여 줄 아이콘·README 와, 설치할 때 NuGet 이 가져오는 targets.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $Output "reflgen.$version.nupkg"))
+    try {
+        $entries = @($archive.Entries | ForEach-Object FullName)
+        foreach ($entry in 'images/icon.png', 'docs/README.md', 'build/native/reflgen.targets', 'bin/reflgen.exe') {
+            if ($entries -notcontains $entry) { throw "the NuGet package lacks $entry" }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+
     "reflgen $version"
     Get-ChildItem $Output -File | Where-Object { $_.Name -like "reflgen*$version*" } |
         ForEach-Object { '  {0}  ({1:0.0} MB)' -f $_.Name, ($_.Length / 1MB) }

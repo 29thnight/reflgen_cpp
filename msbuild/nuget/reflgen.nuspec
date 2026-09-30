@@ -9,6 +9,10 @@
     <authors>29thnight</authors>
     <license type="expression">MIT AND Apache-2.0 WITH LLVM-exception</license>
     <projectUrl>https://github.com/29thnight/reflgen_cpp</projectUrl>
+    <repository type="git" url="https://github.com/29thnight/reflgen_cpp.git" />
+    <icon>images\icon.png</icon>
+    <readme>docs\README.md</readme>
+    <releaseNotes>https://github.com/29thnight/reflgen_cpp/releases/tag/v$version$</releaseNotes>
     <description>Macro-free, attribute-driven C++20 reflection for Visual C++ projects. Installing the package wires the reflgen code generator into the build: headers only carry [[reflgen::...]] attributes, and the generated reflection is force-included at compile time. Includes the generator (reflgen.exe with libclang) and the header-only library.</description>
     <tags>native cpp reflection serialization codegen attributes msbuild</tags>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
@@ -19,5 +23,8 @@
     <file src="$stage$\share\**" target="share" />
     <file src="$stage$\LICENSE" target="LICENSE" />
     <file src="reflgen.targets" target="build\native" />
+    <!-- nuget.org 의 아이콘(scripts\make-icon.py 가 그린다)과 README(상대 링크 없이 — nuget.org 는 풀지 못한다) -->
+    <file src="..\..\assets\icon.png" target="images" />
+    <file src="README.md" target="docs" />
   </files>
 </package>
