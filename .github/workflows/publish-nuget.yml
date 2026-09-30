@@ -1,0 +1,48 @@
+# nuget.org 에 릴리스의 NuGet 패키지를 올린다 — Trusted Publishing(OIDC). 오래 사는 API 키를 저장소에 두지 않는다:
+# GitHub 가 이 job 에 발급한 OIDC 토큰을 nuget.org 가 Trusted Publishing 정책(owner 29thnight, repository
+# reflgen_cpp, workflow publish-nuget.yml, environment nuget)과 대조하고 1 시간짜리 키를 내준다.
+#
+# 올리는 것은 GitHub Release 에 첨부한 nupkg 그대로다 — 릴리스 노트에 SHA-256 을 적은 그 파일이다(다시 빌드하지 않는다).
+#   release published   그 릴리스의 태그
+#   workflow_dispatch   입력한 태그 — 이미 게시된 릴리스를 올릴 때(예: v1.0.0)
+# 같은 판이 이미 있으면 건너뛴다(--skip-duplicate) — nuget.org 의 판은 덮어쓸 수 없다.
+name: publish-nuget
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (e.g. v1.0.0)
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: nuget # 정책의 Environment 와 같아야 한다 — 저장소 설정에서 승인자를 걸 수 있다
+    permissions:
+      id-token: write # nuget.org 에 보낼 OIDC 토큰
+      contents: read  # 릴리스 첨부 파일 받기
+    steps:
+      - name: Download the release package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          package="reflgen.${TAG#v}.nupkg"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$package"
+          test -f "$package"
+          sha256sum "$package"
+          echo "PACKAGE=$package" >> "$GITHUB_ENV"
+
+      - name: NuGet login (OIDC to a temporary API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }} # nuget.org 프로필 이름(이메일이 아니다)
+
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push "$PACKAGE" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
