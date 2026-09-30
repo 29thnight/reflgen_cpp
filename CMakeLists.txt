@@ -142,6 +142,50 @@ if(REFLGEN_BUILD_TESTS)
                 "-DSOURCES=${CMAKE_CURRENT_BINARY_DIR}/description_only_sources_$<CONFIG>.txt"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/generated/check_no_registration.cmake")
 
+        # 불완전 타입 진단 — 다른 모듈의 반영 타입(part)을 전방 선언만 한 필드를 등록 함수가 서술한다. 넘기지 않으면
+        # 컴파일이 reflgen 의 메시지로 멈추고(기본 빌드에서 뺀 target 을 시험이 빌드한다), REGISTRATION_HEADERS 로
+        # 넘기면 컴파일된다(기본 빌드).
+        add_library(reflgen_incomplete_part STATIC tests/generated/incomplete/part.cpp)
+        target_link_libraries(reflgen_incomplete_part PUBLIC reflgen::reflgen)
+        reflgen_configure_target(reflgen_incomplete_part)
+        reflgen_generate(reflgen_incomplete_part
+            MODULE incomplete_part
+            HEADERS tests/generated/incomplete/part.h)
+        add_library(reflgen_incomplete_holder STATIC tests/generated/incomplete/holder.cpp)
+        target_link_libraries(reflgen_incomplete_holder PRIVATE reflgen_incomplete_part)
+        reflgen_configure_target(reflgen_incomplete_holder)
+        reflgen_generate(reflgen_incomplete_holder
+            MODULE incomplete_holder
+            HEADERS tests/generated/incomplete/holder.h
+            REGISTRATION_HEADERS tests/generated/incomplete/part.h)
+        add_library(reflgen_incomplete_unregistered STATIC EXCLUDE_FROM_ALL tests/generated/incomplete/holder.cpp)
+        target_link_libraries(reflgen_incomplete_unregistered PRIVATE reflgen_incomplete_part)
+        reflgen_configure_target(reflgen_incomplete_unregistered)
+        reflgen_generate(reflgen_incomplete_unregistered
+            MODULE incomplete_unregistered
+            HEADERS tests/generated/incomplete/holder.h)
+        add_test(NAME reflgen_incomplete_type_diagnostic
+            COMMAND "${CMAKE_COMMAND}"
+                "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+                "-DTARGET=reflgen_incomplete_unregistered"
+                "-DEXPECTED=reflgen: 'incomplete_tests::part' is described in [^ ]*/tests/generated/incomplete/part\\.h but is an incomplete type.*REGISTRATION_HEADERS"
+                "-DCONFIG=$<CONFIG>"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_incomplete.cmake")
+        # 서술하지 않은 불완전 타입(pimpl)을 가리키는 필드 — 정의를 보이거나 [[reflgen::ignore]] 로 빼라고 말한다.
+        add_library(reflgen_incomplete_opaque STATIC EXCLUDE_FROM_ALL tests/generated/incomplete/opaque_holder.cpp)
+        target_link_libraries(reflgen_incomplete_opaque PRIVATE reflgen::reflgen)
+        reflgen_configure_target(reflgen_incomplete_opaque)
+        reflgen_generate(reflgen_incomplete_opaque
+            MODULE incomplete_opaque
+            HEADERS tests/generated/incomplete/opaque_holder.h)
+        add_test(NAME reflgen_incomplete_pointee_diagnostic
+            COMMAND "${CMAKE_COMMAND}"
+                "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+                "-DTARGET=reflgen_incomplete_opaque"
+                "-DEXPECTED=reflgen: a smart pointer field points to an incomplete type that reflgen does not describe.*reflgen::ignore"
+                "-DCONFIG=$<CONFIG>"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_incomplete.cmake")
+
         # 잘못 쓴 header 에 대한 진단(코드·위치·실패 종료).
         add_test(NAME reflgen_generator_diagnostics
             COMMAND "${CMAKE_COMMAND}"

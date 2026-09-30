@@ -62,6 +62,31 @@ namespace reflgen::generator
             return result;
         }
 
+        // C++ 문자열 리터럴 — 경로는 / 로 정규화돼 있지만 따옴표·역슬래시가 섞여도 리터럴이 깨지지 않게 한다.
+        std::string string_literal(std::string_view text)
+        {
+            std::string result = "\"";
+            for (const char c : text)
+            {
+                if (c == '"' || c == '\\')
+                {
+                    result += '\\';
+                }
+                result += c;
+            }
+            return result + "\"";
+        }
+
+        // 서술된 타입이 쓰이는 자리에서 불완전할 때의 static_assert 메시지(닫는 괄호까지).
+        std::string incomplete_message(const class_model& model)
+        {
+            return string_literal("reflgen: '" + model.qualified_name + "' is described in " + model.position.file +
+                                  " but is an incomplete type where its description is used. Include that header "
+                                  "before this use; if this is a registration function (reflgen_<module>.cpp), add "
+                                  "it to REGISTRATION_HEADERS (CMake) or ReflgenRegistrationHeaders (MSBuild).") +
+                   ");";
+        }
+
         struct schema_entry
         {
             std::string text;
@@ -168,7 +193,11 @@ namespace reflgen::generator
             out.line(only_for("T", model.qualified_name));
             out.line("struct reflgen::reflection<T>");
             out.line("{");
-            out.line("    static constexpr auto value = ::reflgen::access::describer<T>::describe();");
+            // 서술을 쓰는 자리에서 T 가 불완전하면 원인과 고칠 곳을 말한다 — 그렇지 않으면 &T::member 가 원본 header 의
+            // 필드 줄(#line)을 가리키는 "정의되지 않은 형식" 오류가 긴 실체화 사슬 끝에 나온다.
+            out.line("    static_assert(::reflgen::detail::complete_type<T>,");
+            out.line("        " + incomplete_message(model));
+            out.line("    static constexpr auto value = ::reflgen::detail::generated_description<T>();");
             out.line("};");
             out.line();
         }

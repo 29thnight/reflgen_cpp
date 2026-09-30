@@ -167,7 +167,9 @@ reflgen_generate(my_game
   - 반영 타입의 header 가 include 하지 않는 곳에 둔 `reflgen::serializer` 특수화. 넘기지 않으면 그 필드는 등록소의
     서술자에서 직렬화기 없이 남는다.
   - 반영 타입의 header 가 전방 선언만 하는 서술된 필드 타입(`std::shared_ptr<Material>` 등)의 header. 넘기지
-    않으면 그 타입의 서술이 불완전한 타입으로 실체화되며 컴파일이 멈춘다.
+    않으면 컴파일이 `reflgen: 'Material' is described in …/Material.h but is an incomplete type where its
+    description is used …` 로 멈춘다 — 서술된 타입을 그것이 불완전한 번역 단위에서 쓰면 어디서든 같은 메시지가
+    나온다(생성된 `reflection<T>` 의 `static_assert`).
 
   다른 모듈의 서술(주입 header)은 스스로 본다 — CMake 는 링크한 target 의 강제 include 로, MSBuild 는 참조하는
   reflgen 프로젝트의 주입 header 를 모은 `reflgen_<module>.references.h` 로. 반영 클래스가 없는 모듈의 등록 함수는
@@ -363,7 +365,7 @@ reflgen::binary::to_bytes(value)        / reflgen::binary::from_bytes<T>(bytes)
 | 어댑터 | `stack`·`queue`·`priority_queue` | 속 컨테이너 순서의 배열 |
 | 바이트열 | 연속 `std::byte` 범위 | base64(JSON) / 원본(바이너리) |
 | 래퍼 | `optional`, `atomic`, `reference_wrapper` | null 또는 값 |
-| 포인터 | `unique_ptr`, `shared_ptr` | null 또는 값, 다형이면 `{"type","value"}` |
+| 포인터 | `unique_ptr`, `shared_ptr` — 가리키는 타입은 서술을 쓰는 자리에서 완전해야 한다(불완전하면 컴파일이 이유와 고칠 곳을 말하며 멈춘다) | null 또는 값, 다형이면 `{"type","value"}` |
 | 합·곱 | `variant` → `[index, value]`, `pair`/`tuple`/튜플 모양 → 배열, `complex` → `[re, im]` | |
 | 기타 | `bitset` → `"0101"`, `chrono` → 틱 수, `filesystem::path` → 일반형 UTF-8 | |
 | C++23 | `std::expected` (`reflgen/serial/expected.h` 포함 시) → `{"value"}`/`{"error"}` | |

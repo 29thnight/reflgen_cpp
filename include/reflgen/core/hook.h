@@ -50,5 +50,11 @@ namespace reflgen
 
         template<class T>
         concept has_external_reflection = requires { reflection<T>::value; };
+
+        // T 가 이 자리에서 완전한가. 주입 header 는 반영 타입을 전방 선언만 하므로 원본 header 를 보지 않은 번역
+        // 단위에서는 불완전하다. 오류를 고르는 데만 쓴다 — 불완전하면 어느 쪽이든 컴파일이 멈추므로 이 판정이 번역
+        // 단위마다 동작을 가르지 않는다(생성된 reflection<T> 의 static_assert, 스마트 포인터 요소의 직렬화 판정).
+        template<class T>
+        concept complete_type = requires { sizeof(T); };
     } // namespace detail
 } // namespace reflgen

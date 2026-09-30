@@ -230,6 +230,19 @@ namespace reflgen::detail
     template<class T, class Visiting>
     consteval bool deserializable_in() noexcept;
 
+    // 스마트 포인터의 요소가 이 자리에서 불완전하면 다형인지도, 필드가 무엇인지도 판정할 수 없다(std::is_polymorphic
+    // 은 불완전한 클래스를 받지 않는다). 서술된 타입이면 reflectable 이 서술을 실체화하고, 생성된 reflection<T> 의
+    // static_assert 가 원인과 고칠 곳(그 header, REGISTRATION_HEADERS)을 말한다. 서술하지 않은 타입이면 여기서
+    // 말한다. 어느 쪽이든 컴파일이 멈춘다 — 돌려주는 false 는 쓰이지 않는다.
+    template<class Element>
+    consteval bool reject_incomplete_element() noexcept
+    {
+        static_assert(reflectable<Element>,
+                      "reflgen: a smart pointer field points to an incomplete type that reflgen does not describe; "
+                      "include its definition before the description is used, or mark the field [[reflgen::ignore]]");
+        return false;
+    }
+
     template<class Tuple, class Predicate>
     consteval bool all_tuple_elements(Predicate predicate) noexcept
     {
@@ -345,8 +358,18 @@ namespace reflgen::detail
         {
             // 다형 포인터는 동적 타입을 등록소에서 찾는다 — 정적 타입으로는 판정하지 않는다.
             using element = typename U::element_type;
-            return !std::is_array_v<element> &&
-                   (std::is_polymorphic_v<element> || serializable_in<element, Visiting>());
+            if constexpr (std::is_array_v<element>)
+            {
+                return false;
+            }
+            else if constexpr (!complete_type<element>)
+            {
+                return reject_incomplete_element<element>();
+            }
+            else
+            {
+                return std::is_polymorphic_v<element> || serializable_in<element, Visiting>();
+            }
         }
         else if constexpr (kind == category::variant)
         {
@@ -426,6 +449,10 @@ namespace reflgen::detail
                 if constexpr (!default_owner || std::is_array_v<element>)
                 {
                     return false;
+                }
+                else if constexpr (!complete_type<element>)
+                {
+                    return reject_incomplete_element<element>();
                 }
                 else if constexpr (std::is_polymorphic_v<element>)
                 {
