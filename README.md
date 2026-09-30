@@ -17,13 +17,14 @@ Macro-free reflection for C++20, with a serialization library whose formats you 
 
 ## Install
 
-Windows x64 with Visual Studio 2022 (17.x) or 2026 (18.x). The release packages below are published on
-[GitHub Releases](https://github.com/29thnight/reflgen_cpp/releases); the generator in them ships with its own
-`libclang.dll` and the matching clang builtin headers.
+Windows x64 with Visual Studio 2026 (18.x), the version reflgen is verified with. The release packages below are
+published on [GitHub Releases](https://github.com/29thnight/reflgen_cpp/releases) (NuGet also on
+[nuget.org](https://www.nuget.org/packages/reflgen)); the generator in them ships with its own `libclang.dll` and the
+matching clang builtin headers.
 
 | Channel | For | How |
 |---|---|---|
-| NuGet `reflgen.<version>.nupkg` | `.vcxproj` projects | Add the folder that holds the package as a package source and install `reflgen` (`packages.config`). Installing imports `reflgen.targets` into the project; nothing else to set. |
+| NuGet [`reflgen`](https://www.nuget.org/packages/reflgen) | `.vcxproj` projects | Install `reflgen` from nuget.org (`packages.config`), or add a folder holding the downloaded `.nupkg` as a package source. Installing imports `reflgen.targets` into the project; nothing else to set. |
 | vcpkg overlay port | vcpkg manifest projects (MSBuild or CMake) | `./scripts/make-overlay-port.ps1 -Destination <overlay-ports>` writes a port that fetches the `v<version>` tag. Add `reflgen` to `vcpkg.json`. MSBuild: import `<installed>\share\reflgen\msbuild\reflgen.targets` (it finds `tools\reflgen\reflgen.exe` itself). CMake: `find_package(reflgen CONFIG REQUIRED)`. |
 | zip `reflgen-<version>-windows-x64.zip` | anything else | A CMake install layout (`bin`, `include`, `lib\cmake`, `share`). CMake: add it to `CMAKE_PREFIX_PATH` and `find_package(reflgen)`. MSBuild: import `share\reflgen\msbuild\reflgen.targets`. |
 | VS extension `Reflgen.VisualStudio.vsix` | Visual Studio | Run the file to install it ([below](#visual-studio-extension)). |
@@ -345,7 +346,8 @@ no header has to be registered or marked.
 
 ### Visual Studio extension
 
-VS 2022 (17.x) and 2026 (18.x), x64. Run `Reflgen.VisualStudio.vsix` (a release asset, or build `vs/`) to install it.
+VS 2026 (18.x), x64 — the version it is tested with. Run `Reflgen.VisualStudio.vsix` (a release asset, or build
+`vs/`) to install it.
 
 ```powershell
 & "<VS>\MSBuild\Current\Bin\amd64\MSBuild.exe" vs\src\Reflgen.VisualStudio\Reflgen.VisualStudio.csproj /restore /p:Configuration=Release

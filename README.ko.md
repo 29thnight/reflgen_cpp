@@ -16,13 +16,14 @@
 
 ## 설치
 
-Windows x64, Visual Studio 2022(17.x) 또는 2026(18.x). 아래 배포물은
-[GitHub Releases](https://github.com/29thnight/reflgen_cpp/releases)에 있고, 그 안의 생성기는 `libclang.dll` 과 같은
-판의 clang 내장 header 를 함께 담는다.
+Windows x64, Visual Studio 2026(18.x) — reflgen 을 검증한 판이다. 아래 배포물은
+[GitHub Releases](https://github.com/29thnight/reflgen_cpp/releases)에 있고(NuGet 은
+[nuget.org](https://www.nuget.org/packages/reflgen)에도), 그 안의 생성기는 `libclang.dll` 과 같은 판의 clang 내장
+header 를 함께 담는다.
 
 | 채널 | 대상 | 방법 |
 |---|---|---|
-| NuGet `reflgen.<판>.nupkg` | `.vcxproj` 프로젝트 | 패키지가 든 폴더를 패키지 원본으로 더하고 `reflgen` 을 설치한다(`packages.config`). 설치하면 `reflgen.targets` 가 프로젝트에 들어간다 — 따로 설정할 것이 없다. |
+| NuGet [`reflgen`](https://www.nuget.org/packages/reflgen) | `.vcxproj` 프로젝트 | nuget.org 에서 `reflgen` 을 설치한다(`packages.config`). 받은 `.nupkg` 가 든 폴더를 패키지 원본으로 더해도 된다. 설치하면 `reflgen.targets` 가 프로젝트에 들어간다 — 따로 설정할 것이 없다. |
 | vcpkg overlay port | vcpkg 매니페스트 프로젝트(MSBuild·CMake) | `./scripts/make-overlay-port.ps1 -Destination <overlay-ports>` 가 `v<판>` 태그를 받는 port 를 쓴다. `vcpkg.json` 에 `reflgen` 을 더한다. MSBuild: `<installed>\share\reflgen\msbuild\reflgen.targets` 를 가져온다(`tools\reflgen\reflgen.exe` 를 스스로 찾는다). CMake: `find_package(reflgen CONFIG REQUIRED)`. |
 | zip `reflgen-<판>-windows-x64.zip` | 그 밖 | CMake 설치 배치(`bin`·`include`·`lib\cmake`·`share`). CMake: `CMAKE_PREFIX_PATH` 에 더하고 `find_package(reflgen)`. MSBuild: `share\reflgen\msbuild\reflgen.targets` 를 가져온다. |
 | VS 확장 `Reflgen.VisualStudio.vsix` | Visual Studio | 파일을 실행해 설치한다([아래](#visual-studio-확장)). |
@@ -319,7 +320,7 @@ namespace editor
 
 ### Visual Studio 확장
 
-VS 2022(17.x)·2026(18.x), x64. `Reflgen.VisualStudio.vsix`(릴리스 배포물, 또는 `vs/` 를 빌드한 것)를 실행해
+VS 2026(18.x), x64 — 시험한 판이다. `Reflgen.VisualStudio.vsix`(릴리스 배포물, 또는 `vs/` 를 빌드한 것)를 실행해
 설치한다.
 
 ```powershell
