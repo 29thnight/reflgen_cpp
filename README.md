@@ -157,7 +157,11 @@ that gathers them (`reflgen_<module>.h`) into every translation unit.
 
 namespace game
 {
-    enum class [[reflgen::reflect]] element { fire, water, wind = 1 << 10 };     // exact table, even outside the scan range
+    enum class [[reflgen::reflect]] element
+    { fire,
+      water,
+      wind = 1 << 10
+    }; // exact table, even outside the scan range
 
     class [[reflgen::reflect("game.player")]] player : public entity               // argument = registry key and polymorphic tag
     {
@@ -167,14 +171,23 @@ namespace game
         static constexpr int max_level = 99;
         static constexpr float max_hp = 999.0f;
 
-        [[reflgen::range(1, max_level)]] int level = 1;                            // class member names are used
-        [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]] float hp = 100.0f;   // unqualified, as written
-        [[reflgen::ignore]] int cache = 0;                                         // left out of reflection
-        [[reflgen::transient]] int frame = 0;                                      // reflected but not saved
-        [[reflgen::reflect]] void level_up(int amount);                            // only marked methods
+        [[reflgen::range(1, max_level)]]
+        int level = 1;              // class member names are used
+
+        [[reflgen::range(0.0f, max_hp), game::tooltip("HP")]]
+        float hp = 100.0f;          // unqualified, as written
+
+        [[reflgen::ignore]]
+        int cache = 0;              // left out of reflection
+
+        [[reflgen::transient]]
+        int frame = 0;              // reflected but not saved
+
+        [[reflgen::reflect]]
+        void level_up(int amount);  // only marked methods
 
       private:
-        int secret_ = 7;                                                           // reflected without a mark
+        int secret_ = 7;            // reflected without a mark
     };
 } // namespace game
 ```
