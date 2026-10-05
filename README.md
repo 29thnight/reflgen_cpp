@@ -158,7 +158,8 @@ that gathers them (`reflgen_<module>.h`) into every translation unit.
 namespace game
 {
     enum class [[reflgen::reflect]] element
-    { fire,
+    {
+      fire,
       water,
       wind = 1 << 10
     }; // exact table, even outside the scan range
