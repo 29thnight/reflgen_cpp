@@ -100,7 +100,9 @@ if(REFLGEN_BUILD_TESTS)
 
         add_executable(reflgen_generator_tests
             generator/tests/attribute_scan_tests.cpp
+            generator/tests/declarations_tests.cpp
             generator/tests/emit_tests.cpp
+            generator/tests/interop_tests.cpp
             ${reflgen_harness_sources})
         target_include_directories(reflgen_generator_tests PRIVATE tests)
         target_link_libraries(reflgen_generator_tests PRIVATE reflgen_generator_core reflgen::reflgen)
@@ -134,6 +136,7 @@ if(REFLGEN_BUILD_TESTS)
         reflgen_generate(reflgen_description_only
             MODULE description_only
             HEADERS tests/generated/description_only.h
+            DECLARATIONS_JSON declarations.json
             NO_REGISTRATION)
         file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/description_only_sources_$<CONFIG>.txt"
              CONTENT "$<JOIN:$<TARGET_PROPERTY:reflgen_description_only,SOURCES>,\n>\n")
@@ -209,6 +212,23 @@ if(REFLGEN_BUILD_TESTS)
             COMMAND "${CMAKE_COMMAND}"
                 "-DCATALOG=${CMAKE_CURRENT_BINARY_DIR}/reflgen/reflgen_generated_tests/$<CONFIG>/reflgen_generated_tests.attributes.tsv"
                 -P "${PROJECT_SOURCE_DIR}/tests/generated/check_catalog.cmake")
+
+        # 선택 선언 manifest — 기본 출력 보존, 타입·attribute 정보, 빈 모듈, 경로 충돌.
+        add_test(NAME reflgen_generator_declarations
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DHEADER=${PROJECT_SOURCE_DIR}/tests/generated/declarations_types.h"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/declarations"
+                "-DGENERATED_MANIFEST=$<TARGET_GENEX_EVAL:reflgen_description_only,$<TARGET_PROPERTY:reflgen_description_only,REFLGEN_DECLARATIONS_JSON>>"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_declarations.cmake")
+
+        # reflection 과 독립적인 명시적 C/C# export, 잘못된 요청의 진단과 출력 보존.
+        add_test(NAME reflgen_generator_interop
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DHEADER=${PROJECT_SOURCE_DIR}/tests/generated/interop_types.h"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/interop"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_interop.cmake")
 
         # 손으로 쓴 응답 파일 — UTF-8 BOM 과 따옴표 친 경로를 받아야 한다(메모장·PowerShell 이 BOM 을 붙인다).
         add_test(NAME reflgen_generator_response_file

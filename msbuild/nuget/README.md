@@ -48,6 +48,26 @@ Every non-static data member of a `[[reflgen::reflect]]` class is reflected; met
 descriptions drive the runtime descriptors (`reflgen::type_descriptor_of<T>()`: fields, attributes, method invocation)
 and the JSON and binary serializers, and you can plug in your own format through `reflgen::writer` / `reflgen::reader`.
 
+For downstream generators, opt into a versioned JSON declaration manifest with the same property as the standalone
+MSBuild integration:
+
+```xml
+<PropertyGroup>
+  <ReflgenDeclarationsJson>$(IntDir)reflgen\$(ProjectName).declarations.json</ReflgenDeclarationsJson>
+</PropertyGroup>
+```
+
+Leave it unset to disable it. This is declaration metadata, not an ABI or exportability guarantee; reflection
+generation is unchanged. Relative paths are project-relative and must resolve under `ReflgenOutputDirectory`.
+Unchanged content keeps its timestamp, a deleted manifest is regenerated when MSBuild runs, and Clean removes outputs
+owned by a successful generation. Existing unowned files and input/output collisions are rejected. The package
+imports the shared targets, so no extra import is needed.
+
+`ReflgenInterop=true` also opts into C ABI / C# bindings (`reflgen_<module>_interop.h/.cpp/.cs`). Use
+`ReflgenInteropLibrary` for the native library name (default: module name) and `ReflgenInteropNamespace` for the C#
+namespace (default: `Reflgen.Generated`). The C++ implementation is compiled independently of
+`ReflgenRegistration=false`; the C# output is not compiled by the C++ project.
+
 ## Learn more
 
 - Documentation: https://github.com/29thnight/reflgen_cpp#readme

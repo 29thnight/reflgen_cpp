@@ -302,6 +302,76 @@ namespace editor
 | RG0101 | (note) A clang error skipped because it is outside reflected declarations |
 | RG0102 | A reflected declaration clang considers invalid because of an error outside it (base class, member type) |
 
+### Optional declaration manifest
+
+`--declarations-json FILE` adds one UTF-8 JSON declaration manifest per module for downstream generators and other
+tools. It is opt-in and does not change reflection generation, injection or registration. Parent directories are
+created as needed; unchanged content keeps its timestamp.
+
+```sh
+reflgen --module game --output build/reflgen --declarations-json build/game.declarations.json include/game/player.h -- -std=c++20 -Iinclude
+```
+
+The root identifies `format: "reflgen.declarations"` and `version: 1`, with `module`, `target` (`triple`,
+`pointer_width`) and `headers`. Each header contains its `path`, reflected `classes` and `enums`. Declarations carry
+names, source locations and attributes; classes include fields and reflected methods. Methods carry their owner,
+access, signature, qualifiers, calling convention, exception specification, return type and parameters. Type records
+include source and canonical spellings, qualifiers and recursive pointer/reference/array shape. Attributes retain
+their scope, name, argument tokens, qualified expression and source location.
+
+This is declaration metadata, not an ABI or exportability guarantee. Consumers must check the format/version and
+apply their own selection, supported-type and marshaling rules. The existing reflection eligibility and diagnostics
+still apply: this option does not enable otherwise unsupported declarations, overloads or templates.
+The complete field and compatibility contract is in [DECLARATIONS.md](DECLARATIONS.md).
+
+In CMake, add `DECLARATIONS_JSON FILE` to `reflgen_generate()`:
+
+```cmake
+reflgen_generate(my_game
+    HEADERS include/game/player.h
+    MODULE game
+    DECLARATIONS_JSON game.declarations.json)
+get_target_property(game_declarations my_game REFLGEN_DECLARATIONS_JSON)
+```
+
+Relative paths resolve inside `<OUTPUT_DIRECTORY>/<config>/`; absolute paths must stay inside that same directory.
+Multi-config builds require `$<CONFIG>` in the resolved path to prevent configurations overwriting each other; this
+is the only generator expression supported in optional output paths. `REFLGEN_DECLARATIONS_JSON` holds the resolved
+absolute path (possibly containing `$<CONFIG>`) for a downstream command's arguments and `DEPENDS`. The JSON is a
+tracked generated output, is regenerated if deleted, participates in
+clean, and is never compiled. Omit the option to disable it; it also works with `NO_REGISTRATION`.
+
+For MSBuild, set `ReflgenDeclarationsJson` to the desired file, preferably under the configuration-specific `IntDir`:
+
+```xml
+<PropertyGroup>
+  <ReflgenDeclarationsJson>$(IntDir)reflgen\$(ProjectName).declarations.json</ReflgenDeclarationsJson>
+</PropertyGroup>
+```
+
+An unset/empty property disables the manifest. Relative paths are project-relative, and the resolved path must stay
+under `ReflgenOutputDirectory`. The path is passed through the response file, a missing manifest triggers generation
+when MSBuild runs, and unchanged JSON does not force repeated generation. The same property works with NuGet.
+
+Both integrations reject collisions with inputs and reserved outputs, and refuse existing optional files unless a
+previous successful generation recorded ownership. Choose a new generated path, or remove an existing file only
+after verifying it is stale generated output. Clean removes owned optional outputs even when generation was skipped.
+The standalone CLI can still write a safe path outside the build output directory. Visual Studio's native fast
+up-to-date check may skip MSBuild after an output-only deletion; invoke `ReflgenGenerate` explicitly in that case.
+
+### Optional C ABI and C# bindings
+
+`--interop` adds `reflgen_<module>_interop.h`, `.cpp` and `.cs` under the normal output directory.
+`--interop-library NAME` sets the native library name used by C# (default: module name), and
+`--interop-namespace NAME` sets its namespace (default: `Reflgen.Generated`).
+
+CMake accepts `INTEROP`, `INTEROP_LIBRARY NAME` and `INTEROP_NAMESPACE NAME` in `reflgen_generate()`.
+The `REFLGEN_INTEROP_CSHARP` target property exposes the generated C# path. MSBuild/NuGet use
+`ReflgenInterop=true`, `ReflgenInteropLibrary` and `ReflgenInteropNamespace`. The generated C++ implementation is
+compiled even with `NO_REGISTRATION` / `ReflgenRegistration=false`; the C# file is never passed to the C++ compiler.
+Bindings are opt-in, independent of the JSON manifest, and use the same output ownership and cleanup checks.
+See [INTEROP.md](INTEROP.md) for explicit selection attributes, the supported boundary types and lifetime rules.
+
 ### MSBuild (.vcxproj) integration
 
 Import it at the end of the project (after `Microsoft.Cpp.targets`) or from `Directory.Build.targets`. That is all —
@@ -355,6 +425,10 @@ no header has to be registered or marked.
 | `ReflgenAttributeScopes` | None (`reflgen` only) |
 | `ReflgenAttributeHeaders` | None — headers that define user attribute types. The injection header includes them |
 | `ReflgenOutputDirectory` | `$(IntDir)reflgen\` |
+| `ReflgenDeclarationsJson` | None — optional declaration manifest path, relative to the project or absolute (above) |
+| `ReflgenInterop` | `false` — opt into C ABI / C# bindings and compile the generated C++ implementation |
+| `ReflgenInteropLibrary` | Module name — native library name used by C# |
+| `ReflgenInteropNamespace` | `Reflgen.Generated` — generated C# namespace |
 | `ReflgenRegistration` | `true` — `false` skips compiling the registration function (codebases that only use descriptions, above) |
 | `ReflgenRegistrationHeaders` | Headers the registration function includes before building descriptors (`;`-separated) — user serializer specializations and the like (above) |
 

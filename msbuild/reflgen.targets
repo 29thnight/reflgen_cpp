@@ -32,6 +32,12 @@
                              전방 선언만 하는 서술된 필드 타입의 header 가 여기 들어간다. 참조하는 reflgen 프로젝트의
                              서술(주입 header)은 스스로 본다. 반영 클래스가 없는 프로젝트는 include 하지 않는다.
     ReflgenOutputDirectory   생성물 위치. 기본은 $(IntDir)reflgen\ — 구성마다 따로다.
+    ReflgenDeclarationsJson  선택 선언 목록(JSON) 경로. 비면 만들지 않는다. 상대 경로는 프로젝트 기준이며
+                             ReflgenOutputDirectory 안에만 둔다. 기존 reflection 생성·주입은 그대로다.
+    ReflgenInterop          true 면 C ABI·C# 바인딩(.h/.cpp/.cs)을 만든다. 기본은 만들지 않는다.
+                             C++ 구현은 ReflgenRegistration 과 무관하게 컴파일한다.
+    ReflgenInteropLibrary   C# 에서 불러올 native 라이브러리 이름. 기본은 ReflgenModule.
+    ReflgenInteropNamespace C# 이름공간. 기본은 Reflgen.Generated.
     ReflgenRegistration      false 면 등록 함수(reflgen_<module>.cpp)를 컴파일하지 않는다 — 서술(schema_of·
                              for_each_field)만 쓰고 reflgen 의 등록소·직렬화는 쓰지 않는 코드베이스용이다(자기
                              직렬화·등록을 가진 엔진) — 쓰지 않을 런타임 서술자의 컴파일 시간을 치르지 않는다.
@@ -65,6 +71,9 @@
     <!-- 생성물을 모두 묶은 주입 header 와 등록 함수 정의. -->
     <_ReflgenInjection>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).h</_ReflgenInjection>
     <_ReflgenModuleSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).cpp</_ReflgenModuleSource>
+    <_ReflgenInteropHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.h</_ReflgenInteropHeader>
+    <_ReflgenInteropSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.cpp</_ReflgenInteropSource>
+    <_ReflgenInteropCSharp>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.cs</_ReflgenInteropCSharp>
     <!-- 참조하는 reflgen 프로젝트의 주입 header 들을 include 하는 header — 등록 함수 정의가 include 한다
          (_ReflgenInject 가 쓴다). -->
     <_ReflgenReferencesHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).references.h</_ReflgenReferencesHeader>
@@ -76,6 +85,7 @@
     <!-- 컴파일 입력을 정할 때 주입한다. IntelliSense 의 design-time build(GetClCommandLines)도 이 목록을
          거치므로 편집기와 빌드가 같은 강제 include 를 본다. -->
     <ComputeCompileInputsTargets>$(ComputeCompileInputsTargets);_ReflgenInject</ComputeCompileInputsTargets>
+    <CleanDependsOn>_ReflgenCleanOptionalOutputs;$(CleanDependsOn)</CleanDependsOn>
   </PropertyGroup>
 
   <ItemDefinitionGroup>
@@ -92,7 +102,7 @@
   <Target Name="ReflgenGenerate"
           BeforeTargets="ClCompile"
           Condition="'$(DesignTimeBuild)' != 'true'"
-          DependsOnTargets="_ReflgenComputeInputs;_ReflgenWriteArguments;_ReflgenRun" />
+          DependsOnTargets="_ReflgenComputeInputs;_ReflgenWriteArguments;_ReflgenRun;_ReflgenRegisterOwnedOutputs" />
 
   <!-- 모든 번역 단위에 주입 header 들(참조하는 reflgen 프로젝트의 것과 자기 것)을 강제 include 한다. 미리
        컴파일된 header 를 쓰는(/Yu·/Yc) 파일은 그 header 를 먼저 강제 include 한다 — /Yu 는 pch header 앞에 온 것을
@@ -204,17 +214,68 @@
     </ItemGroup>
   </Target>
 
-  <Target Name="_ReflgenComputeInputs">
+  <!-- 성공한 생성만 선택 파일의 소유권을 남긴다. clean 은 생성 target 없이 이 목록을 읽는다. -->
+  <Target Name="_ReflgenReadOwnedOutputs">
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ReflgenModule)', '^[A-Za-z_][A-Za-z0-9_]*$'))"
+           Code="RG0001" Text="reflgen: ReflgenModule must be a C++ identifier" />
+    <PropertyGroup>
+      <_ReflgenOwnedOutputRoot>$([MSBuild]::NormalizeDirectory('$(ProjectDir)', '$(ReflgenOutputDirectory)'))</_ReflgenOwnedOutputRoot>
+      <_ReflgenOwnershipFile>$(_ReflgenOwnedOutputRoot)reflgen_$(ReflgenModule).optional.outputs</_ReflgenOwnershipFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ReflgenProtectedInput Include="@(ClInclude);@(ClCompile);$(ReflgenAttributeHeaders);$(ReflgenRegistrationHeaders);$(MSBuildProjectFullPath)" />
+      <_ReflgenSafeOwnershipFile Include="$(_ReflgenOwnershipFile)" Exclude="@(_ReflgenProtectedInput->'%(FullPath)')" />
+    </ItemGroup>
+    <Error Condition="'@(_ReflgenSafeOwnershipFile)' == ''" Code="RG0001"
+           Text="reflgen: ownership file collides with a project input: $(_ReflgenOwnershipFile)" />
+    <ReadLinesFromFile File="$(_ReflgenOwnershipFile)" Condition="Exists('$(_ReflgenOwnershipFile)')">
+      <Output TaskParameter="Lines" ItemName="_ReflgenRecordedOutput" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_ReflgenOwnershipSignature Include="@(_ReflgenRecordedOutput->WithMetadataValue('Identity', 'reflgen.optional.outputs.v1'))" />
+      <!-- 목록이 바뀌어도 출력 디렉터리 밖이나 프로젝트 입력은 지우지 않는다. FullPath 가 '..' 를 푼다. -->
+      <_ReflgenPreviouslyOwnedOutput Include="@(_ReflgenRecordedOutput)" Exclude="reflgen.optional.outputs.v1;@(_ReflgenProtectedInput->'%(FullPath)')"
+                                    Condition="$([System.String]::Copy('%(FullPath)').StartsWith('$(_ReflgenOwnedOutputRoot)', System.StringComparison.OrdinalIgnoreCase))" />
+    </ItemGroup>
+    <Error Condition="Exists('$(_ReflgenOwnershipFile)') and '@(_ReflgenOwnershipSignature)' == ''" Code="RG0001"
+           Text="reflgen: refusing an existing unowned bookkeeping file: $(_ReflgenOwnershipFile)" />
+  </Target>
+
+  <Target Name="_ReflgenComputeInputs" DependsOnTargets="_ReflgenReadOwnedOutputs">
     <Error Condition="'$(_ReflgenImportedTooEarly)' == 'true'"
            Code="RG0001"
            Text="reflgen: reflgen.targets was imported before IntDir is defined; import it after Microsoft.Cpp.targets (or from Directory.Build.targets), or set ReflgenOutputDirectory" />
+    <PropertyGroup>
+      <_ReflgenDeclarationsJson Condition="'$(ReflgenDeclarationsJson)' != ''">$([MSBuild]::NormalizePath('$(ProjectDir)', '$(ReflgenDeclarationsJson)'))</_ReflgenDeclarationsJson>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ReflgenRunOutput Include="$(_ReflgenStamp)" />
+      <_ReflgenOptionalOutput Include="$(_ReflgenDeclarationsJson)" Condition="'$(_ReflgenDeclarationsJson)' != ''" />
+      <_ReflgenOptionalOutput Include="$(_ReflgenInteropHeader);$(_ReflgenInteropSource);$(_ReflgenInteropCSharp)" Condition="'$(ReflgenInterop)' == 'true'" />
+      <!-- 내용이 같으면 시각도 그대로다. 없을 때만 출력에 넣어 재생성하고, 있으면 stamp 로 가린다. -->
+      <_ReflgenRunOutput Include="@(_ReflgenOptionalOutput)" Condition="!Exists('%(FullPath)')" />
+    </ItemGroup>
     <!-- 프로젝트의 header 전부가 후보다. [[reflgen::reflect]] 가 있는 것만 생성기가 고른다(discover 옵션). -->
     <ItemGroup>
       <_ReflgenHeader Include="@(ClInclude->'%(FullPath)')" />
       <!-- 최신 여부는 있는 파일로만 가린다 — 지웠는데 프로젝트에 남은 항목이 입력에 있으면 MSBuild 는 target 을
            늘 오래됐다고 보아 빌드마다 생성기를 다시 돌린다. 생성기에는 전부 넘긴다(없는 파일은 거기서 거른다). -->
       <_ReflgenExistingHeader Include="@(_ReflgenHeader)" Condition="Exists('%(FullPath)')" />
+      <_ReflgenReservedFile Include="@(_ReflgenProtectedInput);$(_ReflgenInjection);$(_ReflgenModuleSource);$(_ReflgenReferencesHeader);$(ReflgenCatalogFile);$(_ReflgenArgumentsFile);$(_ReflgenResponseFile);$(_ReflgenDependencyList);$(_ReflgenStamp);$(_ReflgenOwnershipFile)" />
+      <_ReflgenReservedFile Include="@(_ReflgenHeader->'$(ReflgenOutputDirectory)%(Filename).reflgen.h')" />
+      <_ReflgenNormalizedOptionalOutput Include="@(_ReflgenOptionalOutput->'%(FullPath)')" />
+      <_ReflgenSafeOptionalOutput Include="@(_ReflgenNormalizedOptionalOutput)" Exclude="@(_ReflgenReservedFile->'%(FullPath)')" />
+      <_ReflgenDistinctOptionalOutput Include="@(_ReflgenNormalizedOptionalOutput->Distinct())" />
+      <_ReflgenUnownedOptionalOutput Include="@(_ReflgenOptionalOutput->'%(FullPath)')" Exclude="@(_ReflgenPreviouslyOwnedOutput)" />
     </ItemGroup>
+    <Error Condition="'@(_ReflgenOptionalOutput->Count())' != '@(_ReflgenSafeOptionalOutput->Count())'"
+           Code="RG0001" Text="reflgen: an optional output collides with an input or reserved generated file" />
+    <Error Condition="'@(_ReflgenOptionalOutput->Count())' != '@(_ReflgenDistinctOptionalOutput->Count())'"
+           Code="RG0001" Text="reflgen: optional output paths collide" />
+    <Error Condition="!$([System.String]::Copy('%(_ReflgenOptionalOutput.FullPath)').StartsWith('$(_ReflgenOwnedOutputRoot)', System.StringComparison.OrdinalIgnoreCase)) and '@(_ReflgenOptionalOutput)' != ''"
+           Code="RG0001" Text="reflgen: optional outputs must stay under ReflgenOutputDirectory: %(_ReflgenOptionalOutput.FullPath)" />
+    <Error Condition="Exists('%(_ReflgenUnownedOptionalOutput.FullPath)')"
+           Code="RG0001" Text="reflgen: refusing an existing unowned optional output: %(_ReflgenUnownedOptionalOutput.FullPath); choose a new output path or remove it only if it is a stale generated file" />
 
     <!-- 생성된 등록 함수도 컴파일한다. 미리 컴파일된 header 는 쓰지 않는다(생성 파일은 pch.h 를 모른다).
          이 항목은 _ReflgenInject 뒤에 생기므로 주입 header 를 강제 include 받지 않는다 — 스스로 include 한다.
@@ -228,6 +289,11 @@
       <_ReflgenCompile Include="@(ClCompile->WithMetadataValue('Identity', '$(_ReflgenModuleSource)'))" />
       <!-- ReflgenRegistration=false — 설정만 얻고 컴파일 목록에서는 뺀다. -->
       <ClCompile Remove="$(_ReflgenModuleSource)" Condition="'$(ReflgenRegistration)' == 'false'" />
+      <!-- interop 구현은 등록 함수와 별개다. C# 파일은 C++ 컴파일 목록에 넣지 않는다. -->
+      <ClCompile Include="$(_ReflgenInteropSource)" Condition="'$(ReflgenInterop)' == 'true'">
+        <PrecompiledHeader>NotUsing</PrecompiledHeader>
+        <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
+      </ClCompile>
     </ItemGroup>
 
     <!-- 지난 실행이 읽은 파일들 — header 가 include 하는 파일이 바뀌어도 다시 생성하게 한다. -->
@@ -273,6 +339,10 @@
       <_ReflgenCommandLine Include="--output;$(ReflgenOutputDirectory.TrimEnd('\'))" />
       <_ReflgenCommandLine Include="--clang-args-file;$(_ReflgenArgumentsFile)" />
       <_ReflgenCommandLine Include="--dependency-list;$(_ReflgenDependencyList)" />
+      <_ReflgenCommandLine Include="--declarations-json;$(_ReflgenDeclarationsJson)" Condition="'$(_ReflgenDeclarationsJson)' != ''" />
+      <_ReflgenCommandLine Include="--interop" Condition="'$(ReflgenInterop)' == 'true'" />
+      <_ReflgenCommandLine Include="--interop-library;$(ReflgenInteropLibrary)" Condition="'$(ReflgenInterop)' == 'true' and '$(ReflgenInteropLibrary)' != ''" />
+      <_ReflgenCommandLine Include="--interop-namespace;$(ReflgenInteropNamespace)" Condition="'$(ReflgenInterop)' == 'true' and '$(ReflgenInteropNamespace)' != ''" />
       <_ReflgenCommandLine Include="--discover" />
     </ItemGroup>
     <PropertyGroup>
@@ -298,7 +368,7 @@
   <Target Name="_ReflgenRun"
           Condition="'@(_ReflgenHeader)' != ''"
           Inputs="@(_ReflgenExistingHeader);@(_ReflgenDependency);$(ReflgenExecutable);$(_ReflgenArgumentsFile);$(_ReflgenResponseFile)"
-          Outputs="$(_ReflgenStamp)">
+          Outputs="@(_ReflgenRunOutput)">
     <Error Condition="'$(ReflgenExecutable)' == '' or !Exists('$(ReflgenExecutable)')"
            Code="RG0001"
            Text="reflgen: the generator was not found; set ReflgenExecutable to the path of reflgen.exe (now '$(ReflgenExecutable)')" />
@@ -306,9 +376,34 @@
     <!-- 진단은 MSVC 형식이라 Exec 가 그대로 오류·경고로 올린다(Error List 로 간다). 생성기는 UTF-8 로
          쓴다 — 지정하지 않으면 Exec 가 콘솔 코드 페이지(한국어 Windows 는 949)로 읽어 한글 경로가 깨진다. -->
     <Exec Command="&quot;$(ReflgenExecutable)&quot; @&quot;$(_ReflgenResponseFile)&quot;" StdOutEncoding="utf-8" StdErrEncoding="utf-8" />
-    <Touch Files="$(_ReflgenStamp)" AlwaysCreate="true" />
     <ItemGroup>
-      <FileWrites Include="$(ReflgenOutputDirectory)*.*" />
+      <_ReflgenNewOwnedOutput Include="@(_ReflgenPreviouslyOwnedOutput);@(_ReflgenOptionalOutput->'%(FullPath)')" />
+      <FileWrites Include="$(ReflgenOutputDirectory)*.*" Exclude="@(_ReflgenOptionalOutput)" />
     </ItemGroup>
+    <WriteLinesToFile File="$(_ReflgenOwnershipFile)" Lines="reflgen.optional.outputs.v1;@(_ReflgenNewOwnedOutput->Distinct())"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" Condition="'@(_ReflgenNewOwnedOutput)' != ''" />
+    <Touch Files="$(_ReflgenStamp)" AlwaysCreate="true" />
+  </Target>
+
+  <!-- 생성이 최신이라 건너뛰어도 성공 기록에서만 FileWrites 를 복원한다. -->
+  <Target Name="_ReflgenRegisterOwnedOutputs">
+    <ReadLinesFromFile File="$(_ReflgenOwnershipFile)" Condition="Exists('$(_ReflgenOwnershipFile)')">
+      <Output TaskParameter="Lines" ItemName="_ReflgenSuccessfulOutput" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <FileWrites Include="@(_ReflgenSuccessfulOutput)" Exclude="reflgen.optional.outputs.v1;@(_ReflgenProtectedInput->'%(FullPath)')"
+                  Condition="$([System.String]::Copy('%(FullPath)').StartsWith('$(_ReflgenOwnedOutputRoot)', System.StringComparison.OrdinalIgnoreCase))" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_ReflgenCleanOptionalOutputs" BeforeTargets="Clean" DependsOnTargets="_ReflgenReadOwnedOutputs">
+    <ReadLinesFromFile File="$(_ReflgenOwnershipFile)" Condition="Exists('$(_ReflgenOwnershipFile)')">
+      <Output TaskParameter="Lines" ItemName="_ReflgenCleanRecordedOutput" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_ReflgenCleanOwnedOutput Include="@(_ReflgenCleanRecordedOutput)" Exclude="reflgen.optional.outputs.v1;@(_ReflgenProtectedInput->'%(FullPath)')"
+                               Condition="$([System.String]::Copy('%(FullPath)').StartsWith('$(_ReflgenOwnedOutputRoot)', System.StringComparison.OrdinalIgnoreCase))" />
+    </ItemGroup>
+    <Delete Files="@(_ReflgenCleanOwnedOutput);$(_ReflgenOwnershipFile)" />
   </Target>
 </Project>
