@@ -24,6 +24,10 @@ jobs:
         preset: [msvc-cpp20, msvc-cpp23, clang-cl-cpp20, clang-cl-cpp23]
     steps:
       - uses: actions/checkout@v7
+      # 생성한 C# interop 선언을 컴파일·실행하는 시험(reflgen_interop_csharp_calls)이 쓴다.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
       - name: Configure, build and test
         shell: pwsh
         run: ./scripts/test.ps1 -Presets ${{ matrix.preset }}

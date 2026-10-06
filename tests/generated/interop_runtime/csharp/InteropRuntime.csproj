@@ -1,0 +1,15 @@
+<!-- 생성된 P/Invoke 선언으로 native 라이브러리를 부른다. check_interop_csharp.cmake 가 경로를 넘긴다. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(ReflgenInteropSource)" />
+    <None Include="$(ReflgenNativeLibrary)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

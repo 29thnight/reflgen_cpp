@@ -134,6 +134,27 @@ namespace
         excludes(output.cpp_source, "delete ");
     });
 
+    // MSVC 는 dllexport 를 정의에서 처음 붙이면 C2375(연결이 다름)로, clang-cl 은 경고로 멈춘다.
+    // export 는 header 의 첫 선언이 갖고, wrapper 는 header 앞에서 그것을 켜며, 정의는 다시 붙이지 않는다.
+    const test linkage("interop: header declarations carry the export and definitions inherit it", [] {
+        diagnostics report;
+        const interop_output output = emit_interop({example_class()}, linux_x64, example_options, report);
+        require(!report.has_errors());
+        contains(output.c_header, "#if defined(REFLGEN_SAMPLE_INTEROP_BUILD)\n#if defined(_WIN32)\n"
+                                  "#define REFLGEN_SAMPLE_INTEROP_API __declspec(dllexport)");
+        contains(output.c_header, "uint64_t REFLGEN_SAMPLE_INTEROP_API REFLGEN_SAMPLE_INTEROP_CDECL "
+                                  "reflgen_sample_abi_fingerprint(void);");
+        contains(output.c_header, "int32_t REFLGEN_SAMPLE_INTEROP_API REFLGEN_SAMPLE_INTEROP_CDECL "
+                                  "reflgen_sample_game_counter_read(");
+        contains(output.c_header, "#undef REFLGEN_SAMPLE_INTEROP_API");
+        check(output.cpp_source.find("#define REFLGEN_SAMPLE_INTEROP_BUILD\n") <
+                  output.cpp_source.find("#include \"reflgen_sample_interop.h\""),
+              "the wrapper must request exports before including its header");
+        excludes(output.cpp_source, "dllexport");
+        excludes(output.cpp_source, "visibility");
+        contains(output.cpp_source, "extern \"C\" int32_t REFLGEN_SAMPLE_INTEROP_CDECL reflgen_sample_game_counter_read(");
+    });
+
     const test void_and_bool("interop: void uses status alone and bool returns a normalized byte", [] {
         class_model model = example_class();
         model.methods.front().return_type = primitive("void", "void", -1);

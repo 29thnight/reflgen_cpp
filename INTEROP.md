@@ -71,6 +71,12 @@ does not build, load, publish, or deploy that library. Add the generated C# sour
 to its consumer project. The declared library name must resolve to that native
 library on the consumer's platform.
 
+The header declarations carry the export attribute (`__declspec(dllexport)` on
+Windows, default visibility elsewhere) only when the generated C++ source includes
+them; that source defines `REFLGEN_<MODULE>_INTEROP_BUILD` first, and its
+definitions inherit the attribute. Native C or C++ consumers include the same
+header without that definition and link against the library normally.
+
 ```cmake
 reflgen_generate(sample_native
     HEADERS counter.h
