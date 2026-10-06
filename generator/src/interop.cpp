@@ -333,6 +333,15 @@ namespace reflgen::generator
                    "#else\n#define " + macro + "\n#endif\n";
         }
 
+        // 첫 선언이 export 를 가져야 한다 — MSVC 는 정의에서 처음 붙인 dllexport 를 다른 연결로 거부한다.
+        // 생성 wrapper 만 <macro>_BUILD 를 정의하고, 소비자는 import 장식 없이 같은 선언을 본다.
+        std::string export_macro(const std::string& macro)
+        {
+            return "#if defined(" + macro + "_BUILD)\n#if defined(_WIN32)\n#define " + macro +
+                   "_API __declspec(dllexport)\n#else\n#define " + macro +
+                   "_API __attribute__((visibility(\"default\")))\n#endif\n#else\n#define " + macro + "_API\n#endif\n";
+        }
+
         std::string c_parameters(const lowered_class& owner, const lowered_method& method)
         {
             std::string result = owner.handle + "* receiver";
@@ -377,7 +386,7 @@ namespace reflgen::generator
         void append_thunk(std::string& output, const lowered_class& owner, const lowered_method& method,
                           const std::string& prefix, const std::string& macro)
         {
-            output += "extern \"C\" " + macro + "_EXPORT int32_t " + macro + "_CDECL " + method.symbol + "(" +
+            output += "extern \"C\" int32_t " + macro + "_CDECL " + method.symbol + "(" +
                       c_parameters(owner, method) + ")\n{\n";
             output += "    if (receiver == nullptr";
             if (method.result.c != "void")
@@ -628,24 +637,27 @@ namespace reflgen::generator
         header += "// Wrappers write results only after successful invocation. Exceptions become status_exception.\n";
         header += "// The fingerprint detects contract changes, not malicious code or invalid handles.\n\n";
         header += calling_convention_macro(macro + "_CDECL");
+        header += export_macro(macro);
         header += "\n#ifdef __cplusplus\nextern \"C\"\n{\n#endif\n\n";
         header += "enum\n{\n    " + prefix + "_status_ok = 0,\n    " + prefix +
                   "_status_invalid_argument = 1,\n    " + prefix + "_status_exception = 2\n};\n\n";
-        header += "uint64_t " + macro + "_CDECL " + prefix + "_abi_fingerprint(void);\n\n";
+        header += "uint64_t " + macro + "_API " + macro + "_CDECL " + prefix + "_abi_fingerprint(void);\n\n";
         for (const lowered_class& owner : classes)
         {
             header += "// Borrowed " + owner.model->qualified_name + "\n";
             header += "typedef struct " + owner.handle + " " + owner.handle + ";\n";
             for (const lowered_method& method : owner.methods)
             {
-                header += "int32_t " + macro + "_CDECL " + method.symbol + "(" + c_parameters(owner, method) + ");\n";
+                header += "int32_t " + macro + "_API " + macro + "_CDECL " + method.symbol + "(" +
+                          c_parameters(owner, method) + ");\n";
             }
             header += '\n';
         }
-        header += "#ifdef __cplusplus\n}\n#endif\n\n#undef " + macro + "_CDECL\n";
+        header += "#ifdef __cplusplus\n}\n#endif\n\n#undef " + macro + "_API\n#undef " + macro + "_CDECL\n";
 
         std::string& source = output.cpp_source;
-        source = std::string(banner) + "\n#include " + string_literal(prefix + ".h") + "\n#include " +
+        source = std::string(banner) + "\n// Exports come from the header declarations; definitions inherit them.\n" +
+                 "#define " + macro + "_BUILD\n#include " + string_literal(prefix + ".h") + "\n#include " +
                  string_literal(prefix + "_interop.h") + "\n";
         std::set<std::string> headers;
         for (const lowered_class& owner : classes)
@@ -674,9 +686,7 @@ namespace reflgen::generator
                 source += "#endif\n#endif\n\n";
             }
         }
-        source += calling_convention_macro(macro + "_CDECL");
-        source += "#if defined(_WIN32)\n#define " + macro + "_EXPORT __declspec(dllexport)\n#else\n#define " + macro +
-                  "_EXPORT __attribute__((visibility(\"default\")))\n#endif\n\n";
+        source += calling_convention_macro(macro + "_CDECL") + "\n";
         source += "static_assert(CHAR_BIT == 8, \"reflgen interop requires 8-bit bytes\");\n";
         if (target.pointer_width != 0)
         {
@@ -696,7 +706,7 @@ namespace reflgen::generator
             }
         }
         source += "\n// ABI contract fingerprint (FNV-1a 64-bit); this is not a cryptographic signature.\n";
-        source += "extern \"C\" " + macro + "_EXPORT uint64_t " + macro + "_CDECL " + prefix +
+        source += "extern \"C\" uint64_t " + macro + "_CDECL " + prefix +
                   "_abi_fingerprint(void)\n{\n    return 0x" + output.fingerprint + "ULL;\n}\n\n";
         for (const lowered_class& owner : classes)
         {
@@ -705,7 +715,7 @@ namespace reflgen::generator
                 append_thunk(source, owner, method, prefix, macro);
             }
         }
-        source += "#undef " + macro + "_EXPORT\n#undef " + macro + "_CDECL\n";
+        source += "#undef " + macro + "_CDECL\n#undef " + macro + "_BUILD\n";
 
         output.csharp_source = std::string(banner) + "\n// No C# types were selected for this module.\n";
         if (has_csharp)
