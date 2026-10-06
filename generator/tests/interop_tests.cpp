@@ -94,8 +94,9 @@ namespace
         check(output.cpp_source.empty());
         check(output.csharp_source.empty());
         check(output.fingerprint.empty());
-        check(std::any_of(report.entries().begin(), report.entries().end(), [](const diagnostic& entry)
-                          { return entry.position.file == "C:/src/counter.h" && entry.position.line != 0; }),
+        // include 경로 자체를 바꿔 거부를 시험해도 진단은 그 입력 경로를 보존해야 한다.
+        check(std::any_of(report.entries().begin(), report.entries().end(), [&model](const diagnostic& entry)
+                          { return entry.position.file == model.position.file && entry.position.line != 0; }),
               "declaration diagnostics must retain source positions");
     }
 
