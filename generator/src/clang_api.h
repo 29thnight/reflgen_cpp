@@ -63,6 +63,8 @@ namespace reflgen::generator
     // 파싱에 쓰인 파일 전부(주 파일 제외), 정규화한 경로.
     std::vector<std::string> included_files(CXTranslationUnit unit);
 
+    target_model target_of(CXTranslationUnit unit);
+
     // clang_visitChildren 을 람다로 — 콜백이 CXChildVisitResult 를 돌려준다.
     template<class Visitor>
     void visit_children(CXCursor cursor, Visitor&& visitor)

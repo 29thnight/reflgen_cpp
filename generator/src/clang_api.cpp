@@ -17,6 +17,18 @@ namespace reflgen::generator
         return take_string(clang_getCursorSpelling(cursor));
     }
 
+    target_model target_of(CXTranslationUnit unit)
+    {
+        const CXTargetInfo target = clang_getTranslationUnitTargetInfo(unit);
+        if (target == nullptr)
+        {
+            return {};
+        }
+        target_model result{take_string(clang_TargetInfo_getTriple(target)), clang_TargetInfo_getPointerWidth(target)};
+        clang_TargetInfo_dispose(target);
+        return result;
+    }
+
     std::string strip_tag(std::string name)
     {
         for (const std::string_view tag : {"struct ", "class ", "enum ", "union "})

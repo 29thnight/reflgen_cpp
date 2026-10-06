@@ -66,6 +66,10 @@ namespace reflgen::generator
     // 그 header 를 한 번 더 파싱할 뿐 생성 결과는 같다.
     bool declares_reflection(std::string_view text);
 
+    // 별도 노출 표기가 있는 header 도 파싱한다. 이 검사는 reflection 등록을 허가하지 않는다.
+    // lifetime 단독 표기도 읽어 잘못 놓인 정책을 진단한다.
+    bool declares_interop(std::string_view text);
+
     // 아래는 파일 전체의 token·그룹(offset 순)에서 선언 하나의 몫을 고르는 도구다.
 
     // offset 에서 시작하는 token 의 바로 다음 token 이 시작하는 곳. 없으면 nullopt.

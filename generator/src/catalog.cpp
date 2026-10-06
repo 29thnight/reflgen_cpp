@@ -198,6 +198,10 @@ namespace reflgen::generator
             {"directive", std::string(library_scope), "ignore", "ignore", "이 멤버를 반영에서 뺀다."},
             {"directive", std::string(library_scope), "attribute", "attribute",
              "이 타입을 편집기 자동완성의 attribute 로 내보낸다. 이름공간에 하나라도 있으면 표시한 타입만 내보낸다."},
+            {"directive", std::string(library_scope), "interop", "interop(\"c\")\ninterop(\"csharp\")",
+             "타입과 선택한 public 메서드의 C ABI/C# 바인딩 대상을 정한다. reflection 과 독립이며 --interop 이 필요하다."},
+            {"directive", std::string(library_scope), "lifetime", "lifetime(\"borrowed\")",
+             "interop 타입의 receiver 는 호출자가 수명을 보장하는 빌린 객체 포인터다. 생성·소멸은 내보내지 않는다."},
         };
         catalog_map found;
         visit_namespaces(clang_getTranslationUnitCursor(unit), scopes, declares, found);

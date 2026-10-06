@@ -185,7 +185,7 @@ namespace reflgen::generator
         return std::all_of(text.begin(), text.end(), is_identifier_character);
     }
 
-    bool declares_reflection(std::string_view text)
+    static bool declares_attribute(std::string_view text, std::string_view name)
     {
         constexpr std::string_view using_reflgen = "usingreflgen:";
         for (std::size_t open = text.find("[["); open != std::string_view::npos; open = text.find("[[", open + 2))
@@ -206,14 +206,24 @@ namespace reflgen::generator
             }
             const std::string_view compact = list;
             const bool found = compact.starts_with(using_reflgen)
-                                   ? contains_word(compact.substr(using_reflgen.size()), "reflect")
-                                   : contains_word(compact, "reflgen::reflect");
+                                   ? contains_word(compact.substr(using_reflgen.size()), name)
+                                   : contains_word(compact, "reflgen::" + std::string(name));
             if (found)
             {
                 return true;
             }
         }
         return false;
+    }
+
+    bool declares_reflection(std::string_view text)
+    {
+        return declares_attribute(text, "reflect");
+    }
+
+    bool declares_interop(std::string_view text)
+    {
+        return declares_attribute(text, "interop") || declares_attribute(text, "lifetime");
     }
 
     std::optional<std::size_t> next_token_offset(std::span<const token> tokens, std::size_t offset)
