@@ -22,6 +22,7 @@ namespace reflgen::generator
         std::string module_name;
         // clang 내장 header 를 담은 resource 디렉터리(그 아래 include/). 비면 libclang 이 스스로 찾는다.
         std::string resource_directory;
+        bool collect_interop = false; // 별도로 opt-in 한 내보내기 선언도 읽는다. reflection 선택에는 영향이 없다.
     };
 
     struct extract_result
@@ -29,6 +30,8 @@ namespace reflgen::generator
         std::vector<header_model> headers;      // header 마다 하나씩, 입력 순서대로(반영할 것이 없어도 있다)
         std::vector<std::string> dependencies;  // 파싱에 읽힌 파일 전부 — 빌드 시스템의 depfile 용
         std::vector<attribute_info> attributes; // 편집기 자동완성용 attribute 카탈로그
+        target_model target;
+        std::vector<class_model> exports;
     };
 
     // 오류가 보고되면 결과를 쓰지 않는다.

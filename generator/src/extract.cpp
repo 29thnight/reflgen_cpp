@@ -20,11 +20,190 @@ namespace reflgen::generator
     {
         constexpr std::string_view library_scope = "reflgen";
 
+        std::string access_of(CXCursor cursor)
+        {
+            switch (clang_getCXXAccessSpecifier(cursor))
+            {
+            case CX_CXXPublic:
+                return "public";
+            case CX_CXXProtected:
+                return "protected";
+            case CX_CXXPrivate:
+                return "private";
+            default:
+                return "none";
+            }
+        }
+
+        std::string calling_convention_of(CXType type)
+        {
+            switch (clang_getFunctionTypeCallingConv(type))
+            {
+            case CXCallingConv_Default:
+                return "default";
+            case CXCallingConv_C:
+                return "c";
+            case CXCallingConv_X86StdCall:
+                return "x86_stdcall";
+            case CXCallingConv_X86FastCall:
+                return "x86_fastcall";
+            case CXCallingConv_X86ThisCall:
+                return "x86_thiscall";
+            case CXCallingConv_Win64:
+                return "win64";
+            case CXCallingConv_X86_64SysV:
+                return "x86_64_sysv";
+            case CXCallingConv_X86VectorCall:
+                return "x86_vectorcall";
+            default:
+                // 새로운/노출되지 않은 규약을 default 로 오인하지 않게 원래 값도 남긴다.
+                return "unsupported:" + std::to_string(static_cast<int>(clang_getFunctionTypeCallingConv(type)));
+            }
+        }
+
+        std::string exception_specification_of(CXCursor method)
+        {
+            switch (clang_getCursorExceptionSpecificationType(method))
+            {
+            case CXCursor_ExceptionSpecificationKind_None:
+                return "none";
+            case CXCursor_ExceptionSpecificationKind_DynamicNone:
+                return "dynamic_none";
+            case CXCursor_ExceptionSpecificationKind_Dynamic:
+                return "dynamic";
+            case CXCursor_ExceptionSpecificationKind_MSAny:
+                return "ms_any";
+            case CXCursor_ExceptionSpecificationKind_BasicNoexcept:
+                return "basic_noexcept";
+            case CXCursor_ExceptionSpecificationKind_ComputedNoexcept:
+                return "computed_noexcept";
+            case CXCursor_ExceptionSpecificationKind_Unevaluated:
+                return "unevaluated";
+            case CXCursor_ExceptionSpecificationKind_Uninstantiated:
+                return "uninstantiated";
+            case CXCursor_ExceptionSpecificationKind_Unparsed:
+                return "unparsed";
+            case CXCursor_ExceptionSpecificationKind_NoThrow:
+                return "nothrow";
+            default:
+                return "unknown";
+            }
+        }
+
+        declaration_type describe_type(CXType type)
+        {
+            declaration_type result;
+            const CXType canonical = clang_getCanonicalType(type);
+            result.spelling = take_string(clang_getTypeSpelling(type));
+            result.canonical_spelling = take_string(clang_getTypeSpelling(canonical));
+            result.is_const = clang_isConstQualifiedType(canonical) != 0;
+            result.is_volatile = clang_isVolatileQualifiedType(canonical) != 0;
+            // clang 의 음수 layout 오류 코드는 ABI 가 아니다. 모두 unknown(-1) 로 기록한다.
+            result.size_bytes = std::max(-1LL, clang_Type_getSizeOf(canonical));
+            switch (canonical.kind)
+            {
+            case CXType_Void:
+                result.kind = "void";
+                result.size_bytes = -1;
+                break;
+            case CXType_Bool:
+                result.kind = "bool";
+                break;
+            case CXType_Char_S:
+            case CXType_SChar:
+            case CXType_Short:
+            case CXType_Int:
+            case CXType_Long:
+            case CXType_LongLong:
+            case CXType_Int128:
+                result.kind = "signed_integer";
+                break;
+            case CXType_Char_U:
+            case CXType_UChar:
+            case CXType_UShort:
+            case CXType_UInt:
+            case CXType_ULong:
+            case CXType_ULongLong:
+            case CXType_UInt128:
+                result.kind = "unsigned_integer";
+                break;
+            case CXType_WChar:
+            case CXType_Char16:
+            case CXType_Char32:
+                result.kind = "character";
+                break;
+            case CXType_Half:
+            case CXType_Float16:
+            case CXType_Float:
+            case CXType_Double:
+            case CXType_LongDouble:
+            case CXType_Float128:
+            case CXType_BFloat16:
+            case CXType_Ibm128:
+                result.kind = "floating_point";
+                break;
+            case CXType_Record:
+            case CXType_Enum:
+                result.kind = canonical.kind == CXType_Record ? "record" : "enum";
+                result.declaration = type_name_of(clang_getTypeDeclaration(canonical));
+                break;
+            case CXType_Pointer:
+            case CXType_LValueReference:
+            case CXType_RValueReference:
+            case CXType_MemberPointer:
+            {
+                result.kind = canonical.kind == CXType_Pointer ? "pointer"
+                              : canonical.kind == CXType_LValueReference ? "lvalue_reference"
+                              : canonical.kind == CXType_RValueReference ? "rvalue_reference"
+                                                                         : "member_pointer";
+                CXType pointee = clang_getPointeeType(type);
+                if (pointee.kind == CXType_Invalid)
+                {
+                    pointee = clang_getPointeeType(canonical);
+                }
+                result.pointee = std::make_shared<declaration_type>(describe_type(pointee));
+                break;
+            }
+            case CXType_ConstantArray:
+            case CXType_IncompleteArray:
+            case CXType_VariableArray:
+            case CXType_DependentSizedArray:
+            {
+                result.kind = "array";
+                result.array_size = clang_getArraySize(canonical);
+                CXType element = clang_getArrayElementType(type);
+                if (element.kind == CXType_Invalid)
+                {
+                    element = clang_getArrayElementType(canonical);
+                }
+                result.element_type = std::make_shared<declaration_type>(describe_type(element));
+                break;
+            }
+            case CXType_FunctionProto:
+            case CXType_FunctionNoProto:
+                result.kind = "function";
+                result.size_bytes = -1;
+                break;
+            case CXType_NullPtr:
+                result.kind = "nullptr";
+                break;
+            default:
+                break;
+            }
+            return result;
+        }
+
         // 생성기가 해석하고 스키마에는 옮기지 않는 지시어.
+        bool is_interop_directive(const scanned_attribute& attribute)
+        {
+            return attribute.scope == library_scope && (attribute.name == "interop" || attribute.name == "lifetime");
+        }
+
         bool is_directive(const scanned_attribute& attribute)
         {
             return attribute.scope == library_scope &&
-                   (attribute.name == "reflect" || attribute.name == "ignore" || attribute.name == "attribute");
+                   (attribute.name == "reflect" || attribute.name == "ignore" || attribute.name == "attribute" ||
+                    is_interop_directive(attribute));
         }
 
         const scanned_attribute* find_directive(const std::vector<attribute_group>& groups, std::string_view name)
@@ -85,7 +264,7 @@ namespace reflgen::generator
         {
           public:
             extractor(CXTranslationUnit unit, const extract_options& options, diagnostics& report)
-                : unit_(unit), report_(report)
+                : unit_(unit), report_(report), collect_interop_(options.collect_interop)
             {
                 for (const std::string& header : options.headers)
                 {
@@ -100,7 +279,26 @@ namespace reflgen::generator
                 has_attribute_headers_ = !options.attribute_headers.empty();
             }
 
-            void run() { visit_scope(clang_getTranslationUnitCursor(unit_)); }
+            void run()
+            {
+                const CXCursor root = clang_getTranslationUnitCursor(unit_);
+                if (collect_interop_)
+                {
+                    // 선언보다 먼저 전체 전처리 기록을 모은다. 반환형의 typedef 와 매크로 확장을
+                    // 구별해, consteval 등을 감춘 선언 specifier 를 추측하지 않고 거부할 수 있다.
+                    visit_children(root, [&](CXCursor cursor, CXCursor) {
+                        if (clang_getCursorKind(cursor) == CXCursor_MacroExpansion && model_for(cursor) != nullptr)
+                        {
+                            const CXSourceRange range = clang_getCursorExtent(cursor);
+                            const file_offset begin = expansion_of(clang_getRangeStart(range));
+                            const file_offset end = expansion_of(clang_getRangeEnd(range));
+                            macro_expansions_.push_back({begin.file, begin.offset, end.offset});
+                        }
+                        return CXChildVisit_Continue;
+                    });
+                }
+                visit_scope(root);
+            }
 
             const std::vector<declaration_extent>& reflected_extents() const noexcept { return extents_; }
 
@@ -111,6 +309,8 @@ namespace reflgen::generator
             }
 
             std::vector<header_model> take() { return std::move(models_); }
+
+            std::vector<class_model> take_exports() { return std::move(exports_); }
 
           private:
             header_model* model_for(CXCursor cursor)
@@ -192,14 +392,16 @@ namespace reflgen::generator
             }
 
             std::vector<attribute_use> uses_of(const std::vector<attribute_group>& groups, const source_file& source,
-                                               const qualifier_lookup& lookup, std::vector<std::string>& external)
+                                               const qualifier_lookup& lookup, std::vector<std::string>& external,
+                                               bool include_interop = false)
             {
                 std::vector<attribute_use> uses;
                 for (const attribute_group& group : groups)
                 {
                     for (const scanned_attribute& attribute : group.attributes)
                     {
-                        if (attribute.scope.empty() || !scopes_.contains(attribute.scope) || is_directive(attribute))
+                        if (attribute.scope.empty() || !scopes_.contains(attribute.scope) ||
+                            (is_directive(attribute) && !(include_interop && is_interop_directive(attribute))))
                         {
                             continue;
                         }
@@ -215,6 +417,20 @@ namespace reflgen::generator
                                           external);
                         }
                         attribute_use use;
+                        use.scope = attribute.scope;
+                        use.name = attribute.name;
+                        use.has_arguments = attribute.has_arguments;
+                        if (attribute.has_arguments)
+                        {
+                            for (const token& item : source.tokens)
+                            {
+                                if (item.begin >= attribute.arguments_begin && item.end <= attribute.arguments_end &&
+                                    item.kind != token_kind::comment)
+                                {
+                                    use.argument_tokens.push_back(item.spelling);
+                                }
+                            }
+                        }
                         use.expression = attribute.scope + "::" + attribute.name;
                         // 인자 없는 attribute 는 표지 타입으로 본다 — reflgen::transient 처럼.
                         use.expression += attribute.has_arguments
@@ -235,6 +451,10 @@ namespace reflgen::generator
             {
                 visit_children(scope, [&](CXCursor cursor, CXCursor) {
                     const CXCursorKind kind = clang_getCursorKind(cursor);
+                    if (collect_interop_ && model_for(cursor) != nullptr)
+                    {
+                        validate_interop_location(cursor, scope);
+                    }
                     if (kind == CXCursor_Namespace || kind == CXCursor_LinkageSpec)
                     {
                         visit_scope(cursor);
@@ -245,6 +465,283 @@ namespace reflgen::generator
                     }
                     return CXChildVisit_Continue;
                 });
+            }
+
+            static bool has_interop(const std::vector<attribute_group>& groups)
+            {
+                return find_directive(groups, "interop") != nullptr || find_directive(groups, "lifetime") != nullptr;
+            }
+
+            void interop_error(CXCursor cursor, const std::string& message)
+            {
+                const source_position position = position_of(clang_getCursorLocation(cursor));
+                note_declaration(cursor, position);
+                report_.error("RG0200", position, message);
+            }
+
+            // 내보내기 지시어를 지원하지 않는 선언에 붙이면 조용히 무시하지 않는다. 클래스·메서드의
+            // 실제 선택은 아래의 별도 pass 가 맡으며 기존 reflection 모델에는 넣지 않는다.
+            void validate_interop_location(CXCursor cursor, CXCursor lexical_parent)
+            {
+                const CXCursorKind kind = clang_getCursorKind(cursor);
+                if (clang_isDeclaration(kind) == 0)
+                {
+                    return;
+                }
+                const std::vector<attribute_group> groups =
+                    kind == CXCursor_FieldDecl || kind == CXCursor_VarDecl || kind == CXCursor_ParmDecl
+                        ? field_groups(cursor)
+                        : function_groups(cursor);
+                if (has_interop(groups))
+                {
+                    if (kind == CXCursor_ClassDecl || kind == CXCursor_StructDecl)
+                    {
+                        if (!clang_isCursorDefinition(cursor))
+                        {
+                            interop_error(cursor, "interop attributes must be on a class definition");
+                        }
+                    }
+                    else if (kind == CXCursor_CXXMethod &&
+                             (clang_getCursorKind(lexical_parent) == CXCursor_ClassDecl ||
+                              clang_getCursorKind(lexical_parent) == CXCursor_StructDecl))
+                    {
+                        // 메서드의 public/static/cv/type 조건은 emitter 가 진단한다.
+                    }
+                    else
+                    {
+                        interop_error(cursor,
+                                      "interop/lifetime attributes are supported only on class definitions and "
+                                      "ordinary in-class method declarations; this declaration is unsupported");
+                    }
+                }
+                // 매개변수 attribute 도 위치 오류다. 메서드 자체를 선택하지 않았더라도 놓치지 않는다.
+                if (kind == CXCursor_CXXMethod || kind == CXCursor_FunctionDecl || kind == CXCursor_Constructor ||
+                    kind == CXCursor_ConversionFunction || kind == CXCursor_FunctionTemplate)
+                {
+                    visit_children(cursor, [&](CXCursor parameter, CXCursor) {
+                        if (clang_getCursorKind(parameter) == CXCursor_ParmDecl)
+                        {
+                            validate_interop_location(parameter, cursor);
+                        }
+                        return CXChildVisit_Continue;
+                    });
+                }
+            }
+
+            // C++ 타입 철자 대신 선언의 token 을 읽는다. 함수 포인터 반환형의 괄호나 noexcept 안의
+            // 문자열은 메서드 cv 로 오인하지 않는다. 매크로로 가려 읽을 수 없으면 unknown 을 남긴다.
+            void read_method_qualifiers(CXCursor method, method_model& model)
+            {
+                model.qualifiers_known = false;
+                const source_file& source = source_of(method);
+                const std::size_t name_offset = offset_of(clang_getCursorLocation(method));
+                const auto first = std::ranges::find_if(source.tokens, [&](const token& item) {
+                    return item.begin == name_offset;
+                });
+                if (first == source.tokens.end() ||
+                    (first->spelling != model.name &&
+                     !(first->spelling == "operator" && model.name.starts_with("operator"))))
+                {
+                    return;
+                }
+                auto current = first;
+                unsigned skip_groups = model.name == "operator()" ? 1U : 0U;
+                while (current != source.tokens.end())
+                {
+                    if (current->spelling != "(")
+                    {
+                        ++current;
+                        continue;
+                    }
+                    unsigned depth = 1;
+                    while (++current != source.tokens.end() && depth != 0)
+                    {
+                        if (current->spelling == "(")
+                        {
+                            ++depth;
+                        }
+                        else if (current->spelling == ")")
+                        {
+                            --depth;
+                        }
+                    }
+                    if (depth != 0)
+                    {
+                        return;
+                    }
+                    if (skip_groups != 0)
+                    {
+                        --skip_groups;
+                        continue;
+                    }
+                    break;
+                }
+                for (; current != source.tokens.end(); ++current)
+                {
+                    if (current->kind == token_kind::comment || current->spelling == "const" ||
+                        current->spelling == "&" || current->spelling == "&&")
+                    {
+                        continue;
+                    }
+                    if (current->spelling == "volatile")
+                    {
+                        model.is_volatile = true;
+                        continue;
+                    }
+                    // cv 는 noexcept·trailing return·본문보다 앞에 온다. 모르는 token 은 매크로일 수 있다.
+                    const std::string& next = current->spelling;
+                    model.qualifiers_known = next == "noexcept" || next == "throw" || next == "->" || next == "=" ||
+                                             next == ";" || next == "{" || next == ")" || next == "[" ||
+                                             next == "override" || next == "final" || next == "requires";
+                    return;
+                }
+            }
+
+            method_model method_of(CXCursor method, const std::vector<attribute_group>& groups, class_model& owner,
+                                   const qualifier_lookup& lookup, bool interop)
+            {
+                method_model model;
+                model.name = cursor_spelling(method);
+                model.position = position_of(clang_getRangeStart(clang_getCursorExtent(method)));
+                model.attributes = uses_of(groups, source_of(method), lookup, owner.external_names, interop);
+                model.owner = owner.qualified_name;
+                model.access = access_of(method);
+                model.return_type = describe_type(clang_getCursorResultType(method));
+                const CXType method_type = clang_getCursorType(method);
+                model.signature = take_string(clang_getTypeSpelling(method_type));
+                model.calling_convention = calling_convention_of(method_type);
+                model.exception_specification = exception_specification_of(method);
+                model.is_static = clang_CXXMethod_isStatic(method) != 0;
+                model.is_const = clang_CXXMethod_isConst(method) != 0;
+                model.is_deleted = clang_CXXMethod_isDeleted(method) != 0;
+                model.is_variadic = clang_isFunctionTypeVariadic(method_type) != 0;
+                read_method_qualifiers(method, model);
+                if (interop)
+                {
+                    const file_offset begin = expansion_of(clang_getRangeStart(clang_getCursorExtent(method)));
+                    const file_offset name = expansion_of(clang_getCursorLocation(method));
+                    const source_file& source = source_of(method);
+                    for (const token& item : source.tokens)
+                    {
+                        if (item.begin >= begin.offset && item.begin < name.offset && item.spelling == "consteval")
+                        {
+                            model.is_consteval = true;
+                        }
+                    }
+                    for (const declaration_extent& macro : macro_expansions_)
+                    {
+                        if (macro.file == begin.file && macro.begin <= name.offset && macro.end > begin.offset)
+                        {
+                            model.declaration_specifiers_known = false;
+                        }
+                    }
+                }
+                const CXRefQualifierKind ref = clang_Type_getCXXRefQualifier(method_type);
+                model.ref_qualifier = ref == CXRefQualifier_LValue ? "lvalue"
+                                     : ref == CXRefQualifier_RValue ? "rvalue"
+                                                                    : "none";
+                const int count = clang_Cursor_getNumArguments(method);
+                for (int i = 0; i < count; ++i)
+                {
+                    const CXCursor parameter = clang_Cursor_getArgument(method, static_cast<unsigned>(i));
+                    const std::string parameter_name = cursor_spelling(parameter);
+                    model.parameters.push_back(parameter_name);
+                    model.parameter_declarations.push_back({parameter_name, describe_type(clang_getCursorType(parameter)),
+                                                            position_of(clang_getCursorLocation(parameter))});
+                }
+                return model;
+            }
+
+            void visit_interop_class(CXCursor cursor)
+            {
+                const std::vector<attribute_group> groups = function_groups(cursor);
+                const qualifier_lookup no_lookup = [](std::string_view) { return std::string(); };
+                class_model result;
+                result.name = cursor_spelling(cursor);
+                result.qualified_name = type_name_of(cursor);
+                result.class_key = clang_getCursorKind(cursor) == CXCursor_ClassDecl ? "class" : "struct";
+                result.position = position_of(clang_getCursorLocation(cursor));
+                result.attributes = uses_of(groups, source_of(cursor), no_lookup, result.external_names, true);
+                result.nested = !enclosing_class_scopes(cursor).empty();
+                const std::map<std::string, int> counts = count_functions(cursor);
+                std::set<std::string> imported_names;
+                visit_children(cursor, [&](CXCursor child, CXCursor) {
+                    if (clang_getCursorKind(child) == CXCursor_UsingDeclaration)
+                    {
+                        std::string name = cursor_spelling(child);
+                        const std::size_t scope = name.rfind("::");
+                        if (scope != std::string::npos)
+                        {
+                            name.erase(0, scope + 2);
+                        }
+                        imported_names.insert(std::move(name));
+                        visit_children(child, [&](CXCursor target, CXCursor) {
+                            if (clang_getCursorKind(target) == CXCursor_OverloadedDeclRef)
+                            {
+                                imported_names.insert(cursor_spelling(target));
+                            }
+                            return CXChildVisit_Continue;
+                        });
+                    }
+                    return CXChildVisit_Continue;
+                });
+                visit_children(cursor, [&](CXCursor child, CXCursor) {
+                    if (clang_getCursorKind(child) != CXCursor_CXXMethod)
+                    {
+                        return CXChildVisit_Continue;
+                    }
+                    const std::vector<attribute_group> method_groups = function_groups(child);
+                    if (!has_interop(method_groups))
+                    {
+                        return CXChildVisit_Continue;
+                    }
+                    method_model method = method_of(child, method_groups, result, no_lookup, true);
+                    // using Base::f 는 직접 선언한 CXXMethod 수에 잡히지 않지만 f(args) 호출을
+                    // 모호하게 만들 수 있다. 내보내기에서는 보수적으로 overload 로 거부한다.
+                    method.is_overloaded = counts.at(method.name) > 1 || imported_names.contains(method.name);
+                    if (!is_identifier(method.name))
+                    {
+                        interop_error(child, "operator methods are not supported for interop");
+                    }
+                    if (method.is_deleted)
+                    {
+                        interop_error(child, "deleted methods cannot be exported");
+                    }
+                    result.methods.push_back(std::move(method));
+                    return CXChildVisit_Continue;
+                });
+                if (!has_interop(groups) && result.methods.empty())
+                {
+                    return;
+                }
+                note_declaration(cursor, result.position);
+                const std::optional<std::vector<std::string>> namespaces = enclosing_namespaces(cursor);
+                if (!namespaces || result.name.empty())
+                {
+                    interop_error(cursor, "anonymous types or namespaces cannot be exported");
+                }
+                else
+                {
+                    result.namespaces = *namespaces;
+                }
+                for (CXCursor owner = cursor; !clang_Cursor_isNull(owner);
+                     owner = clang_getCursorSemanticParent(owner))
+                {
+                    const CXCursorKind kind = clang_getCursorKind(owner);
+                    if (kind == CXCursor_ClassTemplate || kind == CXCursor_ClassTemplatePartialSpecialization ||
+                        !clang_Cursor_isNull(clang_getSpecializedCursorTemplate(owner)))
+                    {
+                        interop_error(cursor, "templated classes cannot be exported");
+                        break;
+                    }
+                    const CX_CXXAccessSpecifier access = clang_getCXXAccessSpecifier(owner);
+                    if (access == CX_CXXPrivate || access == CX_CXXProtected)
+                    {
+                        interop_error(cursor, "exported classes and their enclosing types must be public");
+                        break;
+                    }
+                }
+                exports_.push_back(std::move(result));
             }
 
             void visit_definition(CXCursor cursor, CXCursorKind kind)
@@ -266,9 +763,19 @@ namespace reflgen::generator
                                           cursor_spelling(cursor) + "' with a custom serializer instead");
                     break;
                 case CXCursor_ClassTemplate:
+                    if (collect_interop_)
+                    {
+                        visit_scope(cursor);
+                    }
                     warn_if_reflected(cursor, "RG0005",
                                       "class templates are not supported by the generator yet; describe '" +
                                           cursor_spelling(cursor) + "' with an in-class reflect() instead");
+                    break;
+                case CXCursor_ClassTemplatePartialSpecialization:
+                    if (collect_interop_)
+                    {
+                        visit_scope(cursor);
+                    }
                     break;
                 default:
                     break;
@@ -288,6 +795,11 @@ namespace reflgen::generator
             {
                 // 중첩 타입은 반영 여부와 무관하게 따로 찾는다.
                 visit_scope(cursor);
+
+                if (collect_interop_)
+                {
+                    visit_interop_class(cursor);
+                }
 
                 const std::vector<attribute_group> class_groups = groups_before_name(cursor);
                 const scanned_attribute* reflect = find_directive(class_groups, "reflect");
@@ -438,6 +950,9 @@ namespace reflgen::generator
                 model.name = name;
                 model.position = position_of(clang_getRangeStart(clang_getCursorExtent(field)));
                 model.attributes = uses_of(groups, source_of(field), context.lookup, context.result.external_names);
+                model.type = describe_type(clang_getCursorType(field));
+                model.owner = context.result.qualified_name;
+                model.access = access_of(field);
                 context.result.fields.push_back(std::move(model));
             }
 
@@ -467,22 +982,16 @@ namespace reflgen::generator
                     context.first_hidden_member = name;
                 }
 
-                method_model model;
-                model.name = name;
-                model.position = position_of(clang_getRangeStart(clang_getCursorExtent(method)));
-                model.attributes = uses_of(groups, source_of(method), context.lookup, context.result.external_names);
-                // 이름 없는 매개변수는 빈 이름으로 남는다 — 선언에 없는 이름을 지어내지 않는다.
-                const int count = clang_Cursor_getNumArguments(method);
-                for (int i = 0; i < count; ++i)
-                {
-                    model.parameters.push_back(
-                        cursor_spelling(clang_Cursor_getArgument(method, static_cast<unsigned>(i))));
-                }
-                context.result.methods.push_back(std::move(model));
+                context.result.methods.push_back(method_of(method, groups, context.result, context.lookup, false));
             }
 
             void visit_enum(CXCursor cursor)
             {
+                if (collect_interop_)
+                {
+                    // 반영하지 않는 enum 의 열거자에 붙은 잘못된 내보내기 지시어도 진단한다.
+                    visit_scope(cursor);
+                }
                 if (find_directive(groups_before_name(cursor), "reflect") == nullptr)
                 {
                     return;
@@ -673,6 +1182,9 @@ namespace reflgen::generator
             std::set<std::string> scopes_;
             bool has_attribute_headers_ = false;
             std::vector<declaration_extent> extents_;
+            bool collect_interop_ = false;
+            std::vector<class_model> exports_;
+            std::vector<declaration_extent> macro_expansions_;
         };
 
         std::vector<clang_error> clang_errors_of(CXTranslationUnit unit)
@@ -854,7 +1366,10 @@ namespace reflgen::generator
         CXTranslationUnit raw_unit = nullptr;
         const CXErrorCode code = clang_parseTranslationUnit2(
             index.get(), main_path.c_str(), argv.data(), static_cast<int>(argv.size()), unsaved.data(),
-            static_cast<unsigned>(unsaved.size()), CXTranslationUnit_SkipFunctionBodies, &raw_unit);
+            static_cast<unsigned>(unsaved.size()),
+            CXTranslationUnit_SkipFunctionBodies |
+                (options.collect_interop ? static_cast<unsigned>(CXTranslationUnit_DetailedPreprocessingRecord) : 0U),
+            &raw_unit);
         const translation_unit_handle unit(raw_unit);
         if (code != CXError_Success || !unit)
         {
@@ -874,7 +1389,8 @@ namespace reflgen::generator
             return walker.declares(cursor, directive);
         };
         extract_result result{walker.take(), included_files(unit.get()),
-                              collect_attribute_catalog(unit.get(), scopes, declares)};
+                              collect_attribute_catalog(unit.get(), scopes, declares), target_of(unit.get()),
+                              walker.take_exports()};
         // 메모리에만 있는 주 파일은 디스크에 없다. 이 실행의 출력이 의존에 끼면 빌드 도구가 순환 의존으로 멈춘다.
         std::set<std::string> outputs = {main_path};
         for (const std::string& header : options.headers)

@@ -12,6 +12,10 @@
 //   RG0005  지원하지 않는 선언(클래스 template, 익명 이름공간)
 //   RG0006  오버로드된 메서드
 //   RG0007  생성 파일 이름 충돌
+//   RG0200  interop 지시어·대상·수명 정책 오류
+//   RG0201  지원하지 않는 interop 선언·접근성
+//   RG0202  지원하지 않는 interop 타입·target ABI
+//   RG0203  생성된 interop 심벌 충돌
 #include "model.h"
 #include <cstdio>
 #include <string>

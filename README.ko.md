@@ -267,6 +267,73 @@ namespace editor
 | RG0101 | (알림) 반영 선언 밖이라 넘긴 Clang 오류 |
 | RG0102 | 밖의 오류(부모 클래스·멤버 타입) 때문에 Clang 이 무효로 본 반영 선언 |
 
+### 선택 선언 목록(JSON)
+
+`--declarations-json FILE` 은 다른 생성기·도구가 읽을 UTF-8 JSON 선언 목록을 모듈마다 하나 만든다. 선택 기능이며
+기존 reflection 생성·주입·등록은 바뀌지 않는다. 필요한 부모 디렉터리는 만들고, 내용이 같으면 시각도 바꾸지 않는다.
+
+```sh
+reflgen --module game --output build/reflgen --declarations-json build/game.declarations.json include/game/player.h -- -std=c++20 -Iinclude
+```
+
+루트에는 `format: "reflgen.declarations"`, `version: 1`, `module`, `target`(`triple`, `pointer_width`), `headers`
+가 있다. header 마다 `path`, 반영된 `classes`·`enums` 를 담는다. 선언은 이름·원본 위치·attribute 를 담고, 클래스는
+필드와 반영된 메서드를 담는다. 메서드는 소유 타입·접근 지정·시그니처·한정자·호출 규약·예외 지정·반환 타입·매개변수를
+담는다. 타입은 원래 표기와 정규 표기, 한정자, 재귀적인 포인터·참조·배열 모양을 담는다. attribute 는 이름공간·이름·
+인자 토큰·한정된 식·원본 위치를 보존한다.
+
+선언 메타데이터이며 ABI 나 외부에 내보내도 된다는 보장은 아니다. 소비하는 도구가 형식·판을 확인하고, 선택·지원 타입·
+마샬링 규칙을 정한다. 기존 반영 범위와 진단은 그대로다. 이 옵션으로 지원하지 않는 선언·오버로드·template 를 새로
+반영할 수 있게 되지는 않는다.
+필드와 호환성 계약의 전체 목록은 [DECLARATIONS.md](DECLARATIONS.md)에 있다.
+
+CMake 는 `reflgen_generate()` 에 `DECLARATIONS_JSON FILE` 을 더한다:
+
+```cmake
+reflgen_generate(my_game
+    HEADERS include/game/player.h
+    MODULE game
+    DECLARATIONS_JSON game.declarations.json)
+get_target_property(game_declarations my_game REFLGEN_DECLARATIONS_JSON)
+```
+
+상대 경로는 `<OUTPUT_DIRECTORY>/<config>/` 기준이고 절대 경로도 그 디렉터리 안에 있어야 한다. 여러 구성을 함께
+만드는 빌드에서는 구성끼리 덮어쓰지 않도록 풀린 경로에 `$<CONFIG>` 가 있어야 한다. 선택 출력 경로에는 이 generator
+expression 만 쓸 수 있다. `REFLGEN_DECLARATIONS_JSON`
+target 속성은 풀린 절대 경로(`$<CONFIG>` 를 포함할 수 있음)이며, 뒤에 돌 생성기의 인자와 `DEPENDS` 에 쓸 수 있다.
+JSON 은 생성 출력으로 추적하여 지우면 다시 만들고 clean 때 지우며, 컴파일하지 않는다. 옵션을 생략하면 만들지 않고,
+`NO_REGISTRATION` 과 함께 써도 된다.
+
+MSBuild 는 `ReflgenDeclarationsJson` 에 경로를 준다. 구성마다 나뉘는 `IntDir` 아래를 권한다:
+
+```xml
+<PropertyGroup>
+  <ReflgenDeclarationsJson>$(IntDir)reflgen\$(ProjectName).declarations.json</ReflgenDeclarationsJson>
+</PropertyGroup>
+```
+
+속성이 없거나 비면 만들지 않는다. 상대 경로는 프로젝트 기준이며 풀린 경로는 `ReflgenOutputDirectory` 안에 있어야
+한다. 응답 파일로 경로를 넘기며, JSON 이 없으면 MSBuild 를 실행할 때 다시 생성하고 내용이 같으면 빌드마다 반복
+생성하지 않는다. NuGet 패키지에서도 같은 속성을 쓴다.
+
+두 연동 모두 입력·예약 출력과의 충돌을 막고, 기존 선택 파일은 이전 생성이 성공한 뒤 소유권을 기록한 것만 받는다.
+새 생성 경로를 쓰거나, 기존 파일이 오래된 생성물임을 확인한 뒤 지운다. Clean 은 생성을 건너뛰어도 소유한 선택 출력을
+지운다. CLI 를 직접 쓰면 빌드 출력 디렉터리 밖의 안전한 경로에도 만들 수 있다. Visual Studio 의 native 최신 여부
+검사는 출력만 지웠을 때 MSBuild 를 건너뛸 수 있다. 그때는 `ReflgenGenerate` 를 직접 실행한다.
+
+### 선택 C ABI·C# 바인딩
+
+`--interop` 은 일반 출력 디렉터리에 `reflgen_<module>_interop.h`·`.cpp`·`.cs` 를 더 만든다.
+`--interop-library NAME` 은 C# 에서 불러올 native 라이브러리 이름(기본: 모듈 이름),
+`--interop-namespace NAME` 은 C# 이름공간(기본: `Reflgen.Generated`)이다.
+
+CMake 는 `reflgen_generate()` 에 `INTEROP`·`INTEROP_LIBRARY NAME`·`INTEROP_NAMESPACE NAME` 을 받는다.
+`REFLGEN_INTEROP_CSHARP` target 속성으로 생성된 C# 경로를 얻는다. MSBuild·NuGet 은 `ReflgenInterop=true`·
+`ReflgenInteropLibrary`·`ReflgenInteropNamespace` 를 쓴다. 생성된 C++ 구현은 `NO_REGISTRATION`·
+`ReflgenRegistration=false` 와 무관하게 컴파일하고, C# 파일은 C++ 컴파일러에 넘기지 않는다. JSON 선언 목록과
+별개인 선택 기능이며 같은 출력 소유권·정리 검사를 따른다.
+명시적 선택 attribute·지원 경계 타입·수명 규칙은 [INTEROP.md](INTEROP.md)를 본다.
+
 ### MSBuild(.vcxproj) 연동
 
 프로젝트 끝(`Microsoft.Cpp.targets` 다음)이나 `Directory.Build.targets` 에서 가져온다. 그것뿐이다 — header 를
@@ -315,6 +382,10 @@ namespace editor
 | `ReflgenAttributeScopes` | 없음(`reflgen` 만) |
 | `ReflgenAttributeHeaders` | 없음 — 사용자 attribute 타입을 정의한 header. 주입 header 가 include 한다 |
 | `ReflgenOutputDirectory` | `$(IntDir)reflgen\` |
+| `ReflgenDeclarationsJson` | 없음 — 선택 선언 목록 경로. 프로젝트 기준 상대 경로 또는 절대 경로(위) |
+| `ReflgenInterop` | `false` — C ABI·C# 바인딩을 만들고 생성된 C++ 구현을 컴파일 |
+| `ReflgenInteropLibrary` | 모듈 이름 — C# 에서 불러올 native 라이브러리 이름 |
+| `ReflgenInteropNamespace` | `Reflgen.Generated` — 생성된 C# 이름공간 |
 | `ReflgenRegistration` | `true` — `false` 면 등록 함수를 컴파일하지 않는다(서술만 쓰는 코드베이스, 아래) |
 | `ReflgenRegistrationHeaders` | 등록 함수가 서술자를 만들기 전에 include 하는 header(`;` 로 가른다) — 사용자 serializer 특수화(아래) |
 

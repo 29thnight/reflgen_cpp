@@ -100,7 +100,9 @@ if(REFLGEN_BUILD_TESTS)
 
         add_executable(reflgen_generator_tests
             generator/tests/attribute_scan_tests.cpp
+            generator/tests/declarations_tests.cpp
             generator/tests/emit_tests.cpp
+            generator/tests/interop_tests.cpp
             ${reflgen_harness_sources})
         target_include_directories(reflgen_generator_tests PRIVATE tests)
         target_link_libraries(reflgen_generator_tests PRIVATE reflgen_generator_core reflgen::reflgen)
@@ -134,6 +136,7 @@ if(REFLGEN_BUILD_TESTS)
         reflgen_generate(reflgen_description_only
             MODULE description_only
             HEADERS tests/generated/description_only.h
+            DECLARATIONS_JSON declarations.json
             NO_REGISTRATION)
         file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/description_only_sources_$<CONFIG>.txt"
              CONTENT "$<JOIN:$<TARGET_PROPERTY:reflgen_description_only,SOURCES>,\n>\n")
@@ -209,6 +212,60 @@ if(REFLGEN_BUILD_TESTS)
             COMMAND "${CMAKE_COMMAND}"
                 "-DCATALOG=${CMAKE_CURRENT_BINARY_DIR}/reflgen/reflgen_generated_tests/$<CONFIG>/reflgen_generated_tests.attributes.tsv"
                 -P "${PROJECT_SOURCE_DIR}/tests/generated/check_catalog.cmake")
+
+        # 선택 선언 manifest — 기본 출력 보존, 타입·attribute 정보, 빈 모듈, 경로 충돌.
+        add_test(NAME reflgen_generator_declarations
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DHEADER=${PROJECT_SOURCE_DIR}/tests/generated/declarations_types.h"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/declarations"
+                "-DGENERATED_MANIFEST=$<TARGET_GENEX_EVAL:reflgen_description_only,$<TARGET_PROPERTY:reflgen_description_only,REFLGEN_DECLARATIONS_JSON>>"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_declarations.cmake")
+
+        # reflection 과 독립적인 명시적 C/C# export, 잘못된 요청의 진단과 출력 보존.
+        add_test(NAME reflgen_generator_interop
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DHEADER=${PROJECT_SOURCE_DIR}/tests/generated/interop_types.h"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/interop"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_interop.cmake")
+
+        # interop 출력을 실제로 쓴다 — 생성한 C++ wrapper 를 이 컴파일러로 공유 라이브러리에 넣고(/WX),
+        # 생성한 C header 만 보는 C 소비자와 생성한 C# 선언이 그 라이브러리를 부른다.
+        add_library(reflgen_interop_runtime SHARED tests/generated/interop_runtime/native.cpp)
+        target_include_directories(reflgen_interop_runtime PRIVATE tests/generated)
+        target_link_libraries(reflgen_interop_runtime PRIVATE reflgen::reflgen)
+        reflgen_configure_target(reflgen_interop_runtime)
+        reflgen_generate(reflgen_interop_runtime
+            MODULE interop_runtime
+            HEADERS tests/generated/interop_types.h
+            INTEROP
+            INTEROP_LIBRARY reflgen_interop_runtime
+            INTEROP_NAMESPACE Reflgen.Tests.Interop)
+        add_executable(reflgen_interop_c_consumer tests/generated/interop_runtime/c_consumer.c)
+        target_include_directories(reflgen_interop_c_consumer PRIVATE
+            "${CMAKE_CURRENT_BINARY_DIR}/reflgen/reflgen_interop_runtime/$<CONFIG>")
+        target_link_libraries(reflgen_interop_c_consumer PRIVATE reflgen_interop_runtime)
+        if(MSVC)
+            target_compile_options(reflgen_interop_c_consumer PRIVATE /W4 /WX /utf-8)
+        else()
+            target_compile_options(reflgen_interop_c_consumer PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME reflgen_interop_c_calls COMMAND reflgen_interop_c_consumer)
+
+        find_program(REFLGEN_DOTNET dotnet)
+        if(REFLGEN_DOTNET)
+            add_test(NAME reflgen_interop_csharp_calls
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DDOTNET=${REFLGEN_DOTNET}"
+                    "-DPROJECT=${PROJECT_SOURCE_DIR}/tests/generated/interop_runtime/csharp/InteropRuntime.csproj"
+                    "-DSOURCE=$<TARGET_GENEX_EVAL:reflgen_interop_runtime,$<TARGET_PROPERTY:reflgen_interop_runtime,REFLGEN_INTEROP_CSHARP>>"
+                    "-DLIBRARY=$<TARGET_FILE:reflgen_interop_runtime>"
+                    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/interop_csharp"
+                    -P "${PROJECT_SOURCE_DIR}/tests/generated/check_interop_csharp.cmake")
+        else()
+            message(STATUS "reflgen: dotnet was not found; the C# interop call test is skipped")
+        endif()
 
         # 손으로 쓴 응답 파일 — UTF-8 BOM 과 따옴표 친 경로를 받아야 한다(메모장·PowerShell 이 BOM 을 붙인다).
         add_test(NAME reflgen_generator_response_file

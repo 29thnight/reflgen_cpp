@@ -2,7 +2,7 @@
 //
 //   reflgen --module NAME --output DIR [--attribute-scope NS]... [--attribute-header FILE]...
 //           [--registration-header FILE]... [--clang-args-file FILE]
-//           [--depfile FILE] [--dependency-list FILE] [--discover] HEADER... [-- CLANG_ARG...]
+//           [--depfile FILE] [--dependency-list FILE] [--declarations-json FILE] [--discover] HEADER... [-- CLANG_ARG...]
 //   reflgen @FILE          FILE 의 한 줄을 인자 하나로 펼친다(명령줄 길이 제한을 피하려는 것)
 //   reflgen --version      판과 생성 코드 형식을 찍는다
 //
@@ -11,14 +11,16 @@
 // reflgen_<module>.h 를 모든 번역 단위에 강제 include 한다. 출력 디렉터리에는 편집기용 attribute 카탈로그
 // (reflgen_<module>.attributes.tsv)도 생긴다.
 //
-// --discover: 받은 header 는 후보다(프로젝트의 header 전부). [[reflgen::reflect]] 가 있는 것만 파싱하고,
+// --discover: 받은 header 는 후보다(프로젝트의 header 전부). reflection/interop 표기가 있는 것만 파싱하고,
 //             없는 파일은 건너뛰며, 더는 반영하지 않는 header 의 옛 생성 파일을 지운다.
 #include "attribute_scan.h"
 #include "catalog.h"
 #include "diagnostics.h"
+#include "declarations.h"
 #include "emit.h"
 #include "executable.h"
 #include "extract.h"
+#include "interop.h"
 #include "clang_api.h"
 #include "reflgen/core/version.h"
 #include <algorithm>
@@ -41,7 +43,8 @@ namespace
     constexpr std::string_view usage =
         "usage: reflgen --module NAME --output DIR [--attribute-scope NS]... [--attribute-header FILE]... "
         "[--registration-header FILE]... "
-        "[--clang-args-file FILE] [--depfile FILE] [--dependency-list FILE] [--discover] HEADER... "
+        "[--clang-args-file FILE] [--depfile FILE] [--dependency-list FILE] [--declarations-json FILE] "
+        "[--interop [--interop-library NAME] [--interop-namespace NAME]] [--discover] HEADER... "
         "[-- CLANG_ARG...]\n"
         "       reflgen --version\n";
 
@@ -50,6 +53,12 @@ namespace
         extract_options extraction;
         std::string depfile;         // Makefile 문법(Ninja·Make). 비면 쓰지 않는다
         std::string dependency_list; // 한 줄에 경로 하나(MSBuild). 비면 쓰지 않는다
+        std::string declarations_json; // 선택적 선언 manifest. 비면 기존 출력만 만든다
+        std::vector<std::string> input_files; // discover 로 거른 파일·응답 파일도 덮어쓰지 않는다
+        bool interop = false;
+        std::string interop_library;
+        std::string interop_namespace = "Reflgen.Generated";
+        bool interop_options_supplied = false;
         bool discover = false;       // header 는 후보다 — 반영을 선언한 것만 남긴다
     };
 
@@ -138,6 +147,29 @@ namespace
             {
                 cli.discover = true;
             }
+            else if (argument == "--interop")
+            {
+                cli.interop = true;
+            }
+            else if (argument == "--interop-library" || argument == "--interop-namespace")
+            {
+                cli.interop_options_supplied = true;
+                if (const auto text = value(argument))
+                {
+                    if (text->empty())
+                    {
+                        report.error("RG0001", {}, std::string(argument) + " needs a nonempty value");
+                    }
+                    if (argument == "--interop-library")
+                    {
+                        cli.interop_library = *text;
+                    }
+                    else
+                    {
+                        cli.interop_namespace = *text;
+                    }
+                }
+            }
             else if (argument == "--module")
             {
                 if (const auto name = value(argument))
@@ -187,10 +219,22 @@ namespace
                     cli.dependency_list = *path;
                 }
             }
+            else if (argument == "--declarations-json")
+            {
+                if (const auto path = value(argument))
+                {
+                    cli.declarations_json = normalize_path(*path);
+                    if (cli.declarations_json.empty())
+                    {
+                        report.error("RG0001", {}, "--declarations-json needs a nonempty path");
+                    }
+                }
+            }
             else if (argument == "--clang-args-file")
             {
                 if (const auto path = value(argument))
                 {
+                    cli.input_files.push_back(normalize_path(*path));
                     if (!std::filesystem::exists(*path))
                     {
                         report.error("RG0001", {}, "clang arguments file '" + *path + "' does not exist");
@@ -208,6 +252,7 @@ namespace
             else
             {
                 options.headers.push_back(normalize_path(std::string(argument)));
+                cli.input_files.push_back(options.headers.back());
             }
         }
 
@@ -223,6 +268,15 @@ namespace
         {
             report.error("RG0001", {}, "no input headers");
         }
+        if (cli.interop_options_supplied && !cli.interop)
+        {
+            report.error("RG0001", {}, "--interop-library and --interop-namespace require --interop");
+        }
+        if (cli.interop_library.empty())
+        {
+            cli.interop_library = options.module_name;
+        }
+        options.collect_interop = cli.interop;
         // 후보 목록(프로젝트의 header 전부)에는 지워진 파일이 남아 있을 수 있다 — 그것은 discover 가 걸러 낸다.
         for (const std::string& header : options.headers)
         {
@@ -294,13 +348,80 @@ namespace
         return buffer.str();
     }
 
-    // --discover: 반영을 선언한 header 만 남긴다.
-    std::vector<std::string> reflected_headers(const std::vector<std::string>& candidates)
+    // 선택적 출력이 소스·다른 생성물·빌드 입력을 덮어쓰면 복구할 수 없다. 상대 경로, 심볼릭 링크,
+    // Windows 대소문자 차이도 같은 경로로 가른다. 파싱에서 찾은 간접 include 도 보호한다.
+    void validate_optional_paths(const cli_options& cli, const extract_result& extracted,
+                                    const std::vector<std::string>& generated_names, diagnostics& report)
+    {
+        if (cli.declarations_json.empty() && !cli.interop)
+        {
+            return;
+        }
+        const auto key = [](const std::string& path) {
+            return ascii_lowercase(std::filesystem::weakly_canonical(std::filesystem::path(normalize_path(path)))
+                                       .generic_string());
+        };
+        std::vector<std::string> reserved = cli.input_files;
+        const extract_options& options = cli.extraction;
+        reserved.insert(reserved.end(), options.attribute_headers.begin(), options.attribute_headers.end());
+        reserved.insert(reserved.end(), options.registration_headers.begin(), options.registration_headers.end());
+        reserved.insert(reserved.end(), extracted.dependencies.begin(), extracted.dependencies.end());
+        reserved.push_back(cli.depfile);
+        reserved.push_back(cli.dependency_list);
+        const std::string base = options.output_directory + "/reflgen_" + options.module_name;
+        for (const std::string_view suffix : {".h", ".cpp", ".attributes.tsv", ".parse.cpp"})
+        {
+            reserved.push_back(base + std::string(suffix));
+        }
+        for (const std::string& name : generated_names)
+        {
+            reserved.push_back(options.output_directory + "/" + name);
+        }
+        std::vector<std::string> outputs;
+        if (!cli.declarations_json.empty())
+        {
+            outputs.push_back(cli.declarations_json);
+        }
+        if (cli.interop)
+        {
+            for (const std::string_view suffix : {"_interop.h", "_interop.cpp", "_interop.cs"})
+            {
+                outputs.push_back(base + std::string(suffix));
+            }
+        }
+        for (const std::string& output : outputs)
+        {
+            for (const std::string& path : reserved)
+            {
+                std::error_code error;
+                if (!path.empty() && (key(output) == key(path) ||
+                                      std::filesystem::equivalent(output, path, error)))
+                {
+                    report.error("RG0001", {}, "optional output '" + output +
+                                                   "' collides with input or generated file '" + path + "'");
+                    return;
+                }
+            }
+            if (std::filesystem::is_directory(output))
+            {
+                report.error("RG0001", {}, "optional output must name a file, not a directory: '" + output + "'");
+            }
+            reserved.push_back(output);
+        }
+    }
+
+    // --discover: 반영 또는 독립 interop 표기가 있는 header 만 남긴다.
+    std::vector<std::string> reflected_headers(const std::vector<std::string>& candidates, bool include_interop)
     {
         std::vector<std::string> headers;
         for (const std::string& header : candidates)
         {
-            if (std::filesystem::is_regular_file(header) && declares_reflection(read_file(header)))
+            if (!std::filesystem::is_regular_file(header))
+            {
+                continue;
+            }
+            const std::string source = read_file(header);
+            if (declares_reflection(source) || (include_interop && declares_interop(source)))
             {
                 headers.push_back(header);
             }
@@ -400,9 +521,17 @@ namespace
             std::fputs(usage.data(), stderr);
             return 1;
         }
+        for (int i = 1; i < argc; ++i)
+        {
+            const std::string_view argument = argv[i];
+            if (argument.starts_with('@'))
+            {
+                cli->input_files.push_back(normalize_path(std::string(argument.substr(1))));
+            }
+        }
         if (cli->discover)
         {
-            cli->extraction.headers = reflected_headers(cli->extraction.headers);
+            cli->extraction.headers = reflected_headers(cli->extraction.headers, cli->interop);
         }
         const extract_options& options = cli->extraction;
 
@@ -427,6 +556,13 @@ namespace
         const extract_result extracted =
             report.has_errors() || options.headers.empty() ? extract_result{} : extract(options, report);
         const std::vector<header_model>& headers = extracted.headers;
+        validate_optional_paths(*cli, extracted, generated_names, report);
+        std::optional<interop_output> interop;
+        if (cli->interop && !report.has_errors())
+        {
+            interop = emit_interop(extracted.exports, extracted.target,
+                                  {options.module_name, cli->interop_library, cli->interop_namespace}, report);
+        }
         if (!report.has_errors())
         {
             std::vector<std::string> generated_paths;
@@ -444,6 +580,19 @@ namespace
                              emit_module_source(options.module_name, headers, options.registration_headers), report);
             write_if_changed(base + ".attributes.tsv", format_attribute_catalog(extracted.attributes), report,
                              byte_order_mark::without);
+            if (interop)
+            {
+                write_if_changed(base + "_interop.h", interop->c_header, report);
+                write_if_changed(base + "_interop.cpp", interop->cpp_source, report);
+                write_if_changed(base + "_interop.cs", interop->csharp_source, report, byte_order_mark::without);
+            }
+            if (!cli->declarations_json.empty())
+            {
+                std::filesystem::create_directories(std::filesystem::path(cli->declarations_json).parent_path());
+                write_if_changed(cli->declarations_json,
+                                 emit_declarations_json(options.module_name, headers, extracted.target), report,
+                                 byte_order_mark::without);
+            }
             if (!cli->dependency_list.empty())
             {
                 write_dependency_list(cli->dependency_list, extracted.dependencies, report);
