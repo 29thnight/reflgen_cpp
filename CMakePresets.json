@@ -44,7 +44,8 @@
         "CMAKE_CXX_COMPILER": "cl",
         "REFLGEN_BUILD_TESTS": "OFF",
         "REFLGEN_BUILD_EXAMPLES": "OFF",
-        "REFLGEN_BUILD_GENERATOR": "ON"
+        "REFLGEN_BUILD_GENERATOR": "ON",
+        "REFLGEN_BUILD_IFC": "ON"
       }
     }
   ],

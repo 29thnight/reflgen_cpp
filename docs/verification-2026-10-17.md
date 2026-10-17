@@ -85,5 +85,39 @@ CMake 구성 검사와 MSBuild request 회귀 검사로 이 선택을 확인했�
 | GCC 표준 백엔드·모듈·JSON import | 4/4 |
 
 MSVC 첫 증분 빌드의 생성기 단위 테스트가 비정상 종료해 전체 클린 빌드를 수행했고, 해당 테스트는
-재검사에서 통과했다. 위의 실제 VS 검증은 원격 통합 전 결과이며, 통합 후 VS UI를 재실행한 결과는 아니다.
+재검사에서 통과했다. 위 표는 원격 통합 직후의 자동화 결과다. 이후의 실제 VS 재검증은 아래에 기록했다.
 통합 후 로그는 로컬 `build/publish-*.log`에 보관한다.
+
+## Final live VS verification
+
+원격 main을 통합한 `dcd867a`에서 Release VSIX를 다시 빌드하고 VS Community 2026 18.10.2의
+일반 프로필에 재설치했다. 제거/설치 종료 코드는 모두 0이고, 설치된 확장/Core DLL SHA256이
+새 빌드와 일치했다. 확장 로직 테스트는 다시 137/137 통과했다.
+
+| 실제 VS 검사 | 결과 |
+|---|---|
+| C++20 `[[` 키 입력 | 표준 어트리뷰트와 reflgen namespace가 함께 표시됨; assume/indeterminate 제외 |
+| 표준/reflgen 입력·확정 | nodiscard와 reflgen::ignore를 Tab으로 확정하고 저장된 선언 확인 |
+| C++latest `[[` | assume/indeterminate 표시, carries_dependency 제외 |
+| `[[` → `=` → namespace 확정 | annotation 목록으로 전환하고 reflgen 멤버 목록 열림; ignore{} 삽입 확인 |
+| 헤더 수정·Ctrl+S | 헤더 stamp만 변경, IFC stamp 유지; final_header 반영 |
+| 모듈 수정·Ctrl+S | IFC stamp만 변경, 헤더 stamp 유지; final_module 반영 |
+| 두 경로의 ignore | final_cache / final_module_cache가 생성 스키마와 JSON에서 제외됨 |
+| Error List 연결 | 의도한 bit-field에 RG0200 표시, 더블클릭으로 types.ixx 9행 이동 |
+| 오류 수정·저장 | 해당 진단 제거, 마지막 오류 0 / 경고 0 |
+| IntelliSense | 생성 후 Rescan Solution 로그, 네이티브 목록에서 새 final_module 표시·Tab 확정 |
+| 혼합 프로젝트 빌드·실행 | import reflgen.json + 헤더/IFC 스키마 등록·JSON 직렬화 성공; VS Release F5 종료 0 |
+
+Debug C++20 / Release C++latest의 명령줄 빌드·실행도 종료 코드 0이다. 최종 JSON에는
+`final_header:31`과 `final_module:41`이 포함됐다. ignore는 리플렉션 제외 지시이므로 일반 C++
+IntelliSense에는 제외한 public 필드도 표시되는 것이 정상이다.
+
+초기 데스크톱 접근 오류는 잠금 해제와 도구 재연결 후 해결했다. 불완전한 편집 중 네이티브 목록이
+로딩 중이었으나, 정상 코드 빌드 후 새 멤버 목록과 확정을 확인했다. 검사 구문은 정상 코드로 복원했다.
+이 VS 실행은 MSVC AUTO의 기존 헤더/IFC 경로이며, 표준 annotation 편집 지원이 MSVC의
+표준 리플렉션 컴파일 지원을 의미하지 않는다.
+
+로컬 증거는 `build/final-vs-live/verification.md`, `install-evidence.json`, `route-proof.json`,
+`schema-checks.json`, `save-regeneration-log.txt`, `error-navigation.txt`, `error-list-final.txt`,
+`native-completion-final.txt`, `vs-final-build.txt`, `vs-final-run.txt`, `final-release-run.log`에 보관했다.
+이는 로컬 산출물로 Git에 포함하지 않는다. 1.1.0 릴리스 버전 표시는 이 실검증 후 갱신했다.

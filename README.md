@@ -7,8 +7,9 @@ Macro-free reflection for C++20, with a serialization library whose formats you 
 Backend selection, mixed projects and version guards: [backend guide](docs/reflection-backends.md).
 Compiler, runtime and live VS validation: [verification record](docs/verification-2026-10-17.md).
 
-The module/IFC and C++26 features below describe the current source tree; rebuild the tools and VSIX to use
-them. This change does not publish new release packages.
+Version **1.1.0** adds named modules, MSVC IFC generation, mixed-project routing and the optional C++26 backend.
+Windows packages include both generators, module sources and MSBuild/CMake wiring. See the
+[release notes](docs/releases/1.1.0.md) and [final live VS verification](docs/verification-2026-10-17.md#final-live-vs-verification).
 
 - **Macro-free reflection API** — no declaration macros. Feature guards isolate C++26 syntax and compiler-specific
   module TLS storage; backend selection uses an actual compile probe.

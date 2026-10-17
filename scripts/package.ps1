@@ -27,7 +27,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 
     $stage = Join-Path $Output 'stage'
-    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+    if (Test-Path $stage) {
+        $resolvedStage = [IO.Path]::GetFullPath($stage)
+        $resolvedOutput = [IO.Path]::GetFullPath($Output).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedStage.StartsWith($resolvedOutput, [StringComparison]::OrdinalIgnoreCase)) { throw 'stage must stay inside Output' }
+        Remove-Item -LiteralPath $resolvedStage -Recurse -Force
+    }
     cmake --install (Join-Path $root 'build\release') --prefix $stage | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'install failed' }
     Copy-Item (Join-Path $root 'LICENSE') $stage
@@ -36,7 +41,12 @@ try {
     $required = @(
         'bin\reflgen.exe', 'bin\libclang.dll', 'bin\clang\include\stddef.h', 'include\reflgen\reflgen.h', 'include\reflgen\core\version.h',
         'share\reflgen\msbuild\reflgen.targets', 'share\reflgen\licenses\libclang-LICENSE.TXT',
-        'lib\cmake\reflgen\reflgen-config.cmake', 'LICENSE')
+        'bin\reflgen-ifc.exe', 'share\reflgen\modules\reflgen.json.ixx',
+        'share\reflgen\msbuild\reflgen.ifc.targets', 'share\reflgen\msbuild\reflgen.ifc.metadata.targets',
+        'share\reflgen\msbuild\reflgen.mixed.targets', 'share\reflgen\msbuild\reflgen.standard.targets',
+        'share\reflgen\msbuild\reflgen.standard.probe.cpp',
+        'share\reflgen\licenses\ifc-LICENSE.TXT', 'share\reflgen\licenses\gsl-LICENSE',
+        'lib\cmake\reflgen\reflgen-standard.cmake', 'lib\cmake\reflgen\reflgen-config.cmake', 'LICENSE')
     foreach ($path in $required) {
         if (-not (Test-Path (Join-Path $stage $path))) { throw "the install layout lacks $path" }
     }
@@ -61,7 +71,9 @@ try {
     $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $Output "reflgen.$version.nupkg"))
     try {
         $entries = @($archive.Entries | ForEach-Object FullName)
-        foreach ($entry in 'images/icon.png', 'docs/README.md', 'build/native/reflgen.targets', 'bin/reflgen.exe') {
+        foreach ($entry in 'images/icon.png', 'docs/README.md', 'build/native/reflgen.targets', 'bin/reflgen.exe',
+                           'bin/reflgen-ifc.exe', 'share/reflgen/modules/reflgen.json.ixx',
+                           'share/reflgen/msbuild/reflgen.mixed.targets', 'share/reflgen/msbuild/reflgen.standard.targets') {
             if ($entries -notcontains $entry) { throw "the NuGet package lacks $entry" }
         }
     }

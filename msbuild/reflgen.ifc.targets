@@ -9,6 +9,7 @@
     <ReflgenOutputDirectory>$([MSBuild]::EnsureTrailingSlash('$(ReflgenOutputDirectory)'))</ReflgenOutputDirectory>
     <ReflgenIncludeDirectory Condition="'$(ReflgenIncludeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)..\include\reflgen\reflgen.h')">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\include'))</ReflgenIncludeDirectory>
     <ReflgenIncludeDirectory Condition="'$(ReflgenIncludeDirectory)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\..\..\include'))</ReflgenIncludeDirectory>
+    <ReflgenIfcExecutable Condition="'$(ReflgenIfcExecutable)' == '' and Exists('$(MSBuildThisFileDirectory)..\..\..\tools\reflgen\reflgen-ifc.exe')">$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)..\..\..\tools\reflgen\reflgen-ifc.exe'))</ReflgenIfcExecutable>
     <ReflgenIfcExecutable Condition="'$(ReflgenIfcExecutable)' == ''">$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)..\..\..\bin\reflgen-ifc.exe'))</ReflgenIfcExecutable>
     <_ReflgenIfcHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).h</_ReflgenIfcHeader>
     <_ReflgenIfcSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).cpp</_ReflgenIfcSource>

@@ -70,6 +70,9 @@ jobs:
       - name: Consume the NuGet package from a project without reflgen settings
         shell: pwsh
         run: ./tests/package/check_nuget_consumer.ps1
+      - name: Consume installed IFC tools and named modules in a mixed project
+        shell: pwsh
+        run: ./tests/package/check_module_consumer.ps1 -Prefix "$PWD/build/package/stage" -Work "$env:RUNNER_TEMP/reflgen-module-consumer"
       - uses: actions/upload-artifact@v7
         with:
           name: reflgen-packages
@@ -86,9 +89,10 @@ jobs:
           & $vcpkg install reflgen --overlay-ports=$overlay --triplet x64-windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $installed = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
-          foreach ($path in 'tools\reflgen\reflgen.exe', 'tools\reflgen\libclang.dll',
+          foreach ($path in 'tools\reflgen\reflgen.exe', 'tools\reflgen\reflgen-ifc.exe', 'tools\reflgen\libclang.dll',
                             'tools\reflgen\clang\include\stddef.h', 'include\reflgen\reflgen.h',
-                            'share\reflgen\msbuild\reflgen.targets', 'share\reflgen\reflgen-config.cmake') {
+                            'share\reflgen\msbuild\reflgen.targets', 'share\reflgen\modules\reflgen.json.ixx',
+                            'share\reflgen\reflgen-standard.cmake', 'share\reflgen\reflgen-config.cmake') {
             if (-not (Test-Path (Join-Path $installed $path))) { throw "the vcpkg port did not install $path" }
           }
           & (Join-Path $installed 'tools\reflgen\reflgen.exe') --version

@@ -9,8 +9,16 @@ descriptions. No macros, no generated includes in your headers, nothing to regis
 Install `reflgen` into a `.vcxproj` (`packages.config`). Installing imports `build\native\reflgen.targets`, which runs
 the generator before compilation and adds the headers to the include path — there is nothing else to set.
 
-Requirements: Windows x64, Visual Studio 2026 (18.x), C++20 or later. The package includes the generator
-(`reflgen.exe` with its own `libclang.dll`) and the header-only library.
+Requirements: Windows x64, Visual Studio 2026 (18.x), C++20 or later. Version 1.1.0 includes both generators
+(`reflgen.exe` with its own `libclang.dll`, and `reflgen-ifc.exe`), public headers, named module sources and
+the mixed/standard MSBuild targets. Headers use libclang; MSVC module interfaces use IFC automatically.
+
+To use `import reflgen.json`, compile the shipped `share/reflgen/modules/*.ixx` as library module interfaces
+and reference that provider from the consuming project. Keep library modules and consumers on the same backend
+and language mode. The C++26 standard backend requires an actual capability probe and an explicit class manifest;
+current MSVC falls back to legacy header/IFC generation under Auto.
+See the [backend guide](https://github.com/29thnight/reflgen_cpp/blob/main/docs/reflection-backends.md) and
+[release notes](https://github.com/29thnight/reflgen_cpp/blob/main/docs/releases/1.1.0.md).
 
 ## Use
 

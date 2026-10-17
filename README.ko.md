@@ -7,8 +7,9 @@
 백엔드 선택·혼합 프로젝트·버전 분기: [백엔드 가이드](docs/reflection-backends.md).
 컴파일러·런타임·실제 VS 검증: [검증 기록](docs/verification-2026-10-17.md).
 
-아래 모듈/IFC·C++26 기능은 현재 소스 기준이다. 도구와 VSIX를 다시 빌드해 사용한다.
-이번 변경에 새 릴리스 패키지 게시는 포함하지 않는다.
+**1.1.0**에 named module, MSVC IFC 생성, 혼합 프로젝트 자동 경로와 선택적 C++26 백엔드를 추가했다.
+Windows 패키지에는 두 생성기·모듈 소스·MSBuild/CMake 배선이 포함된다.
+[릴리스 노트](docs/releases/1.1.0.md)와 [최종 실제 VS 검증](docs/verification-2026-10-17.md#final-live-vs-verification)을 참고한다.
 
 - **리플렉션 API에 매크로 불필요** — 선언 매크로 없이 사용한다. 내부 기능 가드는 C++26 구문과 컴파일러별
   모듈 TLS 저장 방식을 격리하며, 백엔드는 실제 컴파일 검사로 선택한다.

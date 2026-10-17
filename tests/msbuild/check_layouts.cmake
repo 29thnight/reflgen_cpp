@@ -16,10 +16,13 @@ file(REMOVE_RECURSE "${WORK}")
 # 배치 하나를 흉내 낸다: targets·include 표지·생성기 자리(빈 파일이면 된다 — 존재만 본다).
 function(make_layout root targets_dir executable)
     file(COPY "${SOURCE}/msbuild/reflgen.targets" "${SOURCE}/msbuild/reflgen.mixed.targets"
+        "${SOURCE}/msbuild/reflgen.ifc.targets"
         "${SOURCE}/msbuild/reflgen.ifc.metadata.targets" "${SOURCE}/msbuild/reflgen.standard.targets"
         "${SOURCE}/msbuild/reflgen.standard.probe.cpp" DESTINATION "${root}/${targets_dir}")
     file(WRITE "${root}/include/reflgen/reflgen.h" "")
     file(WRITE "${root}/${executable}" "")
+    string(REPLACE "reflgen.exe" "reflgen-ifc.exe" ifc_executable "${executable}")
+    file(WRITE "${root}/${ifc_executable}" "")
 endfunction()
 
 make_layout("${WORK}/install" "share/reflgen/msbuild" "bin/reflgen.exe")
@@ -56,6 +59,16 @@ function(check_layout name import expected_executable)
         message(FATAL_ERROR "${name}: ReflgenIncludeDirectory is not ${WORK}/${name}/include/:\n${output}")
     endif()
     message(STATUS "${name}: generator and include directory found")
+    # Separate IFC projects must resolve the same packaged tool, including vcpkg tools/.
+    file(WRITE "${project}" "<Project><Import Project=\"${WORK}/${name}/share/reflgen/msbuild/reflgen.ifc.targets\"/></Project>")
+    execute_process(COMMAND "${MSBUILD}" "${project}" -nologo -getProperty:ReflgenIfcExecutable
+        OUTPUT_VARIABLE ifc_output ERROR_VARIABLE error RESULT_VARIABLE result)
+    string(STRIP "${ifc_output}" ifc_output)
+    string(REPLACE "\\" "/" ifc_output "${ifc_output}")
+    string(REPLACE "reflgen.exe" "reflgen-ifc.exe" expected_ifc "${WORK}/${name}/${expected_executable}")
+    if(NOT result EQUAL 0 OR NOT ifc_output STREQUAL expected_ifc)
+        message(FATAL_ERROR "${name}: IFC tool mismatch: ${ifc_output}\n${error}")
+    endif()
 endfunction()
 
 check_layout(install "${WORK}/install/share/reflgen/msbuild/reflgen.targets" "bin/reflgen.exe")

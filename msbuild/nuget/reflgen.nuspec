@@ -13,7 +13,7 @@
     <icon>images\icon.png</icon>
     <readme>docs\README.md</readme>
     <releaseNotes>https://github.com/29thnight/reflgen_cpp/releases/tag/v$version$</releaseNotes>
-    <description>Macro-free, attribute-driven C++20 reflection for Visual C++ projects. Installing the package wires the reflgen code generator into the build: headers only carry [[reflgen::...]] attributes, and the generated reflection is force-included at compile time. Includes the generator (reflgen.exe with libclang) and the header-only library.</description>
+    <description>Macro-free, attribute-driven C++20 reflection for Visual C++ projects. Wires header/libclang and MSVC module/IFC generation into mixed-project builds. Includes reflgen.exe with libclang, reflgen-ifc.exe, public headers, named module sources, and optional feature-detected C++26 standard reflection/annotation support.</description>
     <tags>native cpp reflection serialization codegen attributes msbuild</tags>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
   </metadata>

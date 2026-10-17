@@ -30,12 +30,13 @@ vcpkg_cmake_configure(
         -DREFLGEN_BUILD_TESTS=OFF
         -DREFLGEN_BUILD_EXAMPLES=OFF
         -DREFLGEN_BUILD_GENERATOR=ON
+        -DREFLGEN_BUILD_IFC=ON
 )
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(CONFIG_PATH lib/cmake/reflgen)
 
 # bin/ 의 reflgen.exe, libclang.dll, clang/include(clang 내장 header)를 tools/reflgen/ 으로 옮긴다.
-vcpkg_copy_tools(TOOL_NAMES reflgen AUTO_CLEAN)
+vcpkg_copy_tools(TOOL_NAMES reflgen reflgen-ifc AUTO_CLEAN)
 file(COPY "${CURRENT_PACKAGES_DIR}/bin/libclang.dll" "${CURRENT_PACKAGES_DIR}/bin/clang"
      DESTINATION "${CURRENT_PACKAGES_DIR}/tools/reflgen")
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/bin" "${CURRENT_PACKAGES_DIR}/lib")
