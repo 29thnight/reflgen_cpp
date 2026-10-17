@@ -24,6 +24,20 @@ vcpkg_from_github(
 )
 # REFLGEN_SOURCE_END
 
+# vcpkg configures with FetchContent disconnected; acquire pinned sources through its download cache.
+vcpkg_from_github(
+    OUT_SOURCE_PATH IFC_SOURCE_PATH
+    REPO microsoft/ifc
+    REF 096b22d357d8af1c5f10d5f1895b8e2e80eaae5a
+    SHA512 ce7fd0fd9ff385e5940035bbd060110db1e80e3ab37f8f4299c9333c27e1284404b0fa4de1aa8f16cde172b1eae0887b1021a0ebae0465d45f361bc450dc579f
+)
+vcpkg_from_github(
+    OUT_SOURCE_PATH GSL_SOURCE_PATH
+    REPO microsoft/GSL
+    REF 2828399820ef4928cc89b65605dca5dc68efca6e
+    SHA512 a6d731c450da91cba34c13293cc0881a842bd90268dd5ef721ae1f48752c41dc355ebea7716a6de5b49d41568e55751c46a9dd78da4cd68656bffd33e5ee448e
+)
+
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
@@ -31,6 +45,8 @@ vcpkg_cmake_configure(
         -DREFLGEN_BUILD_EXAMPLES=OFF
         -DREFLGEN_BUILD_GENERATOR=ON
         -DREFLGEN_BUILD_IFC=ON
+        "-DFETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK=${IFC_SOURCE_PATH}"
+        "-DFETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL=${GSL_SOURCE_PATH}"
 )
 vcpkg_cmake_install()
 vcpkg_cmake_config_fixup(CONFIG_PATH lib/cmake/reflgen)
