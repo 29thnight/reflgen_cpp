@@ -11,6 +11,11 @@
 Windows 패키지에는 두 생성기·모듈 소스·MSBuild/CMake 배선이 포함된다.
 [릴리스 노트](docs/releases/1.1.0.md)와 [최종 실제 VS 검증](docs/verification-2026-10-17.md#final-live-vs-verification)을 참고한다.
 
+게시된 NuGet **1.1.0**과 릴리스 VSIX **1.1.0**을 함께 VS 2026 **18.11.0**에서 검증했다.
+nuget.org 복원, 헤더·모듈 혼합 프로젝트의 Debug/Release 실행, 저장 재생성, 표준/reflgen 자동완성,
+Error List 이동과 모듈 IntelliSense를 확인했다.
+환경·범위·증거는 [릴리스 패키지 실검증](docs/verification-2026-10-17.md#nuget-110-and-released-vsix-verification)에 정리했다.
+
 - **리플렉션 API에 매크로 불필요** — 선언 매크로 없이 사용한다. 내부 기능 가드는 C++26 구문과 컴파일러별
   모듈 TLS 저장 방식을 격리하며, 백엔드는 실제 컴파일 검사로 선택한다.
 - **C++20 기반, C++23 지원** — 표준 라이브러리만 쓴다. 선택 가능한 C++26 표준 백엔드도 서술을 만드는

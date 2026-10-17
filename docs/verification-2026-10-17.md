@@ -121,3 +121,70 @@ IntelliSense에는 제외한 public 필드도 표시되는 것이 정상이다.
 `schema-checks.json`, `save-regeneration-log.txt`, `error-navigation.txt`, `error-list-final.txt`,
 `native-completion-final.txt`, `vs-final-build.txt`, `vs-final-run.txt`, `final-release-run.log`에 보관했다.
 이는 로컬 산출물로 Git에 포함하지 않는다. 1.1.0 릴리스 버전 표시는 이 실검증 후 갱신했다.
+
+## NuGet 1.1.0 and released VSIX verification
+
+2026-10-17 15:04 KST까지 수행한 게시 후 검증이다. 앞 절의 소스 빌드 확장 검증과 구분해,
+**nuget.org의 reflgen 1.1.0**과 **GitHub v1.1.0 릴리스 VSIX**를 사용했다.
+환경은 VS Community 2026 **18.11.0**, 일반 프로필, MSVC **19.51.36260 x64**다.
+
+### 배포 파일과 소비 프로젝트
+
+- [NuGet 게시 작업](https://github.com/29thnight/reflgen_cpp/actions/runs/39007309694)은
+  05:43:51 UTC에 업로드를 완료했다. 초기 공개 조회/복원은 404였으나 14:48 KST에 공개 인덱스에
+  1.1.0이 나타났고 실제 복원이 성공했다. 업로드 성공과 공개 복원 성공을 각각 확인했다.
+- 새 `packages.config` 소비 프로젝트와 격리 캐시를 사용하고 패키지 소스는 nuget.org만 지정했다.
+  복원 로그의 HTTP OK와 `.nupkg.metadata`의 nuget.org source를 확인했다.
+- 헤더, 생성기, 모듈 소스, NuGet `build/native/reflgen.targets`는 모두 복원된
+  `packages/reflgen.1.1.0` 아래를 참조한다. 작업 트리의 reflgen 구현은 참조하지 않는다.
+- [릴리스 VSIX](https://github.com/29thnight/reflgen_cpp/releases/tag/v1.1.0)를 직접 내려받았다.
+  SHA256은 `7ea24ad47bc62149c6c1ff71b921fa8a54a4a42a958d17c4d0c6f0444cebe5ee`다.
+  사용자가 설치를 완료한 뒤 설치 manifest의 버전 1.1.0과 확장/Core DLL의 릴리스 내부 파일 대비
+  SHA256 일치를 확인했다.
+
+### 실제 VS 결과
+
+| 검사 | 확인 결과 |
+|---|---|
+| 혼합 솔루션 빌드·실행 | `import reflgen.json` + 헤더/IFC 스키마 등록; C++20 Debug와 C++latest Release 모두 VS F5 실행 종료 0 |
+| 헤더 수정·Ctrl+S | 헤더 stamp만 갱신, IFC stamp 유지; `nuget_header` 반영 |
+| 모듈 수정·Ctrl+S | IFC stamp만 갱신, 헤더 stamp 유지; `nuget_module` 반영 |
+| ignore | 헤더/모듈의 cache 필드를 생성 스키마와 JSON에서 제외; 모듈 역직렬화 후 기본값 유지 |
+| C++20 `[[` 키 입력 | 표준 어트리뷰트와 reflgen namespace 후보 자동 표시 |
+| 자동완성 입력·확정 | `nod` + Tab으로 nodiscard, `[[reflgen::` 후 `ig` + Tab으로 ignore 확정; 저장된 선언 확인 |
+| Error List 연결 | 의도한 bit-field의 RG0004 경고를 `settings.h:11`에 표시; 더블클릭으로 해당 행 이동 |
+| 진단 복구 | 시험 코드 복원·저장 후 오류 0 / 경고 0 |
+| IntelliSense | 생성 변경 후 Rescan Solution 출력; 네이티브 멤버 목록에 새 `nuget_module` 표시 |
+
+최종 런타임 검사는 두 타입 등록, 새 필드, 모듈 JSON 왕복, ignore 제외를 검사하며 출력은 다음과 같다.
+
+```text
+NUGET_MIXED_OK {"version":3,"nuget_header":31} {"score":7,"nuget_module":41}
+```
+
+명령줄 Debug/Release 빌드·실행도 성공했다. 최초 VS 평가 후 첫 저장에서는 두 경로가 함께 갱신됐고,
+이후 안정된 평가 상태에서 위 표의 독립적인 stamp 변경을 확인했다.
+네이티브 멤버 완성에서 실제 확정한 항목은 `ignored`이며, 새 `nuget_module`은 후보 표시를 확인했다.
+ignore 필드가 일반 C++ 멤버 목록에 남는 것은 정상이다.
+
+이번 검증의 자동완성 입력·확정은 C++20에서 수행했다. C++latest는 빌드·실행을 확인했으며,
+C++26 annotation 자동완성은 이 NuGet 소비 프로젝트에서 재검사하지 않았다. MSVC의 실행 백엔드는
+기존 헤더/IFC이며 표준 C++26 리플렉션 컴파일 지원을 뜻하지 않는다.
+
+부모 저장소의 Cpp 전용 `.clang-format` 때문에 헤더 편집 중 Objective-C 서식 오류가 한 번 발생했다.
+소비 fixture에 `BasedOnStyle: LLVM`을 두고 `[[` 자동 호출을 다시 확인했다. 제품 소스 변경은 없으며
+진단 시험 코드는 정상 상태로 복원했다.
+
+### 로컬 재현·증거
+
+소비 솔루션은 `build/nuget-1.1.0-vs-live/consumer/Mixed-Live.sln`이다. 이 디렉터리의
+`nuget.config`와 `packages.config`로 복원한 뒤 Debug/Release x64를 빌드·실행한다.
+헤더와 모듈을 각각 수정·저장하고 생성 stamp 및 VS Output을 확인한다.
+
+증거는 `build/nuget-1.1.0-vs-live/`의 `verification.md`, `nuget-restore.log`,
+`route-proof.json`, `vs-header-save.txt`, `vs-module-save.txt`,
+`completion-cpp20-auto-trigger.txt`, `completion-reflgen-members.txt`,
+`native-module-completion.txt`, `error-list-negative.txt`, `error-navigation.txt`,
+`error-list-final.txt`, `vs-release-debug-output.txt`, `run-debug-final.log`,
+`run-release-final.log`, `build-release-final.log`에 보관했다.
+소비 프로젝트와 원본 증거는 Git에 포함하지 않는 로컬 빌드 산출물이다.

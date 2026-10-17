@@ -11,6 +11,11 @@ Version **1.1.0** adds named modules, MSVC IFC generation, mixed-project routing
 Windows packages include both generators, module sources and MSBuild/CMake wiring. See the
 [release notes](docs/releases/1.1.0.md) and [final live VS verification](docs/verification-2026-10-17.md#final-live-vs-verification).
 
+The published NuGet **1.1.0** package and released VSIX **1.1.0** were also verified together in
+VS 2026 **18.11.0**: nuget.org restore, mixed header/module Debug and Release execution,
+save regeneration, standard/reflgen completion, Error List navigation and module IntelliSense passed.
+See the [released-package verification](docs/verification-2026-10-17.md#nuget-110-and-released-vsix-verification) for scope and evidence.
+
 - **Macro-free reflection API** — no declaration macros. Feature guards isolate C++26 syntax and compiler-specific
   module TLS storage; backend selection uses an actual compile probe.
 - **C++20 baseline, C++23 supported** — standard library only. With the optional C++26 standard backend, only the way
