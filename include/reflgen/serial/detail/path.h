@@ -12,9 +12,9 @@ namespace reflgen::detail
     class path_scope
     {
       public:
-        explicit path_scope(std::string_view key) { active_path.push_back({key, 0, false}); }
-        explicit path_scope(std::size_t index) { active_path.push_back({{}, index, true}); }
-        ~path_scope() { active_path.pop_back(); }
+        explicit path_scope(std::string_view key) { active_path().push_back({key, 0, false}); }
+        explicit path_scope(std::size_t index) { active_path().push_back({{}, index, true}); }
+        ~path_scope() { active_path().pop_back(); }
 
         path_scope(const path_scope&) = delete;
         path_scope& operator=(const path_scope&) = delete;

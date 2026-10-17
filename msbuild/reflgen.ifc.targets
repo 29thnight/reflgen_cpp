@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A separate reflection project builds its provider before reading the primary module IFC. -->
+<Project>
+  <PropertyGroup>
+    <ReflgenTargetsImported>true</ReflgenTargetsImported>
+    <ReflgenBackend>Ifc</ReflgenBackend>
+    <ReflgenModule Condition="'$(ReflgenModule)' == ''">$([System.Text.RegularExpressions.Regex]::Replace('$(ProjectName)', '[^A-Za-z0-9_]', '_'))</ReflgenModule>
+    <ReflgenOutputDirectory Condition="'$(ReflgenOutputDirectory)' == ''">$([MSBuild]::NormalizeDirectory('$(ProjectDir)', '$(IntDir)', 'reflgen-ifc'))</ReflgenOutputDirectory>
+    <ReflgenOutputDirectory>$([MSBuild]::EnsureTrailingSlash('$(ReflgenOutputDirectory)'))</ReflgenOutputDirectory>
+    <ReflgenIncludeDirectory Condition="'$(ReflgenIncludeDirectory)' == '' and Exists('$(MSBuildThisFileDirectory)..\include\reflgen\reflgen.h')">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\include'))</ReflgenIncludeDirectory>
+    <ReflgenIncludeDirectory Condition="'$(ReflgenIncludeDirectory)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\..\..\include'))</ReflgenIncludeDirectory>
+    <ReflgenIfcExecutable Condition="'$(ReflgenIfcExecutable)' == ''">$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)..\..\..\bin\reflgen-ifc.exe'))</ReflgenIfcExecutable>
+    <_ReflgenIfcHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).h</_ReflgenIfcHeader>
+    <_ReflgenIfcSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).cpp</_ReflgenIfcSource>
+    <_ReflgenIfcStamp>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).stamp</_ReflgenIfcStamp>
+    <_ReflgenIfcMapping>@(ReflgenIfc->'%(Module)=%(FullPath)')</_ReflgenIfcMapping>
+    <_ReflgenAttributeMappings>@(ReflgenAttributeModule->'/reference &quot;%(Module)=%(FullPath)&quot;', ' ')</_ReflgenAttributeMappings>
+    <_ReflgenIfcMetadata>@(ReflgenIfc->'%(Metadata)')</_ReflgenIfcMetadata>
+    <_ReflgenIfcMetadataArguments Condition="'$(_ReflgenIfcMetadata)' != ''">--metadata &quot;$(_ReflgenIfcMetadata)&quot;</_ReflgenIfcMetadataArguments>
+    <ReflgenCatalogFile>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).attributes.tsv</ReflgenCatalogFile>
+    <ReflgenIfcSourceProject Condition="'$(ReflgenIfcSourceProject)' != ''">$([MSBuild]::NormalizePath('$(ProjectDir)', '$(ReflgenIfcSourceProject)'))</ReflgenIfcSourceProject>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(ReflgenIncludeDirectory);$(ReflgenOutputDirectory);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /reference &quot;$(_ReflgenIfcMapping)&quot; $(_ReflgenAttributeMappings)</AdditionalOptions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="$(_ReflgenIfcSource)">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
+  <Target Name="_ReflgenIfcProvider" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'@(ReflgenIfc->Count())' != '1'" Text="reflgen IFC requires exactly one ReflgenIfc item per reflection project." />
+    <Error Condition="'@(ReflgenIfc->'%(Module)')' == ''" Text="ReflgenIfc requires Module metadata (the C++ import name)." />
+    <Error Condition="!Exists('$(ReflgenIfcExecutable)')" Text="reflgen-ifc.exe was not found; set ReflgenIfcExecutable." />
+    <Error Condition="'$(PlatformToolset)' == 'ClangCL'" Text="IFC reflection currently requires MSVC." />
+    <MSBuild Projects="@(ProjectReference)" Targets="Build"
+             Properties="Configuration=$(Configuration);Platform=$(Platform)" BuildInParallel="false" />
+    <Error Condition="!Exists('%(ReflgenIfc.FullPath)')" Text="IFC was not produced: %(ReflgenIfc.FullPath)" />
+    <Error Condition="'%(ReflgenIfc.Metadata)' != '' and !Exists('%(ReflgenIfc.Metadata)')" Text="Module metadata was not produced: %(ReflgenIfc.Metadata). Import reflgen.ifc.metadata.targets in the provider." />
+    <MakeDir Directories="$(ReflgenOutputDirectory)" />
+    <Delete Files="$(_ReflgenIfcStamp)" Condition="!Exists('$(_ReflgenIfcHeader)') or !Exists('$(_ReflgenIfcSource)') or !Exists('$(ReflgenCatalogFile)')" />
+  </Target>
+  <Target Name="_ReflgenIfcRun" Inputs="@(ReflgenIfc);@(ReflgenIfc->'%(Metadata)');@(ReflgenAttributeModule);$(ReflgenIfcExecutable);$(MSBuildThisFileFullPath);$(MSBuildProjectFullPath)"
+          Outputs="$(_ReflgenIfcStamp)">
+    <Exec Command="&quot;$(ReflgenIfcExecutable)&quot; --ifc &quot;%(ReflgenIfc.FullPath)&quot; --import &quot;%(ReflgenIfc.Module)&quot; --module &quot;$(ReflgenModule)&quot; --output &quot;$(ReflgenOutputDirectory).&quot; $(_ReflgenIfcMetadataArguments) @(ReflgenAttributeScope->'--attribute-scope &quot;%(Identity)&quot;', ' ') @(ReflgenAttributeModule->'--attribute-import &quot;%(Module)&quot;', ' ')" />
+    <Touch Files="$(_ReflgenIfcStamp)" AlwaysCreate="true" />
+  </Target>
+  <Target Name="ReflgenGenerate" BeforeTargets="ClCompile" Condition="'$(DesignTimeBuild)' != 'true'"
+          DependsOnTargets="_ReflgenIfcProvider;_ReflgenIfcRun" />
+  <Target Name="_ReflgenIfcClean" AfterTargets="Clean">
+    <Delete Files="$(_ReflgenIfcHeader);$(_ReflgenIfcSource);$(_ReflgenIfcStamp);$(ReflgenCatalogFile)" />
+  </Target>
+</Project>

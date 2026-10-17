@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <ReflgenReflectionBackend Condition="'$(ReflgenReflectionBackend)' == ''">Auto</ReflgenReflectionBackend>
+    <_ReflgenStandardProbeSource>$(MSBuildThisFileDirectory)reflgen.standard.probe.cpp</_ReflgenStandardProbeSource>
+    <_ReflgenStandardProbeRules>$(MSBuildThisFileFullPath)</_ReflgenStandardProbeRules>
+    <_ReflgenStandardResult>$(ReflgenOutputDirectory)standard.available</_ReflgenStandardResult>
+    <_ReflgenStandardStamp>$(ReflgenOutputDirectory)standard.probe.stamp</_ReflgenStandardStamp>
+    <_ReflgenStandardKey>$(ReflgenOutputDirectory)standard.probe.key</_ReflgenStandardKey>
+  </PropertyGroup>
+  <Target Name="_ReflgenStandardRequest">
+    <ItemGroup><_ReflgenProbeHeader Include="$(ReflgenIncludeDirectory)reflgen\core\*.h" /></ItemGroup>
+    <PropertyGroup>
+      <_ReflgenProjectStandards>@(ClCompile->'%(LanguageStandard)')</_ReflgenProjectStandards>
+      <_ReflgenWantsStandard Condition="'$(ReflgenReflectionBackend)' == 'Std' or ('$(ReflgenReflectionBackend)' == 'Auto' and '@(ReflgenReflectType)' != '' and ($(_ReflgenProjectStandards.Contains('stdcpplatest')) or $(_ReflgenProjectStandards.Contains('stdcpp26'))))">true</_ReflgenWantsStandard>
+      <_ReflgenWantsStandard Condition="'$(ReflgenReflectionBackend)' == 'Auto' and ('$(ReflgenInterop)' == 'true' or '$(ReflgenDeclarationsJson)' != '')">false</_ReflgenWantsStandard>
+      <_ReflgenProbeArch Condition="'$(Platform)' == 'Win32'">x86</_ReflgenProbeArch>
+      <_ReflgenProbeArch Condition="'$(_ReflgenProbeArch)' == ''">$(Platform)</_ReflgenProbeArch>
+      <_ReflgenProbeCompiler>$(VCToolsInstallDir)bin\Hostx64\$(_ReflgenProbeArch)\cl.exe</_ReflgenProbeCompiler>
+      <_ReflgenProbeCompiler Condition="'$(PlatformToolset)' == 'ClangCL'">$(CLToolPath)$(CLToolExe)</_ReflgenProbeCompiler>
+    </PropertyGroup>
+    <Error Condition="'$(ReflgenReflectionBackend)' != 'Auto' and '$(ReflgenReflectionBackend)' != 'Std' and '$(ReflgenReflectionBackend)' != 'Legacy'" Text="ReflgenReflectionBackend must be Auto, Std or Legacy." Code="RG0260" />
+    <Error Condition="'$(ReflgenReflectionBackend)' == 'Std' and ('$(ReflgenInterop)' == 'true' or '$(ReflgenDeclarationsJson)' != '')" Text="Declaration JSON and interop outputs require ReflgenReflectionBackend=Legacy." Code="RG0263" />
+    <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="'$(_ReflgenWantsStandard)' == 'true' and '$(DesignTimeBuild)' != 'true'" />
+    <WriteLinesToFile File="$(_ReflgenStandardKey)" Lines="$(_ReflgenProbeCompiler);$(ReflgenIncludeDirectory);$(IncludePath);$(PlatformToolset);$(VCToolsVersion)"
+                      Condition="'$(_ReflgenWantsStandard)' == 'true' and '$(DesignTimeBuild)' != 'true'" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+  <Target Name="_ReflgenProbeStandard" DependsOnTargets="_ReflgenStandardRequest"
+          Condition="'$(_ReflgenWantsStandard)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+          Inputs="$(_ReflgenProbeCompiler);$(_ReflgenStandardProbeSource);$(_ReflgenStandardProbeRules);$(_ReflgenStandardKey);@(_ReflgenProbeHeader)"
+          Outputs="$(_ReflgenStandardStamp);$(_ReflgenStandardResult)">
+    <MakeDir Directories="$(ReflgenOutputDirectory)" />
+    <!-- A failed capability probe is expected, not a build diagnostic. Forced Std reports one clear error below. -->
+    <Exec Command="&quot;$(_ReflgenProbeCompiler)&quot; /nologo /c /std:c++latest /EHsc /utf-8 /DREFLGEN_USE_STD_REFLECTION=1 /I&quot;$(ReflgenIncludeDirectory).&quot; &quot;$(_ReflgenStandardProbeSource)&quot; /Fo&quot;$(ReflgenOutputDirectory)standard.probe.obj&quot; &gt; &quot;$(ReflgenOutputDirectory)standard.probe.log&quot; 2&gt;&amp;1"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="_ReflgenStandardProbeExit" />
+    </Exec>
+    <WriteLinesToFile File="$(_ReflgenStandardResult)" Lines="$(_ReflgenStandardProbeExit)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <Touch Files="$(_ReflgenStandardStamp);$(_ReflgenStandardResult)" AlwaysCreate="true" />
+  </Target>
+  <Target Name="_ReflgenSelectBackend" DependsOnTargets="_ReflgenStandardRequest;_ReflgenProbeStandard">
+    <PropertyGroup Condition="Exists('$(_ReflgenStandardResult)')">
+      <_ReflgenStandardExit>$([System.IO.File]::ReadAllText('$(_ReflgenStandardResult)').Trim())</_ReflgenStandardExit>
+    </PropertyGroup>
+    <PropertyGroup>
+      <ReflgenSelectedBackend>Legacy</ReflgenSelectedBackend>
+      <ReflgenSelectedBackend Condition="'$(_ReflgenWantsStandard)' == 'true' and '$(_ReflgenStandardExit)' == '0'">Std</ReflgenSelectedBackend>
+      <_ReflgenStdDefinition>REFLGEN_USE_STD_REFLECTION=0</_ReflgenStdDefinition>
+      <_ReflgenStdDefinition Condition="'$(ReflgenSelectedBackend)' == 'Std'">REFLGEN_USE_STD_REFLECTION=1</_ReflgenStdDefinition>
+    </PropertyGroup>
+    <Error Condition="'$(ReflgenReflectionBackend)' == 'Std' and '$(ReflgenSelectedBackend)' != 'Std' and '$(DesignTimeBuild)' != 'true'"
+           Code="RG0261" Text="C++26 standard reflection/annotation probe failed. Use Auto or Legacy, or a compiler supporting &lt;meta&gt;, annotations and static strings. See $(_ReflgenStandardResult) and standard.probe.log." />
+    <ItemGroup><ClCompile><PreprocessorDefinitions>%(ClCompile.PreprocessorDefinitions);$(_ReflgenStdDefinition)</PreprocessorDefinitions><LanguageStandard Condition="'$(ReflgenSelectedBackend)' == 'Std'">stdcpplatest</LanguageStandard></ClCompile></ItemGroup>
+  </Target>
+  <Target Name="ReflgenGenerateStandard" Condition="'$(ReflgenSelectedBackend)' == 'Std'">
+    <Error Condition="'@(ReflgenReflectType)' == '' and '$(ReflgenRegistration)' != 'false'" Code="RG0262" Text="Standard registration requires ReflgenReflectType items (explicit class manifest), or ReflgenRegistration=false." />
+    <MakeDir Directories="$(ReflgenOutputDirectory)" />
+    <ItemGroup>
+      <_ReflgenStdHeader Include="// &lt;auto-generated/&gt; Generated by reflgen standard backend.;#pragma once" />
+      <_ReflgenStdHeader Include="@(ReflgenStandardImport->'import %(Identity)%3B')" />
+      <_ReflgenStdHeader Include="namespace reflgen { class registry%3B namespace generated { void register_$(ReflgenModule)(registry&amp;)%3B void register_$(ReflgenModule)()%3B } }" />
+      <_ReflgenStdSource Include="#include &quot;reflgen/runtime/registry.h&quot;" />
+      <_ReflgenStdSource Include="@(ClInclude->'#include &quot;%(FullPath)&quot;')" />
+      <_ReflgenStdRegistrationHeader Include="$(ReflgenRegistrationHeaders)" />
+      <_ReflgenStdSource Include="@(_ReflgenStdRegistrationHeader->'#include &quot;%(FullPath)&quot;')" />
+      <_ReflgenStdSource Include="@(ReflgenStandardImport->'import %(Identity)%3B')" />
+      <_ReflgenStdSource Include="void reflgen::generated::register_$(ReflgenModule)(registry&amp; registry) {" />
+      <_ReflgenStdSource Include="@(ReflgenReflectType->'registry.add&lt;%(Identity)&gt;()%3B')" />
+      <_ReflgenStdSource Include="}" />
+      <_ReflgenStdSource Include="void reflgen::generated::register_$(ReflgenModule)() { register_$(ReflgenModule)(default_registry())%3B }" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_ReflgenInjection)" Lines="@(_ReflgenStdHeader)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <WriteLinesToFile File="$(_ReflgenModuleSource)" Lines="#include &quot;reflgen_$(ReflgenModule).h&quot;;@(_ReflgenStdSource)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup Condition="'$(ReflgenRegistration)' != 'false'">
+      <ClCompile Include="$(_ReflgenModuleSource)" Exclude="@(ClCompile)"><PrecompiledHeader>NotUsing</PrecompiledHeader><CompileAs>CompileAsCpp</CompileAs><LanguageStandard>stdcpplatest</LanguageStandard><PreprocessorDefinitions>%(ClCompile.PreprocessorDefinitions);REFLGEN_USE_STD_REFLECTION=1</PreprocessorDefinitions></ClCompile>
+    </ItemGroup>
+  </Target>
+</Project>

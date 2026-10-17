@@ -10,6 +10,7 @@
 // 질의 표면은 그대로 둔다 — 소비자가 서술의 출처를 모르게 하는 것이 이 파일의 목적이다.
 #include "reflgen/core/descriptor.h"
 #include "reflgen/core/hook.h"
+#include "reflgen/core/standard_reflection.h"
 #include <cstddef>
 #include <tuple>
 #include <type_traits>
@@ -39,7 +40,8 @@ namespace reflgen
     } // namespace detail
 
     template<class T>
-    concept reflectable = std::is_class_v<T> && (detail::has_reflgen_recipe<T> || detail::has_external_reflection<T>);
+    concept reflectable = std::is_class_v<T> && (detail::has_reflgen_recipe<T> || detail::has_external_reflection<T> ||
+                                               detail::standard_eligible<T>());
 
     namespace detail
     {
@@ -83,6 +85,12 @@ namespace reflgen
                               "reflgen::reflection<T>::value describes a different type than T");
                 return reflection<T>::value;
             }
+#if REFLGEN_USE_STD_REFLECTION
+            else if constexpr (standard_eligible<T>())
+            {
+                return standard_schema<T>();
+            }
+#endif
             else
             {
                 static_assert(dependent_false<T>,

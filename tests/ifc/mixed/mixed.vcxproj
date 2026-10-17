@@ -1,0 +1,18 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{E2F42103-F11D-4AE7-85EF-E38522C32422}</ProjectGuid>
+    <IfcTestKind>Application</IfcTestKind>
+    <ReflgenModule>mixed</ReflgenModule>
+  </PropertyGroup>
+  <Import Project="common.props" />
+  <ItemGroup>
+    <ClCompile Include="types.ixx" />
+    <ClCompile Include="main.cpp" />
+    <ClInclude Include="settings.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(ReflgenTargetsFile)" />
+  <ItemDefinitionGroup>
+    <ClCompile><AdditionalIncludeDirectories>$(ReflgenOutputDirectory);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile>
+  </ItemDefinitionGroup>
+</Project>

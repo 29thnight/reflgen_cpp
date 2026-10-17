@@ -47,6 +47,9 @@ namespace Reflgen.VisualStudio
             var insertions = new List<FriendInsertion>();
             foreach (Match head in ClassHead.Matches(code))
             {
+                // Standard annotations reflect public members only; no access friend is needed.
+                if (Regex.IsMatch(head.Groups["attributes"].Value,
+                                  @"(?:\[\[|,)\s*=\s*reflgen\s*::\s*reflect\b")) continue;
                 if (!ReflectedHeader.HasDirective(head.Groups["attributes"].Value, "reflect"))
                 {
                     continue;

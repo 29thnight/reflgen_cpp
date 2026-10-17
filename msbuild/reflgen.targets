@@ -101,13 +101,15 @@
        build 에서는 돌지 않는다. -->
   <Target Name="ReflgenGenerate"
           BeforeTargets="ClCompile"
-          Condition="'$(DesignTimeBuild)' != 'true'"
-          DependsOnTargets="_ReflgenComputeInputs;_ReflgenWriteArguments;_ReflgenRun;_ReflgenRegisterOwnedOutputs" />
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(ReflgenProviderPass)' != 'true'"
+          DependsOnTargets="_ReflgenSelectBackend;ReflgenGenerateHeaders;$(ReflgenAdditionalGenerationTargets);ReflgenGenerateStandard" />
+  <Target Name="ReflgenGenerateHeaders" Condition="'$(ReflgenProviderPass)' != 'true'"
+          DependsOnTargets="_ReflgenSelectBackend;_ReflgenComputeInputs;_ReflgenWriteArguments;_ReflgenRun;_ReflgenRegisterOwnedOutputs" />
 
   <!-- 모든 번역 단위에 주입 header 들(참조하는 reflgen 프로젝트의 것과 자기 것)을 강제 include 한다. 미리
        컴파일된 header 를 쓰는(/Yu·/Yc) 파일은 그 header 를 먼저 강제 include 한다 — /Yu 는 pch header 앞에 온 것을
        건너뛰므로 주입 header 가 먼저 오면 사라진다. -->
-  <Target Name="_ReflgenInject" DependsOnTargets="_ReflgenCollectInjections">
+  <Target Name="_ReflgenInject" DependsOnTargets="_ReflgenSelectBackend;_ReflgenCollectInjections">
     <PropertyGroup>
       <_ReflgenForcedIncludes>@(_ReflgenInjections)</_ReflgenForcedIncludes>
     </PropertyGroup>
@@ -116,7 +118,7 @@
          (references header, 아래에서 쓴다)을 스스로 include 한다. 이 항목은 생성이 만들므로 여기서 보이는지는 순서에
          달렸다(ReflgenReference 로 생성이 먼저 돌았으면 보인다) — 메타데이터에 기대지 않는다. -->
     <ItemGroup Condition="'$(_ReflgenForcedIncludes)' != ''">
-      <ClCompile Condition="'%(ClCompile.CompileAs)' == 'CompileAsC' or ('%(ClCompile.Extension)' == '.c' and '%(ClCompile.CompileAs)' != 'CompileAsCpp') or '%(ClCompile.Identity)' == '$(_ReflgenModuleSource)'">
+      <ClCompile Condition="'$(ReflgenProviderPass)' == 'true' or '%(ClCompile.CompileAs)' == 'CompileAsCppModule' or '%(ClCompile.CompileAs)' == 'CompileAsCppModuleInternalPartition' or '%(ClCompile.Extension)' == '.ixx' or '%(ClCompile.Extension)' == '.cppm' or '%(ClCompile.Extension)' == '.mpp' or '%(ClCompile.CompileAs)' == 'CompileAsC' or ('%(ClCompile.Extension)' == '.c' and '%(ClCompile.CompileAs)' != 'CompileAsCpp') or '%(ClCompile.Identity)' == '$(_ReflgenModuleSource)'">
         <_ReflgenNoInjection>true</_ReflgenNoInjection>
       </ClCompile>
       <ClCompile Condition="'%(ClCompile._ReflgenNoInjection)' != 'true' and ('%(ClCompile.PrecompiledHeader)' == 'Use' or '%(ClCompile.PrecompiledHeader)' == 'Create') and '%(ClCompile.PrecompiledHeaderFile)' != ''">
@@ -153,11 +155,11 @@
   <!-- 아직 생성하기 전이면(처음 여는 프로젝트의 IntelliSense, 또는 참조하는 쪽이 먼저 물을 때) 빈 주입 header 를
        둔다 — 빌드에서는 ReflgenGenerate 가 컴파일 전에 채운다. -->
   <Target Name="_ReflgenEnsureInjection">
-    <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="'@(ClInclude)' != '' and !Exists('$(_ReflgenInjection)')" />
+    <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="('@(ClInclude)' != '' or '@(ReflgenReflectType)' != '') and !Exists('$(_ReflgenInjection)')" />
     <WriteLinesToFile File="$(_ReflgenInjection)" Lines="#pragma once"
-                      Condition="'@(ClInclude)' != '' and !Exists('$(_ReflgenInjection)')" />
+                      Condition="('@(ClInclude)' != '' or '@(ReflgenReflectType)' != '') and !Exists('$(_ReflgenInjection)')" />
     <ItemGroup>
-      <_ReflgenOwnInjection Include="$(_ReflgenInjection)" Condition="'@(ClInclude)' != ''" />
+      <_ReflgenOwnInjection Include="$(_ReflgenInjection)" Condition="'@(ClInclude)' != '' or '@(ReflgenReflectType)' != ''" />
     </ItemGroup>
   </Target>
 
@@ -280,7 +282,7 @@
     <!-- 생성된 등록 함수도 컴파일한다. 미리 컴파일된 header 는 쓰지 않는다(생성 파일은 pch.h 를 모른다).
          이 항목은 _ReflgenInject 뒤에 생기므로 주입 header 를 강제 include 받지 않는다 — 스스로 include 한다.
          사용자의 강제 include(/FI)는 남긴다 — 사용자 header 가 그것이 주는 설정에 기댈 수 있다. -->
-    <ItemGroup Condition="'@(_ReflgenHeader)' != ''">
+    <ItemGroup Condition="'@(_ReflgenHeader)' != '' and '$(ReflgenSelectedBackend)' != 'Std'">
       <ClCompile Include="$(_ReflgenModuleSource)">
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
       </ClCompile>
@@ -302,12 +304,13 @@
     </ReadLinesFromFile>
   </Target>
 
-  <Target Name="_ReflgenWriteArguments" Condition="'@(_ReflgenHeader)' != ''">
+  <Target Name="_ReflgenWriteArguments" Condition="'@(_ReflgenHeader)' != '' and '$(ReflgenSelectedBackend)' != 'Std'">
     <PropertyGroup>
       <_ReflgenLanguageStandard>@(_ReflgenCompile->'%(LanguageStandard)')</_ReflgenLanguageStandard>
       <_ReflgenStandardArgument Condition="'$(_ReflgenLanguageStandard)' == 'stdcpp17'">-std=c++17</_ReflgenStandardArgument>
       <_ReflgenStandardArgument Condition="'$(_ReflgenLanguageStandard)' == 'stdcpp20'">-std=c++20</_ReflgenStandardArgument>
       <_ReflgenStandardArgument Condition="$(_ReflgenLanguageStandard.StartsWith('stdcpp23'))">-std=c++23</_ReflgenStandardArgument>
+      <_ReflgenStandardArgument Condition="$(_ReflgenLanguageStandard.StartsWith('stdcpp26'))">-std=c++26</_ReflgenStandardArgument>
       <_ReflgenStandardArgument Condition="'$(_ReflgenLanguageStandard)' == 'stdcpplatest'">-std=c++2c</_ReflgenStandardArgument>
       <!-- 지정하지 않으면 생성기의 기본(C++20)으로 파싱한다. MSVC 의 기본(C++14)으로는 reflgen header 가
            컴파일되지 않으므로 C++20 보다 낮게 볼 이유가 없다. -->
@@ -366,7 +369,7 @@
   <!-- stamp 로 최신 여부를 가린다. 생성기는 내용이 같으면 생성 파일을 다시 쓰지 않으므로(컴파일을
        다시 부르지 않으려는 것) 생성 파일의 시각으로는 가릴 수 없다. -->
   <Target Name="_ReflgenRun"
-          Condition="'@(_ReflgenHeader)' != ''"
+          Condition="'@(_ReflgenHeader)' != '' and '$(ReflgenSelectedBackend)' != 'Std'"
           Inputs="@(_ReflgenExistingHeader);@(_ReflgenDependency);$(ReflgenExecutable);$(_ReflgenArgumentsFile);$(_ReflgenResponseFile)"
           Outputs="@(_ReflgenRunOutput)">
     <Error Condition="'$(ReflgenExecutable)' == '' or !Exists('$(ReflgenExecutable)')"
@@ -395,7 +398,6 @@
                   Condition="$([System.String]::Copy('%(FullPath)').StartsWith('$(_ReflgenOwnedOutputRoot)', System.StringComparison.OrdinalIgnoreCase))" />
     </ItemGroup>
   </Target>
-
   <Target Name="_ReflgenCleanOptionalOutputs" BeforeTargets="Clean" DependsOnTargets="_ReflgenReadOwnedOutputs">
     <ReadLinesFromFile File="$(_ReflgenOwnershipFile)" Condition="Exists('$(_ReflgenOwnershipFile)')">
       <Output TaskParameter="Lines" ItemName="_ReflgenCleanRecordedOutput" />
@@ -406,4 +408,14 @@
     </ItemGroup>
     <Delete Files="@(_ReflgenCleanOwnedOutput);$(_ReflgenOwnershipFile)" />
   </Target>
+
+  <!-- Imports are evaluated before items, so the shared stage checks its module inputs at target execution. -->
+  <ItemGroup>
+    <_ReflgenModuleCandidate Include="@(ClCompile->WithMetadataValue('CompileAs', 'CompileAsCppModule'))" />
+    <_ReflgenModuleCandidate Include="@(ClCompile->WithMetadataValue('Extension', '.ixx'));@(ClCompile->WithMetadataValue('Extension', '.cppm'));@(ClCompile->WithMetadataValue('Extension', '.mpp'))" />
+    <_ReflgenModuleCandidate Remove="@(_ReflgenModuleCandidate->WithMetadataValue('ExcludedFromBuild', 'true'))" />
+    <_ReflgenModuleCandidate Remove="@(_ReflgenModuleCandidate->WithMetadataValue('CompileAs', 'CompileAsCppModuleInternalPartition'))" />
+  </ItemGroup>
+  <Import Project="reflgen.standard.targets" />
+  <Import Project="reflgen.mixed.targets" />
 </Project>

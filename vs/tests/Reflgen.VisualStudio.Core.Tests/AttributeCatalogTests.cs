@@ -5,6 +5,29 @@ namespace Reflgen.VisualStudio.Tests
 {
     public sealed class AttributeCatalogTests
     {
+        [Theory]
+        [InlineData("[[", true)]
+        [InlineData("[[refl", true)]
+        [InlineData("[[nodiscard", true)]
+        [InlineData("[[deprecated, ", true)]
+        [InlineData("[[maybe_unused", true)]
+        [InlineData("[[msvc::", false)]
+        [InlineData("[[using msvc: ", false)]
+        [InlineData("[[reflgen::", true)]
+        [InlineData("[[reflgen::ign", true)]
+        [InlineData("[[using reflgen: ", true)]
+        [InlineData("[[reflgen::range(0, ", false)]
+        public void Completion_PreservesRootAndConfiguredScopes(string text, bool expected)
+        {
+            Assert.Equal(expected, AttributeCatalog.BuiltIn.OwnsCompletion(AttributeContext.Analyze(text)));
+        }
+        [Fact]
+        public void Completion_StandardAttributesAreUnqualifiedAndIncludeCommonCppAttributes()
+        {
+            Assert.All(AttributeCatalog.Standard.Entries, entry => Assert.Equal("", entry.Scope));
+            foreach (string name in new[] { "nodiscard", "maybe_unused", "deprecated", "fallthrough", "noreturn", "likely", "unlikely", "no_unique_address" })
+                Assert.Contains(AttributeCatalog.Standard.Entries, entry => entry.Name == name);
+        }
         // 생성기가 쓰는 모양 그대로(탭 구분, 역슬래시 escape).
         private const string GeneratorOutput =
             "reflgen-attributes\t1\n" +

@@ -1,0 +1,32 @@
+execute_process(COMMAND "${CMAKE_COMMAND}" --install "${BINARY}" --config "${CONFIG}" --prefix "${WORK}/prefix"
+    RESULT_VARIABLE result OUTPUT_VARIABLE log ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "module package install failed: ${log}${error}")
+endif()
+file(WRITE "${WORK}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.28)
+project(installed_modules LANGUAGES CXX)
+find_package(reflgen CONFIG REQUIRED)
+reflgen_add_modules(installed_modules)
+add_executable(consumer \"${SOURCE}/main.cpp\" \"${SOURCE}/headers.cpp\")
+target_compile_definitions(consumer PRIVATE REFLGEN_IMPORT_UMBRELLA)
+target_link_libraries(consumer PRIVATE installed_modules)
+set_target_properties(consumer PROPERTIES CXX_SCAN_FOR_MODULES ON)
+enable_testing()
+add_test(NAME consumer COMMAND consumer)
+")
+execute_process(COMMAND "${CMAKE_COMMAND}" -S "${WORK}" -B "${WORK}/out" -G "${GENERATOR}"
+    "-DCMAKE_CXX_COMPILER=${COMPILER}" "-DCMAKE_BUILD_TYPE=${CONFIG}" "-DCMAKE_PREFIX_PATH=${WORK}/prefix"
+    RESULT_VARIABLE result OUTPUT_VARIABLE log ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "installed module configure failed: ${log}${error}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" --build "${WORK}/out" --config "${CONFIG}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE log ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "installed module build failed: ${log}${error}")
+endif()
+execute_process(COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${WORK}/out" -C "${CONFIG}" --output-on-failure
+    RESULT_VARIABLE result OUTPUT_VARIABLE log ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "installed module runtime failed: ${log}${error}")
+endif()

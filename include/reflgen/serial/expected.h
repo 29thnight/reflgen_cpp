@@ -1,8 +1,8 @@
 ﻿#pragma once
 // std::expected (C++23) — {"value": v} 또는 {"error": e}.
 //
-// C++23 전용 헤더다. C++20 빌드에는 <expected> 가 없으므로 serializer.h 가 이 파일을
-// 포함하지 않는다(전처리기로 표준 버전을 가르지 않는다는 원칙). C++23 이상에서
+// C++23 전용 선택 헤더다. 불필요한 의존성을 늘리지 않도록 serializer.h 에서 자동으로
+// 포함하지 않는다. C++23 이상에서
 // std::expected 를 직렬화하려면 이 헤더를 포함한다. 포함하지 않고 쓰면 "직렬화할 수
 // 없는 타입" static_assert 로 멈춘다 — 조용히 다른 모양으로 적히지 않는다.
 #include "reflgen/serial/error.h"

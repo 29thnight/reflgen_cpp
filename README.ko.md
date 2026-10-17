@@ -4,9 +4,15 @@
 
 [English](README.md)
 
-- **매크로 0개** — 공개 API 는 물론 라이브러리 내부에도 `#define`·`#if` 가 없다(`#pragma once` 와 `#include` 뿐).
-  컴파일러 차이는 전처리기가 아니라 **행동 탐지**로 흡수한다.
-- **C++20 기반, C++23 지원** — 표준 라이브러리만 쓴다. C++26 정식 리플렉션(P2996)이 오면 서술을 만드는
+백엔드 선택·혼합 프로젝트·버전 분기: [백엔드 가이드](docs/reflection-backends.md).
+컴파일러·런타임·실제 VS 검증: [검증 기록](docs/verification-2026-10-17.md).
+
+아래 모듈/IFC·C++26 기능은 현재 소스 기준이다. 도구와 VSIX를 다시 빌드해 사용한다.
+이번 변경에 새 릴리스 패키지 게시는 포함하지 않는다.
+
+- **리플렉션 API에 매크로 불필요** — 선언 매크로 없이 사용한다. 내부 기능 가드는 C++26 구문과 컴파일러별
+  모듈 TLS 저장 방식을 격리하며, 백엔드는 실제 컴파일 검사로 선택한다.
+- **C++20 기반, C++23 지원** — 표준 라이브러리만 쓴다. 선택 가능한 C++26 표준 백엔드도 서술을 만드는
   방법만 바뀌고 질의·직렬화 API 는 그대로 둔다(아래 로드맵).
 - **STL 전반 직렬화** — 모든 표준 컨테이너·어댑터와 값 래퍼, 그리고 STL 모양의 사용자 컨테이너를 자동으로.
 - **포맷은 인터페이스** — `reflgen::writer` / `reflgen::reader` 를 구현하면 새 포맷이 된다. JSON 과 바이너리
@@ -34,6 +40,167 @@ VS 에 딸린 libclang 을 링크한다). vcpkg 의 MSBuild 연동은 `vcpkg.jso
 
 소스에서: `cmake --preset release`, `cmake --build --preset release`,
 `cmake --install build/release --prefix <폴더>` 가 zip 과 같은 배치를 만든다. CMake 3.25 이상.
+
+## 라이브러리를 named module로 사용하기
+
+`#include "reflgen/json.h"` 대신 `import reflgen.json;`을 사용할 수 있다.
+제공하는 모듈은 `reflgen.core`, `reflgen.runtime`, `reflgen.serialization`, `reflgen.json`,
+`reflgen.binary`, 통합 `reflgen`이다. 포맷 모듈은 공통 API도 재export하므로 JSON만 쓰면
+`import reflgen.json;` 하나로 스키마·런타임 등록·JSON을 사용할 수 있다.
+
+```cpp
+#include <string> // 직접 사용하는 표준 라이브러리 헤더는 import 앞에 둔다.
+import reflgen.json;
+
+struct item
+{
+    int count = 7;
+    static consteval auto reflect()
+    {
+        return reflgen::schema<item>(reflgen::field<&item::count>);
+    }
+};
+auto text = reflgen::json::to_string(item{});
+auto value = reflgen::json::from_string<item>(text);
+```
+
+CMake 3.28 이상과 모듈을 지원하는 도구 체인이 필요하다. MSVC + Ninja에서 Debug·Release를 검증했다.
+저장소를 `add_subdirectory`로 가져올 때는 `REFLGEN_BUILD_MODULES=ON`을 설정하고 소비자를
+`reflgen::modules`에 링크한다. 설치된 패키지는 소스 모듈을 다음과 같이 소비자 설정으로 빌드한다.
+
+```cmake
+find_package(reflgen CONFIG REQUIRED)
+reflgen_add_modules(my_reflgen_modules)
+target_link_libraries(app PRIVATE my_reflgen_modules)
+set_target_properties(app PROPERTIES CXX_SCAN_FOR_MODULES ON)
+```
+
+IFC는 컴파일러·구성별 산출물이므로 배포하지 않고 `modules/*.ixx`를 설치한다. C++23을 쓰려면 모듈 타깃에도
+같은 표준을 지정한다. 일반 `.vcxproj`에서는 해당 소스들을 정적 라이브러리 프로젝트에 추가하고 include 경로를
+설정한 뒤, 소비자에서 ProjectReference로 참조할 수 있다. 기존 헤더와 동일한 선언을 export하므로 헤더 사용
+번역 단위와 혼용해도 타입·기본 등록소를 공유하며 `reflection<T>`, `serializer<T>` 특수화도 유지된다.
+실행 예제는 [tests/modules](tests/modules)에 있다. 기존 헤더 방식은 모듈 옵션 없이 그대로 사용할 수 있다.
+같은 번역 단위에서 reflgen 헤더도 사용한다면 라이브러리 정의를 담은 헤더는 `import reflgen...;`보다 앞에 include한다.
+MSVC에서는 import 뒤에 같은 라이브러리 헤더를 다시 include하면 재정의 오류가 발생한다.
+
+IFC 생성 스키마와 라이브러리 모듈을 함께 쓸 때는 다음 순서를 사용한다. VS 18.10 실제 편집기에서 빌드·실행,
+JSON API 자동완성, 모듈 저장 후 새 필드 자동완성을 확인한 구성이다. 공통 생성 지원 헤더를 먼저 포함해
+뒤의 생성 헤더가 라이브러리 정의를 다시 읽지 않게 하고, 두 모듈을 소비자 소스에 직접 import한다.
+
+```cpp
+#include <iostream>
+#include <string>
+#include "reflgen/generated.h"
+import reflgen.json;
+import game.types;
+#include "reflgen_game.h"
+```
+
+## MSVC C++20 모듈: IFC 리플렉션
+
+선택 기능이다. MSVC가 만든 primary named module의 `.ifc`를 읽으며, 원본 `.ixx`를 libclang으로 다시 파싱하지
+않는다. 생성기 빌드에는 C++23을 지원하는 MSVC가 필요하지만, 반영 대상과 소비자는 C++20이다.
+
+```powershell
+# VS Developer PowerShell
+cmake --preset msvc-cpp20 -DREFLGEN_BUILD_IFC=ON
+cmake --build --preset msvc-cpp20
+ctest --preset msvc-cpp20 -R reflgen_ifc
+```
+
+처음 설정할 때 고정된 IFC SDK/GSL 소스를 받는다. 오프라인에서는 `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK`와
+`FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL`에 해당 소스 디렉터리를 지정한다. 기본 헤더 생성 방식은 이 기능을 켜지 않는다.
+
+**범위:** export된 이름공간/전역 class·struct의 public 일반 필드와, 이름으로 식별되는 오버로드 없는 public
+멤버 함수, export된 enum의 정확한 열거자 표. attribute나 friend 선언은 필요 없다. private/protected 멤버와
+비export 타입은 제외한다. 상속, public 중첩 타입, public bit-field·참조 필드, 오버로드 메서드는 `RG0200`으로
+실패한다. 템플릿 타입·멤버 템플릿, 연산자·변환 함수, static 데이터 필드, partition·재export 타입 수집은
+지원하지 않는다. 기본은 export 타입 전체 반영이며, 메타데이터를 켜면 `ignore`로 타입·멤버를 제외하고
+`reflect("이름")`으로 스키마 이름을 지정할 수 있다.
+
+빌드 순서는 **모듈 provider → IFC 추출 → 별도 리플렉션 타깃 → 소비자**다. provider가 자기 리플렉션 결과에 의존하면
+순환이 생긴다. 생성 헤더는 강제 include하지 않으며, 소비자가 명시적으로 include한다. 그 헤더가 원본 모듈을
+import하고 서술을 제공하므로, 같은 타입을 사용하는 모든 reflgen 소비 번역 단위에서 같은 헤더를 사용한다.
+
+```cmake
+# game은 원래 모듈을 빌드하고 IFC 파일을 만드는 target이다.
+# IFC에는 provider가 실제로 출력하는 경로를 지정한다($<CONFIG> 사용 가능).
+reflgen_generate_ifc(game_reflection
+    PROVIDER game IFC "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/game.ifc"
+    IMPORT game.types MODULE game)
+target_link_libraries(app PRIVATE game_reflection)
+```
+
+어트리뷰트를 사용하려면 `SOURCE path/to/types.ixx`를 추가한다. provider 컴파일 후 MSVC `/P`를 실행하며,
+provider 타깃의 include 경로·정의·컴파일 옵션·런타임·구성별 플래그를 전달한다. 소스별 추가 옵션은
+`PREPROCESS_OPTIONS`로 준다. 직접 전처리하는 빌드는 대신 `METADATA path/to/types.i`를 지정할 수 있다.
+IFC와 같은 컴파일 설정으로 IFC 생성 후 만든 `/P` 결과여야 하며, 원본 소스나 `/EP` 결과를 넣으면 안 된다.
+타입·가시성은 IFC에서, 매크로·조건부 컴파일 적용 후 어트리뷰트와 원본 위치는 전처리 결과에서 가져온다.
+`SOURCE`·`METADATA`를 생략한 IFC 전용 경로에는 어트리뷰트가 없다.
+
+```cmake
+reflgen_generate_ifc(game_reflection
+    PROVIDER game IFC "${game_ifc}" IMPORT game.types MODULE game
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/types.ixx"
+    ATTRIBUTE_SCOPES editor
+    ATTRIBUTE_MODULES "editor.attributes=${editor_attributes_ifc}")
+```
+
+`serialized_name`, `transient`, `required`, `range`, `display_name`, `description`, `category`, `hidden`,
+`readonly`를 기존 스키마·런타임·직렬화 API에 전달한다. 사용자 constexpr 어트리뷰트는 별도 모듈에서 export해도
+된다. 이름공간을 `ATTRIBUTE_SCOPES`, 모듈 이름과 IFC 경로를 `ATTRIBUTE_MODULES`에 지정한다. provider가
+재export하지 않았어도 생성 헤더가 해당 모듈을 직접 import한다. 인자의 클래스 static 상수는 `T::`로 한정하며,
+그 밖의 이름은 완전 한정해서 쓴다. 외부에서 참조할 타입·상수는 export되어야 한다.
+같은 소스 줄의 이름을 모호하게 연결하는 경우 `RG0200`으로 실패하므로 반복되는 선언 이름은 줄을 나눈다.
+지원하지 않는 public bit-field·참조 필드도 `ignore`를 붙이면 검증 전에 제외된다.
+
+```cpp
+#include "reflgen/json.h"
+import game.types;        // VS IntelliSense의 모듈 의존성 발견에도 필요하다.
+#include "reflgen_game.h"  // reflection 특수화 + 등록 선언
+// 시작할 때 reflgen::generated::register_game(registry)를 명시 호출한다.
+// 이후 schema_of<T>, registry.find(...), JSON/바이너리 직렬화를 기존 API로 사용한다.
+```
+
+VS 18.10의 실제 편집기에서는 헤더 안의 import만으로 멤버 자동완성이 활성화되지 않았다. 위처럼 소비자 `.cpp`에
+모듈을 직접 import해야 한다. 표준/라이브러리 헤더는 import 앞에서 include한다(MSVC의 STL 재정의 방지).
+생성 등록 `.cpp`도 같은 순서로 직접 import한다.
+
+MSBuild에서는 provider를 ProjectReference로 참조하는 별도 `.vcxproj`에 다음을 추가하고,
+`Microsoft.Cpp.targets` 뒤에 `msbuild/reflgen.ifc.targets`를 가져온다. 프로젝트 하나당 primary IFC 하나를 처리한다.
+생성 헤더를 사용하는 다른 프로젝트에도 생성 디렉터리와 모듈 `/reference` 설정이 필요하다.
+
+```xml
+<PropertyGroup>
+  <ReflgenModule>game</ReflgenModule>
+  <ReflgenIfcExecutable>C:\tools\reflgen-ifc.exe</ReflgenIfcExecutable>
+  <ReflgenIfcSourceProject>..\Game\Game.vcxproj</ReflgenIfcSourceProject>
+</PropertyGroup>
+<ItemGroup>
+  <ProjectReference Include="..\Game\Game.vcxproj" />
+  <ReflgenIfc Include="..\Game\$(Platform)\$(Configuration)\game.ifc">
+    <Module>game.types</Module>
+  </ReflgenIfc>
+</ItemGroup>
+```
+
+MSBuild 어트리뷰트 경로는 **provider**의 `Microsoft.Cpp.targets` 뒤에
+`msbuild/reflgen.ifc.metadata.targets`를 가져온다. primary 모듈 소스에 `ModuleOutputFile`을 지정하면 해당
+컴파일 설정으로 `<ModuleOutputFile>.i`를 만들며, 내용과 IFC가 그대로면 시각을 유지한다. 리플렉션 프로젝트의
+`ReflgenIfc`에 `<Metadata>...game.ifc.i</Metadata>`를 추가한다. 사용자 이름공간은 `ReflgenAttributeScope`
+항목으로, 사용자 모듈은 `ReflgenAttributeModule` 항목(`Include`는 IFC 경로, `Module`은 import 이름)으로 준다.
+어트리뷰트만 바꿔 저장해도 provider 빌드 → 재생성 → IntelliSense 갱신 경로를 따른다.
+모듈 자동완성에는 기본 어트리뷰트와 전처리 결과에서 사용된 사용자 어트리뷰트가 나온다. 사용자 항목은
+`(...)` 표기이며 생성자 매개변수 설명까지 추출하지는 않는다. [실행 예제](tests/ifc/attributes)를 참고한다.
+
+VS 확장은 `.ixx`·`.cppm`·`.mpp` 저장 시 `ReflgenIfcSourceProject`가 해당 provider를 가리키는 로드된 프로젝트의
+`ReflgenGenerate`를 예약한다. 이 target은 provider를 먼저 빌드하여 오래된 IFC를 쓰지 않는다. 기존 작업 큐,
+Error List와 IntelliSense 갱신을 재사용하며, 모듈 소스에는 friend를 자동 삽입하지 않는다.
+provider 컴파일이나 IFC 추출·검증 실패 시 마지막 성공 생성물은 보존하고 실패를 보고한다.
+
+실행 예제와 빌드 배선은 [tests/ifc](tests/ifc)에 있다. IFC 버전/무결성/모듈 이름을 확인하며, 지원하지 않는 형식은
+실패한다. 현재 MSVC의 두 선택적 codegen trait(`evaluated-initializer`, `class-template-inheriting-ctors`)만
+추출과 무관하여 건너뛴다. IFC SDK가 모르는 다른 partition은 오류다.
 
 ## 빠른 시작
 
@@ -200,7 +367,7 @@ reflgen_generate(my_game
   reflgen 프로젝트의 주입 header 를 모은 `reflgen_<module>.references.h` 로. 반영 클래스가 없는 모듈의 등록 함수는
   등록 header 를 include 하지 않는다(모든 프로젝트에 같은 설정을 주어도 된다).
 
-- **반영 범위**: `[[reflgen::reflect]]` 클래스의 non-static data member 전부(C++26 native reflection 과 같은 결과).
+- **반영 범위**: 생성기 경로는 `[[reflgen::reflect]]` 클래스의 non-static data member 전부를 반영한다.
   `[[reflgen::ignore]]` 로 뺀다. 메서드는 `[[reflgen::reflect]]` 를 단 것만. `public` 부모 가운데 반영된 것은
   `base<>` 로 이어지고, 반영하지 않는 부모(CRTP 중간층, 서드파티 베이스)는 건너 그 위의 가장 가까운 반영된 조상으로
   이어진다.
@@ -391,6 +558,17 @@ CMake 는 `reflgen_generate()` 에 `INTEROP`·`INTEROP_LIBRARY NAME`·`INTEROP_N
 
 ### Visual Studio 확장
 
+MSVC 혼합 프로젝트는 위의 `reflgen.targets` 하나로 두 경로를 함께 사용한다. `ClInclude` 헤더는 기존 libclang
+경로로, `.ixx`·`.cppm`·`.mpp` 또는 `CompileAsCppModule` 소스의 공개 타입은 IFC 경로로 생성한다.
+`ReflgenIfcExecutable`은 `reflgen-ifc.exe` 위치이며, 기본은 `reflgen.exe`와 같은 디렉터리다.
+모듈을 먼저 컴파일하고 `/P` 메타데이터를 만든 뒤 스키마를 생성하므로, 변경 전 IFC를 읽지 않는다.
+모듈 소스에는 헤더 경로의 강제 include를 넣지 않는다. 헤더 타입과 모듈 타입은 서로 다른 생성 헤더에 기술된다.
+예를 들어 `ReflgenModule=mixed`, 소스 `types.ixx`이면 모듈 스키마는 `reflgen_mixed_types.h`, 등록 함수는
+`reflgen::generated::register_mixed_types`다. 소비자에서 이 헤더를 import 다음에 포함하고,
+헤더 경로의 `register_mixed`와 함께 호출한다. 모듈 소스의 파일명은 식별자로 정규화한 뒤에도 고유해야 한다.
+현재 자동 분리는 MSVC `.vcxproj` 배선에 적용된다. CMake에서는 기존 `reflgen_generate`와 `reflgen_generate_ifc`를
+각각 연결한다. IFC 공개 타입과 어트리뷰트의 지원 범위는 위 IFC 절과 같다.
+
 VS 2026(18.x), x64 — 시험한 판이다. `Reflgen.VisualStudio.vsix`(릴리스 배포물, 또는 `vs/` 를 빌드한 것)를 실행해
 설치한다.
 
@@ -409,14 +587,19 @@ dotnet test vs\tests\Reflgen.VisualStudio.Core.Tests
 - **저장 시 생성** — `[[reflgen::reflect]]` 가 있는(또는 지운) header 를 저장하면 그 프로젝트의 `ReflgenGenerate`
   만 별도 MSBuild 프로세스로 돌려 RG 진단을 Error List 에 올린다. VS 빌드가 도는 중이면 건너뛴다(그 빌드가
   생성한다). 과정은 Output 창 "reflgen"(VS 를 띄운 뒤 첫 로그 때 한 번 그 창이 선택된다).
+  혼합 프로젝트의 모듈 저장도 같은 진입점을 사용한다. 각 생성 단계가 변경 여부를 따로 판단하므로, 독립된 헤더
+  변경은 헤더 생성만, 모듈 변경은 IFC 생성만 갱신한다. 공유 의존성이 바뀌면 두 경로 모두 갱신될 수 있다.
 - **처음 열 때 생성** — 한 번도 생성하지 않은 프로젝트는 열 때 생성한다. 그러지 않으면 IntelliSense 가 빈 주입
   header 를 보고 reflection 을 쓰는 코드에 빨간 줄을 긋는다.
 - **IntelliSense 새로 고침** — IntelliSense 는 프로젝트 밖(`$(IntDir)`)의 강제 include 파일이 바뀐 것을 스스로
   알아채지 못한다. 생성 코드가 바뀌면 확장이 "검색 데이터베이스 새로 고침"(Project > Rescan Solution)을 부른다.
   큰 솔루션에서는 이것이 무거울 수 있어 끌 수 있다.
-- **attribute 자동완성** — `[[` 나 `,` 뒤에서 attribute 이름공간을, `reflgen::` 뒤에서 attribute 와 생성자
+- **attribute 자동완성** — `[[` 나 `,` 뒤에서 표준 C++ attribute와 `reflgen::`·사용자 이름공간을 함께,
+  `reflgen::` 뒤에서 해당 attribute 와 생성자
   시그니처·설명을 제안한다. 목록은 생성기의 카탈로그에서 오며(위 `[[reflgen::attribute]]` 참고), 아직 생성하지
   않았으면 기본 attribute 만 나온다.
+  표준 항목은 확장이 함께 제공하며, 설명에 필요한 C++ 버전을 표시한다. 알 수 없는 이름공간과 인자 내부에서는
+  확장이 완성 목록에 참여하지 않는다.
 - 설정: Tools > Options > reflgen > General(friend 삽입, 생성, IntelliSense 새로 고침 켜고 끄기, MSBuild.exe 경로).
 
 | 코드 | 뜻 |
@@ -604,10 +787,64 @@ CMake 소비자는 `find_package(reflgen)` 후 `reflgen::reflgen` 을 링크한�
 
 ## C++26 이행
 
-C++26 정식 리플렉션(P2996)과 주석(P3394)이 오면 스키마를 만드는 앞단만 생성기에서 `std::meta` 로 바뀐다
-(로드맵 3). 사용자 코드는 attribute 표기를 한 번 기계적으로 바꾸면 된다 — C++20/23 의 `[[…]]` 는 C++26 에서도
-유효하지만 `annotations_of` 가 보는 것은 `[[=…]]` 뿐이다. `[[=…]]` 는 C++20/23 에서 문법 오류이고 이 라이브러리는
-`#if` 를 쓰지 않으므로, 두 표기를 한 소스에 섞어 두지 않고 옮길 때 한 번에 바꾼다.
+### 내부 버전·기능 분기
+
+`core/features.h` 가 `_MSVC_LANG`/`__cplusplus` 를 `REFLGEN_CPLUSPLUS`, `REFLGEN_CXX20/23/26` 으로
+정규화한다. 실제 기능은 `REFLGEN_HAS_IF_CONSTEVAL`, `REFLGEN_HAS_BYTESWAP`,
+`REFLGEN_HAS_STD_REFLECTION` 으로 따로 검사한다. 빌드가 정한 `REFLGEN_USE_STD_REFLECTION=0/1` 이
+최종 선택이며, 미지원 기능을 강제로 켜면 컴파일 오류다. MSVC 모듈의 TLS 호환 분기도 이 헤더에 모았다.
+
+바이너리 실수 입출력은 C++20에서 바이트 조합 호환 경로, C++23 이상에서 byteswap 지원 시 고정 폭
+복사 경로를 쓴다. 저장 포맷은 동일한 little-endian 8바이트다. 속도 향상 수치를 주장하는 변경은 아니다.
+모듈과 소비자는 같은 백엔드·언어 모드로 컴파일한다. 버전 행렬 검증은
+[`tests/standard/check_matrix.cmake`](tests/standard/check_matrix.cmake) 를 사용한다.
+
+### 표준 백엔드 선택
+
+선택 가능한 표준 백엔드가 `std::meta` 와 타입이 있는 annotation으로 스키마를 만든다. 런타임 registry,
+질의, JSON·binary API는 유지하며 기존 헤더/libclang·모듈/IFC 경로도 사용할 수 있다.
+`[[reflgen::…]]` 는 생성기 메타데이터이고 표준 백엔드는 `[[=reflgen::…]]` 를 읽는다. AUTO는 백엔드를
+선택하며 표기를 변환하지 않는다. 두 환경을 한 소스로 지원하려면 `REFLGEN_USE_STD_REFLECTION` 으로 선언을
+분기한다.
+
+```cmake
+set_property(TARGET game PROPERTY CXX_STANDARD 26)
+reflgen_generate(game BACKEND AUTO HEADERS player.h TYPES game::player MODULE game)
+reflgen_generate_ifc(game_registration PROVIDER game_types IMPORT game.types
+    BACKEND AUTO TYPES game::actor MODULE actors IFC "${actor_ifc}")
+# import reflgen.json을 쓰면 라이브러리 모듈도 같은 백엔드로 컴파일한다.
+reflgen_add_modules(reflgen_modules BACKEND STD)
+```
+
+`AUTO` 는 C++26 target에 `TYPES` 가 있을 때 reflection·annotation·멤버 splice·정적 문자열을 실제로
+컴파일해 검사한다. 실패하면 기존 경로를 유지한다. `TYPES` 없는 기존 호출도 기존 경로를 유지하므로 C++26
+설정만 바꾸어도 동작이 바뀌지 않는다. `STD` 는 기능 검사 성공이 필수이고 `LEGACY` 는 명시적으로 기존
+경로를 선택한다. 표준 백엔드가 생성하는 것은 등록 목록뿐이다. 표준 리플렉션으로 이름공간·모듈의 모든
+타입을 열거할 수 없으므로 등록할 클래스는 `TYPES` 에 적는다. enum은 registry 등록이 필요 없다.
+직접 스키마만 쓰려면 `BACKEND STD NO_REGISTRATION` 을 사용할 수 있다. 라이브러리 named module의 기본
+백엔드는 LEGACY이며 소비자와 일치시켜야 한다. GCC의 `-freflection` 은 기능 검사 성공 후 자동 추가한다.
+
+MSBuild는 기존 `reflgen.targets` import를 유지하고 다음을 추가한다.
+
+```xml
+<PropertyGroup><ReflgenReflectionBackend>Auto</ReflgenReflectionBackend></PropertyGroup>
+<ItemGroup>
+  <ReflgenReflectType Include="game::player" />
+  <!-- 모듈이 내보낸 타입을 등록할 때 -->
+  <ReflgenStandardImport Include="game.types" />
+</ItemGroup>
+```
+
+AUTO는 타입 목록이 있는 `stdcpplatest`/`stdcpp26` 프로젝트에서 검사한다. 미지원 환경의 `Std` 는 RG0261로
+실패하고 `Legacy` 는 기존 생성을 유지한다. 결과와 `standard.probe.log` 는 생성 디렉터리에 캐시된다.
+VS 확장은 활성 구성의 C++ 버전에 맞춰 표준 attribute 목록을 거르고 기존 `[[reflgen::…]]` 와 C++26/latest의
+`[[=reflgen::…]]` 를 완성한다. annotation은 무인자 값에 `{}`, 인자 값에 `(` 를 넣는다. 편집기 지원과
+컴파일러 기능 지원은 별개이며 저장 시에도 같은 백엔드 선택 MSBuild target을 사용한다.
+
+현재 표준 경로는 public 필드·명시적으로 표시한 public 메서드, 모듈에서 내보낸 사용자 annotation,
+`ignore`, 정확한 enum 열거를 지원한다. 수동·외부 스키마가 우선한다. 무시하지 않은 비트필드·참조 필드와
+public 상속은 수동 스키마가 필요하며 private 멤버는 제외한다. WSL의 GCC 16.2에서 `import reflgen.json`,
+런타임 등록·직렬화를 실행 검증했다. 로컬 MSVC 19.51은 기능 검사에 실패해 기존 경로를 유지한다.
 
 | C++20/23 | C++26 |
 |---|---|
@@ -630,7 +867,7 @@ C++26 정식 리플렉션(P2996)과 주석(P3394)이 오면 스키마를 만드�
 - 사용자 정의 속성도 주석 값이 되려면 구조적 타입이어야 한다 — 멤버를 공개하고 문자열은 `static_string` 에 담는다.
 - 지시어 타입은 속성이 아니다 — `.with(reflgen::ignore{})` 는 컴파일 오류다(멤버를 빼려면 스키마에 적지 않는다).
 
-아직 없는 것: 표기를 바꿔 주는 codemod(VS 확장 명령)와 네이티브 백엔드.
+아직 없는 것: 표기를 바꿔 주는 codemod(VS 확장 명령).
 
 ## 알려진 제약
 
@@ -645,8 +882,8 @@ C++26 정식 리플렉션(P2996)과 주석(P3394)이 오면 스키마를 만드�
   알린다). 이름 없는 매개변수는 빈 이름으로 남는다.
 - 비공개 멤버를 반영하려면 `friend struct reflgen::access;` 가 있어야 한다(VS 확장이 저장할 때 넣는다). friend
   없이 private 멤버의 포인터를 상수로 얻는 C++20 방법(명시적 인스턴스화의 접근 검사 예외로 friend 함수를
-  주입)은 Clang 에서는 되지만 MSVC 19.51 은 그 함수를 상수 평가에서 쓰지 못한다(C3779·C2131, 실측). C++26
-  백엔드에서는 `access_context::unchecked()` 로 friend 가 필요 없어진다.
+  주입)은 Clang 에서는 되지만 MSVC 19.51 은 그 함수를 상수 평가에서 쓰지 못한다(C3779·C2131, 실측).
+  표준 백엔드는 unprivileged 접근으로 public 멤버만 반영한다. private 상태에는 수동 스키마를 사용한다.
 - VS 확장은 .vcxproj 만 다룬다. CMake(폴더 열기) 프로젝트는 빌드할 때 `reflgen_generate()` 가 생성한다.
   자동완성은 attribute 이름 자리에서만 나온다 — 인자 안은 C++ IntelliSense 의 몫이다.
 - attribute 인자의 이름을 감싸는 이름공간들에서 찾을 때는 `using namespace` 를 바깥부터 모두 여는 방식이라,
@@ -668,7 +905,6 @@ C++26 정식 리플렉션(P2996)과 주석(P3394)이 오면 스키마를 만드�
 2. **Visual Studio 확장** — 첫 판 완료(저장·열기 시 생성, Error List, IntelliSense 새로 고침, 자동완성, friend
    자동 삽입). 남은 것: 솔루션 전체가 아니라 바뀐 번역 단위만 IntelliSense 를 새로 고치기, CMake(폴더 열기)
    지원, C++26 이행 codemod, Marketplace 배포.
-3. **C++26 네이티브 백엔드** — `std::meta::nonstatic_data_members_of`(`access_context::unchecked()`) +
-   `annotations_of` 로 `schema_of<T>` 를 만든다. 질의·직렬화 API 는 바뀌지 않고 friend 도 필요 없어진다.
-   준비 완료: 속성·지시어 타입이 모두 구조적 타입, 문자열은 `static_string`([C++26 이행](#c26-이행)).
+3. **C++26 표준 백엔드** — public 타입·annotation·런타임 등록·직렬화 구현
+   ([C++26 이행](#c26-이행)). 남은 것: 컴파일러 검증 확대, 상속·private 멤버 지원.
 4. GCC·libc++ CI.

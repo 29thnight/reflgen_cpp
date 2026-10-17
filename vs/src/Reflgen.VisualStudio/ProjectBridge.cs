@@ -38,6 +38,48 @@ namespace Reflgen.VisualStudio
             return string.Equals(GetProperty(hierarchy, ImportedProperty), "true", StringComparison.OrdinalIgnoreCase);
         }
 
+        public int LanguageVersion(string file)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            try
+            {
+                if (_services.GetService(typeof(SDTE)) is DTE dte)
+                {
+                    dynamic project = dte.Solution.FindProjectItem(file)?.ContainingProject?.Object!;
+                    if (project != null)
+                    {
+                        dynamic configuration = project.ActiveConfiguration;
+                        string standard = configuration.Rules.Item("CL").GetEvaluatedPropertyValue("LanguageStandard");
+                        return CppCompletionPolicy.Version(standard);
+                    }
+                }
+            }
+            catch (Exception) { /* Project is loading, non-VC project, or detached editor. */ }
+            return 20;
+        }
+
+        // Route module-provider saves to the separate IFC reflection project.
+        public IReadOnlyList<ProjectTarget> ModuleReflectionTargets(IVsHierarchy provider)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var targets = new List<ProjectTarget>();
+            string? source = ProjectFileOf(provider);
+            if (source == null) return targets;
+            if (string.Equals(GetProperty(provider, "ReflgenBackend"), "Auto", StringComparison.OrdinalIgnoreCase) &&
+                TargetOf(provider, out _) is ProjectTarget ownTarget)
+                targets.Add(ownTarget);
+            foreach (IVsHierarchy project in ReflgenProjects())
+            {
+                if (!string.Equals(GetProperty(project, "ReflgenBackend"), "Ifc", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                string? declared = GetProperty(project, "ReflgenIfcSourceProject");
+                if (string.Equals(declared, source, StringComparison.OrdinalIgnoreCase) &&
+                    TargetOf(project, out _) is ProjectTarget target)
+                    targets.Add(target);
+            }
+            return targets;
+        }
+
         // 생성물이 놓이는 빌드 중간 산출물 디렉터리(활성 구성).
         public string? OutputDirectory(IVsHierarchy hierarchy)
         {
@@ -161,6 +203,9 @@ namespace Reflgen.VisualStudio
                 {
                     files.Add(file!);
                 }
+                string? directory = UsesReflgen(project) ? OutputDirectory(project) : null;
+                if (directory != null && Directory.Exists(directory))
+                    files.AddRange(Directory.EnumerateFiles(directory, "*.attributes.tsv"));
             }
             return files;
         }

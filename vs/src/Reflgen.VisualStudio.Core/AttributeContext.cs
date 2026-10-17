@@ -11,6 +11,7 @@ namespace Reflgen.VisualStudio
     // PrefixLength — 커서 앞에 이미 친 식별자 글자 수. 완성이 바꿀 구간이다.
     public sealed record AttributeCompletionContext(AttributePosition Position, string? Scope, int PrefixLength)
     {
+        public bool IsAnnotation { get; init; }
         public static readonly AttributeCompletionContext None = new(AttributePosition.None, null, 0);
     }
 
@@ -28,6 +29,15 @@ namespace Reflgen.VisualStudio
                 return AttributeCompletionContext.None;
             }
             string segment = scanned.Text.Substring(attributeStart);
+            bool annotation = segment.TrimStart().StartsWith("=", System.StringComparison.Ordinal);
+            if (annotation)
+            {
+                // Analyze the expression after the last top-level '= ...' annotation entry.
+                int entry = segment.LastIndexOf(',');
+                string tail = entry >= 0 ? segment.Substring(entry + 1).TrimStart() : segment.TrimStart();
+                if (!tail.StartsWith("=", System.StringComparison.Ordinal)) return AttributeCompletionContext.None;
+                segment = tail.Substring(1);
+            }
 
             int prefixStart = segment.Length;
             while (prefixStart > 0 && IsIdentifierChar(segment[prefixStart - 1]))
@@ -45,7 +55,7 @@ namespace Reflgen.VisualStudio
             {
                 string scope = TrailingIdentifier(before.Substring(0, before.Length - 2).TrimEnd());
                 return scope.Length == 0 ? AttributeCompletionContext.None
-                                         : new AttributeCompletionContext(AttributePosition.Member, scope, prefixLength);
+                                         : new AttributeCompletionContext(AttributePosition.Member, scope, prefixLength) { IsAnnotation = annotation };
             }
 
             string? usingScope = UsingScope(segment);
@@ -53,7 +63,7 @@ namespace Reflgen.VisualStudio
                                     before.IndexOf(',') < 0;
             if (before.Length == 0 || before.EndsWith(",", System.StringComparison.Ordinal) || afterUsingPrefix)
             {
-                return new AttributeCompletionContext(AttributePosition.Name, usingScope, prefixLength);
+                return new AttributeCompletionContext(AttributePosition.Name, usingScope, prefixLength) { IsAnnotation = annotation };
             }
             return AttributeCompletionContext.None;
         }

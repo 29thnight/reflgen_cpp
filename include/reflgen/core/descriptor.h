@@ -63,6 +63,9 @@ namespace reflgen
             using value_type = Value;
         };
 
+        template<class P>
+        struct member_pointer_traits<const P> : member_pointer_traits<P> {};
+
         template<class A, class... Ts>
         consteval std::size_t first_index_of() noexcept
         {

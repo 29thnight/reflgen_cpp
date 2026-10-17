@@ -124,6 +124,17 @@ namespace Reflgen.VisualStudio
         private void OnHeaderSaved(string path, IVsHierarchy? hierarchy)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+            if (hierarchy != null && ReflectedHeader.IsModulePath(path))
+            {
+                if (_options.GenerateOnSave)
+                {
+                    var targets = _projects.ModuleReflectionTargets(hierarchy);
+                    foreach (ProjectTarget reflectionTarget in targets) _runner.Schedule(reflectionTarget);
+                    if (targets.Count == 0)
+                        _reporter.Log($"{Path.GetFileName(path)}: no loaded IFC reflection project declares this provider in ReflgenIfcSourceProject.");
+                }
+                return;
+            }
             if (hierarchy == null || !ReflectedHeader.IsHeaderPath(path) || !File.Exists(path))
             {
                 return;

@@ -13,7 +13,7 @@ namespace Reflgen.VisualStudio
 
         [Category("On save")]
         [DisplayName("Generate reflection")]
-        [Description("Run the project's ReflgenGenerate target after a header with [[reflgen::reflect]] is saved (and once when a never-generated project opens) and show its diagnostics in the Error List. Headers and project files are never modified.")]
+        [Description("Run ReflgenGenerate after a reflected header is saved, or route a module interface save to its configured IFC reflection project. IFC generation first builds the module provider. Also generate when a never-generated project opens, and show diagnostics in the Error List.")]
         public bool GenerateOnSave { get; set; } = true;
 
         [Category("On save")]

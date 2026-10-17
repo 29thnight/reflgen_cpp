@@ -10,6 +10,7 @@
 // 비용 0 을 노렸다). MSVC 는 catch 블록을 아직 풀리지 않은 stack 위에서 실행하므로,
 // 깊이 512 에서 난 실패가 512 번 연쇄로 재던져지며 예외 처리 frame 이 쌓여 stack overflow
 // 로 죽었다(Debug 실측). 조각 stack 의 push/pop 은 할당이 없어 정상 경로 비용이 작다.
+#include "reflgen/core/features.h"
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -30,7 +31,20 @@ namespace reflgen
 
         // 스레드마다 따로 — 여러 스레드가 동시에 직렬화해도 서로의 경로를 보지 않는다.
         // 조각의 key 는 그 단계가 살아 있는 동안만 유효한 view 다(단계를 나가며 pop 된다).
-        inline thread_local std::vector<path_segment> active_path;
+        // GCC module imports require function-local TLS; MSVC imports misdeclare its local TLS
+        // destructor helper, so retain namespace storage there (LNK2019 __tlregdtor).
+#if REFLGEN_DETAIL_NAMESPACE_TLS
+        inline thread_local std::vector<path_segment> active_path_storage;
+#endif
+        inline std::vector<path_segment>& active_path()
+        {
+#if REFLGEN_DETAIL_NAMESPACE_TLS
+            return active_path_storage;
+#else
+            static thread_local std::vector<path_segment> value;
+            return value;
+#endif
+        }
 
         inline void append_escaped(std::string& out, std::string_view segment)
         {
@@ -55,7 +69,7 @@ namespace reflgen
         inline std::string current_path()
         {
             std::string result;
-            for (const path_segment& segment : active_path)
+            for (const path_segment& segment : active_path())
             {
                 if (segment.is_index)
                 {

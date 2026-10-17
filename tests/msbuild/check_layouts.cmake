@@ -15,7 +15,9 @@ file(REMOVE_RECURSE "${WORK}")
 
 # 배치 하나를 흉내 낸다: targets·include 표지·생성기 자리(빈 파일이면 된다 — 존재만 본다).
 function(make_layout root targets_dir executable)
-    file(COPY "${SOURCE}/msbuild/reflgen.targets" DESTINATION "${root}/${targets_dir}")
+    file(COPY "${SOURCE}/msbuild/reflgen.targets" "${SOURCE}/msbuild/reflgen.mixed.targets"
+        "${SOURCE}/msbuild/reflgen.ifc.metadata.targets" "${SOURCE}/msbuild/reflgen.standard.targets"
+        "${SOURCE}/msbuild/reflgen.standard.probe.cpp" DESTINATION "${root}/${targets_dir}")
     file(WRITE "${root}/include/reflgen/reflgen.h" "")
     file(WRITE "${root}/${executable}" "")
 endfunction()

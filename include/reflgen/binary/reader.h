@@ -6,6 +6,7 @@
 // 이 검사가 없으면 원소 수를 2^60 으로 적은 몇 바이트짜리 입력이 reserve 로 메모리를
 // 소진시킨다. 중첩 깊이도 상한을 둔다.
 #include "reflgen/binary/format.h"
+#include "reflgen/binary/detail/endian.h"
 #include "reflgen/serial/error.h"
 #include "reflgen/serial/reader.h"
 #include <bit>
@@ -132,12 +133,8 @@ namespace reflgen::binary
             }
             ++position_;
             require(8);
-            std::uint64_t bits = 0;
-            for (int shift = 0; shift < 64; shift += 8)
-            {
-                bits |= std::to_integer<std::uint64_t>(input_[position_]) << shift;
-                ++position_;
-            }
+            const auto bits = detail::little_value(input_.data() + position_);
+            position_ += 8;
             return std::bit_cast<double>(bits);
         }
 

@@ -4,6 +4,7 @@
 // 배열·객체의 원소 수를 머리에 적으므로 begin_* 에 넘어온 크기와 실제로 쓴 수가
 // 다르면 결과가 깨진다. 그래서 닫을 때 센 수를 대조해 어긋나면 실패한다.
 #include "reflgen/binary/format.h"
+#include "reflgen/binary/detail/endian.h"
 #include "reflgen/serial/error.h"
 #include "reflgen/serial/writer.h"
 #include <bit>
@@ -58,11 +59,8 @@ namespace reflgen::binary
         {
             begin_value();
             put_tag(tag::floating);
-            const auto bits = std::bit_cast<std::uint64_t>(value);
-            for (int shift = 0; shift < 64; shift += 8)
-            {
-                output_.push_back(static_cast<std::byte>((bits >> shift) & 0xFF));
-            }
+            const auto bytes = detail::little_bytes(std::bit_cast<std::uint64_t>(value));
+            output_.insert(output_.end(), bytes.begin(), bytes.end());
         }
 
         void write_string(std::string_view value) override

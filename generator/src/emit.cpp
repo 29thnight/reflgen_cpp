@@ -318,6 +318,29 @@ namespace reflgen::generator
         }
     } // namespace
 
+    std::string emit_ifc_header(const header_model& model, const std::string& imported_module,
+                                const std::string& registration, const std::string& generated_path,
+                                const std::vector<std::string>& attribute_imports)
+    {
+        text_builder out;
+        out.line(banner);
+        out.line("#pragma once");
+        out.line("#include \"reflgen/generated.h\"");
+        out.line("import " + imported_module + ";");
+        for (const auto& attribute_module : attribute_imports)
+            out.line("import " + attribute_module + ";");
+        // Imported declarations belong to their named module. Never redeclare them in the global module.
+        for (const enum_model& type : model.enums)
+            emit_enum(out, type);
+        for (const class_model& type : model.classes)
+            emit_class(out, type, generated_path);
+        out.line("namespace reflgen::generated {");
+        out.line("    void register_" + registration + "(::reflgen::registry&);");
+        out.line("    void register_" + registration + "();");
+        out.line("}");
+        return out.take();
+    }
+
     std::string emit_header(const header_model& header, const std::string& generated_path)
     {
         text_builder out;

@@ -1,0 +1,18 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{3BE304D2-B4E1-4229-94BD-C4F809314850}</ProjectGuid>
+    <IfcTestKind>Application</IfcTestKind>
+  </PropertyGroup>
+  <Import Project="common.props" />
+  <PropertyGroup>
+    <ReflgenModule>ifc_game</ReflgenModule>
+    <ReflgenIfcSourceProject>provider.vcxproj</ReflgenIfcSourceProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="provider.vcxproj"><Project>{7814846F-9708-456C-82A4-BD08951A6992}</Project></ProjectReference>
+    <ReflgenIfc Include="$(OutDir)types.ifc"><Module>reflgen.test.types</Module><Metadata>$(OutDir)types.ifc.i</Metadata></ReflgenIfc>
+    <ClCompile Include="..\main.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="..\..\..\msbuild\reflgen.ifc.targets" />
+</Project>

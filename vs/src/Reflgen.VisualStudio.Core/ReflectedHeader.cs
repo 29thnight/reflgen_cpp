@@ -10,6 +10,10 @@ namespace Reflgen.VisualStudio
     public static class ReflectedHeader
     {
         private static readonly string[] HeaderExtensions = { ".h", ".hh", ".hpp", ".hxx", ".h++" };
+        private static readonly string[] ModuleExtensions = { ".ixx", ".cppm", ".mpp" };
+
+        public static bool IsModulePath(string path) =>
+            ModuleExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
         // "[[" 부터 처음 나오는 "]]" 까지가 attribute 목록 하나다 — 닫히지 않은 목록은 세지 않는다.
         private static readonly Regex AttributeList =

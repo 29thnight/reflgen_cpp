@@ -33,6 +33,7 @@
     <ProjectReference Include="..\Reflgen.VisualStudio.Core\Reflgen.VisualStudio.Core.csproj" />
     <!-- MEF([Export]) — .NET Framework 어셈블리라 NuGet 이 아니라 참조로 건다. -->
     <Reference Include="System.ComponentModel.Composition" />
+    <Reference Include="Microsoft.CSharp" />
   </ItemGroup>
 
   <ItemGroup>

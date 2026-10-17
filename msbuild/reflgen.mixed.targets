@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shared auto-routing stage; generation is enabled only when primary named module inputs exist. -->
+<Project>
+  <PropertyGroup>
+    <ReflgenBackend>Auto</ReflgenBackend>
+    <ReflgenAdditionalGenerationTargets>ReflgenGenerateModules</ReflgenAdditionalGenerationTargets>
+    <ReflgenIfcExecutable Condition="'$(ReflgenIfcExecutable)' == ''">$([MSBuild]::NormalizePath('$(ReflgenExecutable)', '..', 'reflgen-ifc.exe'))</ReflgenIfcExecutable>
+    <TLogLocation Condition="'$(ReflgenProviderPass)' == 'true'">$(IntDir)reflgen-provider-tlog\</TLogLocation>
+    <TLogLocation_ModuleDependencies Condition="'$(ReflgenProviderPass)' == 'true'">$(IntDir)reflgen-provider-md-tlog\</TLogLocation_ModuleDependencies>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Update="@(_ReflgenModuleCandidate)">
+      <CompileAs>CompileAsCppModule</CompileAs>
+      <ModuleOutputFile Condition="'%(ModuleOutputFile)' == '' or HasTrailingSlash('%(ModuleOutputFile)')">$(IntDir)%(Filename).reflgen.ifc</ModuleOutputFile>
+    </ClCompile>
+    <_ReflgenPrimary Include="@(ClCompile->WithMetadataValue('CompileAs', 'CompileAsCppModule')->Distinct())">
+      <Registration>$(ReflgenModule)_$([System.Text.RegularExpressions.Regex]::Replace('%(Filename)', '[^A-Za-z0-9_]', '_'))</Registration>
+    </_ReflgenPrimary>
+    <_ReflgenPrimary Remove="@(_ReflgenPrimary->WithMetadataValue('ExcludedFromBuild', 'true'))" />
+    <_ReflgenProvider Include="@(_ReflgenPrimary);@(ClCompile->WithMetadataValue('CompileAs', 'CompileAsCppModuleInternalPartition'))" />
+    <_ReflgenNonProvider Include="@(ClCompile)" Exclude="@(_ReflgenProvider)" />
+    <ClCompile Remove="@(_ReflgenNonProvider)" Condition="'$(ReflgenProviderPass)' == 'true'" />
+  </ItemGroup>
+  <Target Name="_ReflgenAddModuleSources" BeforeTargets="_ReflgenInject;SetModuleDependencies" DependsOnTargets="_ReflgenSelectBackend"
+          Condition="'$(ReflgenProviderPass)' != 'true' and '$(ReflgenRegistration)' != 'false'">
+    <ItemGroup Condition="'$(ReflgenSelectedBackend)' != 'Std'">
+      <ClCompile Include="@(_ReflgenPrimary->'$(ReflgenOutputDirectory)reflgen_%(Registration).cpp')">
+        <PrecompiledHeader>NotUsing</PrecompiledHeader>
+        <CompileAs>CompileAsCpp</CompileAs>
+      </ClCompile>
+    </ItemGroup>
+  </Target>
+  <Import Project="reflgen.ifc.metadata.targets" Condition="'$(ReflgenProviderPass)' == 'true'" />
+  <Target Name="_ReflgenBuildModulePass" DependsOnTargets="PrepareForBuild;ResolveReferences;BuildGenerateSources;ClCompile" />
+  <Target Name="_ReflgenCompileProviders" Condition="'$(ReflgenProviderPass)' != 'true'">
+    <Error Condition="'$(PlatformToolset)' == 'ClangCL'" Text="Mixed IFC generation requires MSVC." />
+    <Error Condition="!Exists('$(ReflgenIfcExecutable)')" Text="Set ReflgenIfcExecutable to reflgen-ifc.exe for named module sources." />
+    <ItemGroup><_ReflgenRegistrationName Include="@(_ReflgenPrimary->'%(Registration)')" /></ItemGroup>
+    <PropertyGroup>
+      <_ReflgenRegistrationCount>@(_ReflgenRegistrationName->Count())</_ReflgenRegistrationCount>
+      <_ReflgenUniqueCount>@(_ReflgenRegistrationName->Distinct()->Count())</_ReflgenUniqueCount>
+    </PropertyGroup>
+    <Error Condition="'$(_ReflgenRegistrationCount)' != '$(_ReflgenUniqueCount)'" Text="Module source filenames must be unique after identifier normalization." />
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="_ReflgenBuildModulePass"
+        Properties="Configuration=$(Configuration);Platform=$(Platform);ReflgenProviderPass=true" BuildInParallel="false" />
+    <MakeDir Directories="$(ReflgenOutputDirectory)" />
+    <Delete Files="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).stamp"
+        Condition="!Exists('$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).h') or !Exists('$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).cpp')" />
+  </Target>
+  <Target Name="_ReflgenRunModules" Inputs="%(_ReflgenPrimary.ModuleOutputFile);%(_ReflgenPrimary.ModuleOutputFile).i;$(ReflgenIfcExecutable);$(MSBuildThisFileFullPath);$(MSBuildProjectFullPath)"
+          Outputs="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).stamp">
+    <Exec Command="&quot;$(ReflgenIfcExecutable)&quot; --ifc &quot;%(_ReflgenPrimary.ModuleOutputFile)&quot; --metadata &quot;%(_ReflgenPrimary.ModuleOutputFile).i&quot; --module &quot;%(_ReflgenPrimary.Registration)&quot; --output &quot;$(ReflgenOutputDirectory).&quot; @(ReflgenAttributeScope->'--attribute-scope &quot;%(Identity)&quot;', ' ')" StdOutEncoding="utf-8" StdErrEncoding="utf-8" />
+    <Touch Files="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).stamp" AlwaysCreate="true" />
+    <ItemGroup><FileWrites Include="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).*" /></ItemGroup>
+  </Target>
+  <Target Name="_ReflgenBeforeModuleScan" BeforeTargets="SetModuleDependencies" DependsOnTargets="ReflgenGenerate"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(ReflgenProviderPass)' != 'true'" />
+  <Target Name="ReflgenGenerateModules" Condition="'@(_ReflgenPrimary)' != '' and '$(DesignTimeBuild)' != 'true' and '$(ReflgenProviderPass)' != 'true' and '$(ReflgenSelectedBackend)' != 'Std'"
+          DependsOnTargets="_ReflgenCompileProviders;_ReflgenRunModules" />
+</Project>
+

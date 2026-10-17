@@ -8,6 +8,7 @@
 // 문자를 소유하지 않는다: 정적 저장소(문자열 리터럴, 정적 배열)를 가리켜야 한다. 속성은 스키마의 상수 식에서만
 // 만들므로 그렇게 된다. C++26 백엔드는 std::define_static_string 으로 만든 배열을 가리키게 만든다 — 주석 값의
 // 포인터는 문자열 리터럴을 가리킬 수 없기 때문이다. 읽는 쪽은 바뀌지 않는다.
+#include "reflgen/core/features.h"
 #include <compare>
 #include <cstddef>
 #include <string_view>
@@ -21,7 +22,12 @@ namespace reflgen
         std::size_t length = 0;
 
         constexpr static_string() noexcept = default;
-        constexpr static_string(std::string_view text) noexcept : pointer(text.data()), length(text.size()) {}
+        constexpr static_string(std::string_view text) noexcept : pointer(text.data()), length(text.size())
+        {
+#if REFLGEN_USE_STD_REFLECTION
+            if consteval { pointer = std::define_static_string(text); }
+#endif
+        }
 
         constexpr std::string_view view() const noexcept { return {pointer, length}; }
         constexpr operator std::string_view() const noexcept { return view(); }

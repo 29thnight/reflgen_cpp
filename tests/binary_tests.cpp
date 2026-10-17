@@ -1,4 +1,6 @@
 #include "support.h"
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -43,6 +45,32 @@ namespace
                     (std::numeric_limits<std::int64_t>::min)());
         check_equal(reflgen_test::binary_round_trip((std::numeric_limits<std::uint64_t>::max)()),
                     (std::numeric_limits<std::uint64_t>::max)());
+    });
+
+    const test float_bits("binary: float wire bits and unaligned reads agree across language modes", [] {
+        constexpr std::array<std::uint64_t, 7> patterns{0,
+                                                        0x8000000000000000ULL,
+                                                        1,
+                                                        0x7fefffffffffffffULL,
+                                                        0x7ff0000000000000ULL,
+                                                        0x7ff8000000001234ULL,
+                                                        0xc00921fb54442d18ULL};
+        for (auto bits : patterns)
+        {
+            auto expected = bytes({5});
+            for (unsigned i = 0; i < 8; ++i)
+                expected.push_back(static_cast<std::byte>((bits >> (i * 8)) & 0xff));
+            std::vector<std::byte> actual;
+            reflgen::binary::writer out(actual);
+            out.write_float(std::bit_cast<double>(bits));
+            check_equal(actual, expected);
+            // Prefix makes the 8-byte payload deliberately unaligned even when the vector itself is aligned.
+            actual.insert(actual.begin(), std::byte{0xff});
+            reflgen::binary::reader in(std::span<const std::byte>(actual).subspan(1));
+            check_equal(std::bit_cast<std::uint64_t>(in.read_float()), bits);
+            in.finish();
+        }
+        check_throws([] { reflgen::binary::from_bytes<double>(bytes({5, 0, 0, 0, 0, 0, 0, 0})); }, "unexpected end");
     });
 
     const test cross_reads("binary: signed and unsigned tags read into either", [] {

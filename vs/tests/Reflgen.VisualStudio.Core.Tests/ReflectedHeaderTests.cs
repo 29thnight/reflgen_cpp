@@ -5,6 +5,21 @@ namespace Reflgen.VisualStudio.Tests
     public sealed class ReflectedHeaderTests
     {
         [Theory]
+        [InlineData("types.ixx")]
+        [InlineData("types.CPPM")]
+        [InlineData("types.mpp")]
+        public void ModuleInterfacesAreDistinctFromHeaders(string path)
+        {
+            Assert.True(ReflectedHeader.IsModulePath(path));
+            Assert.False(ReflectedHeader.IsHeaderPath(path));
+        }
+
+        [Theory]
+        [InlineData("types.h")]
+        [InlineData("main.cpp")]
+        public void OtherSourcesAreNotModuleInterfaces(string path) => Assert.False(ReflectedHeader.IsModulePath(path));
+
+        [Theory]
         [InlineData("struct [[reflgen::reflect]] player {};")]
         [InlineData("class [[nodiscard, reflgen::reflect(\"game.player\")]] player {};")]
         [InlineData("enum class [[ reflgen :: reflect ]] element { fire };")]

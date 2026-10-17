@@ -7,6 +7,7 @@
 // 정수로 적으므로 값이 사라지지는 않지만, 이름으로 적고 싶으면 범위를 넓히거나
 // reflection<E> 특수화로 정확한 표를 공급한다(코드 생성기가 하는 일이 이것이다).
 #include "reflgen/core/hook.h"
+#include "reflgen/core/standard_reflection.h"
 #include "reflgen/core/name.h"
 #include <array>
 #include <cstddef>
@@ -169,6 +170,25 @@ namespace reflgen
             }
             else
             {
+#if REFLGEN_USE_STD_REFLECTION
+                if constexpr (standard_eligible<E>())
+                {
+                    constexpr auto count = [] {
+                        std::size_t n = 0;
+                        for (auto e : std::meta::enumerators_of(^^E))
+                            if (std::meta::annotations_of_with_type(e, ^^ignore).empty()) ++n;
+                        return n;
+                    }();
+                    std::array<enum_entry<E>, count> entries{};
+                    std::size_t n = 0;
+                    for (auto e : std::meta::enumerators_of(^^E))
+                        if (std::meta::annotations_of_with_type(e, ^^ignore).empty())
+                            entries[n++] = {std::meta::identifier_of(e), std::meta::extract<E>(e)};
+                    return entries;
+                }
+                else
+#endif
+                {
                 constexpr long long min = enum_scan_min<E>();
                 constexpr long long max = enum_scan_max<E>();
                 if constexpr (max < min)
@@ -180,6 +200,7 @@ namespace reflgen
                     constexpr std::size_t width = static_cast<std::size_t>(max - min + 1);
                     constexpr std::size_t count = count_named_values<E, min, width>();
                     return collect_named_values<E, min, width, count>();
+                }
                 }
             }
         }

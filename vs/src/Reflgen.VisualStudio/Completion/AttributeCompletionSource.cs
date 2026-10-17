@@ -14,6 +14,9 @@ namespace Reflgen.VisualStudio.Completion
 {
     internal sealed class AttributeCompletionSource : IAsyncCompletionSource
     {
+        private readonly System.Func<int> _languageVersion;
+        private int _version = 20;
+        public AttributeCompletionSource(System.Func<int> languageVersion) { _languageVersion = languageVersion; }
         // attribute 목록이 이보다 길게 이어지는 일은 없다 — 커서 앞을 이만큼만 본다.
         private const int LookBehind = 4096;
 
@@ -30,7 +33,9 @@ namespace Reflgen.VisualStudio.Completion
                 return CompletionStartData.DoesNotParticipateInCompletion;
             }
             AttributeCompletionContext context = Analyze(triggerLocation);
-            if (context.Position == AttributePosition.None)
+            _version = _languageVersion();
+            if (context.IsAnnotation && _version < 26) return CompletionStartData.DoesNotParticipateInCompletion;
+            if (!CatalogStore.Instance.Current.OwnsCompletion(context))
             {
                 return CompletionStartData.DoesNotParticipateInCompletion;
             }
@@ -44,18 +49,25 @@ namespace Reflgen.VisualStudio.Completion
                                                                  SnapshotSpan applicableToSpan, CancellationToken token)
         {
             AttributeCompletionContext context = Analyze(applicableToSpan.End);
+            if (context.IsAnnotation && _version < 26)
+                return Task.FromResult(new CompletionContext(ImmutableArray<CompletionItem>.Empty));
             AttributeCatalog catalog = CatalogStore.Instance.Current;
             var items = new List<CompletionItem>();
             if (context.Position == AttributePosition.Member && context.Scope != null)
             {
-                items.AddRange(catalog.InScope(context.Scope).Select(CreateItem));
+                items.AddRange(catalog.InScope(context.Scope).Select(entry => CreateItem(entry, context.IsAnnotation)));
             }
             else if (context.Position == AttributePosition.Name)
             {
-                items.AddRange(catalog.Scopes.Select(CreateScopeItem));
+                if (context.Scope == null)
+                {
+                    items.AddRange(catalog.Scopes.Select(CreateScopeItem));
+                    if (!context.IsAnnotation)
+                        items.AddRange(CppCompletionPolicy.StandardAttributes(_version).Select(entry => CreateItem(entry, false)));
+                }
                 if (context.Scope != null) // [[using ns: 뒤
                 {
-                    items.AddRange(catalog.InScope(context.Scope).Select(CreateItem));
+                    items.AddRange(catalog.InScope(context.Scope).Select(entry => CreateItem(entry, context.IsAnnotation)));
                 }
             }
             return Task.FromResult(new CompletionContext(items.ToImmutableArray()));
@@ -70,11 +82,13 @@ namespace Reflgen.VisualStudio.Completion
             return Task.FromResult(description);
         }
 
-        private CompletionItem CreateItem(AttributeEntry entry)
+        private CompletionItem CreateItem(AttributeEntry entry, bool annotation)
         {
             var item = new CompletionItem(entry.Name, this,
                                           entry.Kind == AttributeKind.Directive ? DirectiveIcon : AttributeIcon,
-                                          ImmutableArray<CompletionFilter>.Empty, entry.Scope);
+                                          ImmutableArray<CompletionFilter>.Empty, entry.Scope,
+                                          CppCompletionPolicy.InsertText(entry, annotation), entry.Name, entry.Name,
+                                          ImmutableArray<ImageElement>.Empty);
             item.Properties.AddProperty(typeof(AttributeEntry), entry);
             return item;
         }
@@ -86,7 +100,8 @@ namespace Reflgen.VisualStudio.Completion
 
         private static string Describe(AttributeEntry entry)
         {
-            string signatures = string.Join("\n", entry.Signature.Split('\n').Select(line => entry.Scope + "::" + line));
+            string qualifier = entry.Scope.Length == 0 ? string.Empty : entry.Scope + "::";
+            string signatures = string.Join("\n", entry.Signature.Split('\n').Select(line => qualifier + line));
             return entry.Summary.Length == 0 ? signatures : signatures + "\n\n" + entry.Summary;
         }
 
@@ -116,12 +131,12 @@ namespace Reflgen.VisualStudio.Completion
                 return false;
             }
             char before = snapshot[position - 1];
-            return before == ':' || before == '[' || before == ',';
+            return before == ':' || before == '[' || before == ',' || before == '=';
         }
 
         // 식별자를 치거나 "::"·"[["·"," 를 막 쳤을 때만 끼어든다.
         private static bool IsTriggerCharacter(char c) => char.IsLetterOrDigit(c) || c == '_' || c == ':' || c == '[' ||
-                                                          c == ',';
+                                                          c == ',' || c == '=';
 
         private static ImageElement Icon(Microsoft.VisualStudio.Imaging.Interop.ImageMoniker moniker, string name) =>
             new ImageElement(new ImageId(moniker.Guid, moniker.Id), name);

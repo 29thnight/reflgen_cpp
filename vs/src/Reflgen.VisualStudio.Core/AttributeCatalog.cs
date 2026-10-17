@@ -73,6 +73,29 @@ namespace Reflgen.VisualStudio
         public IEnumerable<AttributeEntry> InScope(string scope) =>
             _entries.Where(entry => string.Equals(entry.Scope, scope, StringComparison.Ordinal));
 
+        // Preserve [[ -> reflgen:: completion. Standard unqualified attributes are contributed
+        // alongside namespace entries because native C++ completion may not join an async session.
+        public bool OwnsCompletion(AttributeCompletionContext context) =>
+            (context.Position == AttributePosition.Name &&
+             (context.Scope == null || Scopes.Contains(context.Scope, StringComparer.Ordinal))) ||
+            (context.Position == AttributePosition.Member && context.Scope != null &&
+             Scopes.Contains(context.Scope, StringComparer.Ordinal));
+
+        public static AttributeCatalog Standard { get; } = new AttributeCatalog(new[]
+        {
+            new AttributeEntry(AttributeKind.Attribute, "", "nodiscard", "nodiscard\nnodiscard(\"reason\")", "Warn when a result is discarded (C++17; reason since C++20)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "maybe_unused", "maybe_unused", "Suppress unused-entity warnings (C++17)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "deprecated", "deprecated\ndeprecated(\"reason\")", "Mark a deprecated entity (C++14)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "fallthrough", "fallthrough", "Mark intentional switch fallthrough (C++17)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "noreturn", "noreturn", "Declare a function that never returns (C++11)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "carries_dependency", "carries_dependency", "Carry a memory-order dependency (C++11)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "no_unique_address", "no_unique_address", "Allow overlapping member storage (C++20; compiler support varies)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "likely", "likely", "Mark a likely execution path (C++20)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "unlikely", "unlikely", "Mark an unlikely execution path (C++20)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "assume", "assume(expression)", "State an optimizer assumption (C++23; compiler support varies)."),
+            new AttributeEntry(AttributeKind.Attribute, "", "indeterminate", "indeterminate", "Give an automatic variable or parameter initially indeterminate storage (C++26)."),
+        });
+
         // 여러 프로젝트의 카탈로그를 합친다. (scope, name) 이 겹치면 먼저 온 것을 쓴다.
         public static AttributeCatalog Merge(IEnumerable<AttributeCatalog> catalogs)
         {

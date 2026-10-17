@@ -1,0 +1,28 @@
+foreach(mode IN ITEMS formats umbrella compatibility)
+    add_executable(reflgen_module_${mode}_test main.cpp headers.cpp)
+    target_link_libraries(reflgen_module_${mode}_test PRIVATE reflgen_modules)
+    set_target_properties(reflgen_module_${mode}_test PROPERTIES CXX_SCAN_FOR_MODULES ON)
+    if(NOT mode STREQUAL formats)
+        target_compile_definitions(reflgen_module_${mode}_test PRIVATE REFLGEN_IMPORT_UMBRELLA)
+    endif()
+    if(mode STREQUAL compatibility)
+        target_compile_definitions(reflgen_module_${mode}_test PRIVATE REFLGEN_HEADER_BEFORE_IMPORT)
+    endif()
+    if(MSVC)
+        target_compile_options(reflgen_module_${mode}_test PRIVATE /W4 /WX /permissive- /EHsc)
+    endif()
+    add_test(NAME reflgen_module_${mode} COMMAND reflgen_module_${mode}_test)
+endforeach()
+add_test(NAME reflgen_module_installed_package
+    COMMAND "${CMAKE_COMMAND}" "-DBINARY=${PROJECT_BINARY_DIR}" "-DCONFIG=$<CONFIG>"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/package/$<CONFIG>" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DGENERATOR=${CMAKE_GENERATOR}" "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/check_package.cmake")
+foreach(mode IN ITEMS core json binary)
+    add_executable(reflgen_module_${mode}_test alone.cpp)
+    target_link_libraries(reflgen_module_${mode}_test PRIVATE reflgen_modules)
+    set_target_properties(reflgen_module_${mode}_test PROPERTIES CXX_SCAN_FOR_MODULES ON)
+    string(TOUPPER "${mode}" mode_upper)
+    target_compile_definitions(reflgen_module_${mode}_test PRIVATE "TEST_${mode_upper}")
+    add_test(NAME reflgen_module_${mode} COMMAND reflgen_module_${mode}_test)
+endforeach()

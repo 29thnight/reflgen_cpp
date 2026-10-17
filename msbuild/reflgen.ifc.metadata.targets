@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Import in the provider after Microsoft.Cpp.targets. Set ModuleOutputFile on each primary module. -->
+<Project>
+  <ItemDefinitionGroup>
+    <ClCompile><DisableSpecificWarnings>5030;%(DisableSpecificWarnings)</DisableSpecificWarnings></ClCompile>
+  </ItemDefinitionGroup>
+  <Target Name="_ReflgenCollectMetadata">
+    <ItemGroup>
+      <_ReflgenMetadata Include="@(ClCompile)"
+          Condition="'%(ClCompile.CompileAs)' == 'CompileAsCppModule' and '%(ClCompile.ModuleOutputFile)' != '' and '%(ClCompile.ExcludedFromBuild)' != 'true'" />
+    </ItemGroup>
+  </Target>
+  <Target Name="_ReflgenPreprocessMetadata" AfterTargets="ClCompile" DependsOnTargets="_ReflgenCollectMetadata"
+          Condition="'$(DesignTimeBuild)' != 'true'"
+          Outputs="%(_ReflgenMetadata.ModuleOutputFile).i">
+    <CL Sources="@(_ReflgenMetadata->'%(FullPath)')" ToolPath="$(CLToolPath)" ToolExe="$(CLToolExe)"
+        AdditionalIncludeDirectories="%(_ReflgenMetadata.AdditionalIncludeDirectories)"
+        PreprocessorDefinitions="%(_ReflgenMetadata.PreprocessorDefinitions)"
+        UndefinePreprocessorDefinitions="%(_ReflgenMetadata.UndefinePreprocessorDefinitions)"
+        UndefineAllPreprocessorDefinitions="%(_ReflgenMetadata.UndefineAllPreprocessorDefinitions)"
+        ForcedIncludeFiles="%(_ReflgenMetadata.ForcedIncludeFiles)"
+        LanguageStandard="%(_ReflgenMetadata.LanguageStandard)"
+        RuntimeLibrary="%(_ReflgenMetadata.RuntimeLibrary)"
+        Optimization="%(_ReflgenMetadata.Optimization)"
+        ExceptionHandling="%(_ReflgenMetadata.ExceptionHandling)"
+        UseStandardPreprocessor="%(_ReflgenMetadata.UseStandardPreprocessor)"
+        DisableSpecificWarnings="%(_ReflgenMetadata.DisableSpecificWarnings)"
+        CompileAs="CompileAsCppModule" PrecompiledHeader="NotUsing"
+        PreprocessToFile="true" PreprocessSuppressLineNumbers="false"
+        AdditionalOptions="%(_ReflgenMetadata.AdditionalOptions) /Fi&quot;%(_ReflgenMetadata.ModuleOutputFile).i.tmp&quot;"
+        MinimalRebuild="false" TrackFileAccess="false" />
+    <GetFileHash Files="%(_ReflgenMetadata.ModuleOutputFile).i.tmp">
+      <Output TaskParameter="Hash" PropertyName="_ReflgenNewMetadataHash" />
+    </GetFileHash>
+    <PropertyGroup><_ReflgenOldMetadataHash /></PropertyGroup>
+    <GetFileHash Files="%(_ReflgenMetadata.ModuleOutputFile).i" Condition="Exists('%(_ReflgenMetadata.ModuleOutputFile).i')">
+      <Output TaskParameter="Hash" PropertyName="_ReflgenOldMetadataHash" />
+    </GetFileHash>
+    <Copy SourceFiles="%(_ReflgenMetadata.ModuleOutputFile).i.tmp" DestinationFiles="%(_ReflgenMetadata.ModuleOutputFile).i"
+          Condition="'$(_ReflgenNewMetadataHash)' != '$(_ReflgenOldMetadataHash)' or $([System.IO.File]::GetLastWriteTimeUtc('%(_ReflgenMetadata.ModuleOutputFile).i').Ticks) &lt; $([System.IO.File]::GetLastWriteTimeUtc('%(_ReflgenMetadata.ModuleOutputFile)').Ticks)" />
+    <Delete Files="%(_ReflgenMetadata.ModuleOutputFile).i.tmp" />
+    <ItemGroup><FileWrites Include="%(_ReflgenMetadata.ModuleOutputFile).i" /></ItemGroup>
+  </Target>
+</Project>
+

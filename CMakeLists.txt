@@ -13,7 +13,9 @@ project(reflgen
 option(REFLGEN_BUILD_TESTS "Build the reflgen test suite" ${PROJECT_IS_TOP_LEVEL})
 option(REFLGEN_BUILD_EXAMPLES "Build the reflgen examples" ${PROJECT_IS_TOP_LEVEL})
 option(REFLGEN_BUILD_GENERATOR "Build the reflgen code generator (requires libclang)" ${PROJECT_IS_TOP_LEVEL})
-set(REFLGEN_TEST_CXX_STANDARD 20 CACHE STRING "C++ standard used to build tests and examples (20, 23)")
+option(REFLGEN_BUILD_MODULES "Build named library modules (CMake 3.28+ and module-capable toolchain)" OFF)
+set(REFLGEN_TEST_CXX_STANDARD 20 CACHE STRING "C++ standard used to build tests and examples (20, 23, 26)")
+
 
 # reflgen_generate() — [[reflgen::…]] attribute 에서 reflection 코드를 만든다.
 include(cmake/reflgen.cmake)
@@ -54,8 +56,19 @@ if(REFLGEN_BUILD_GENERATOR)
     add_subdirectory(generator)
 endif()
 
+if(REFLGEN_BUILD_MODULES)
+    reflgen_add_modules(reflgen_modules)
+    add_library(reflgen::modules ALIAS reflgen_modules)
+endif()
+
 if(REFLGEN_BUILD_TESTS)
     enable_testing()
+    if(REFLGEN_BUILD_MODULES)
+        add_subdirectory(tests/modules)
+    endif()
+    if(TARGET reflgen_ifc)
+        add_subdirectory(tests/ifc)
+    endif()
     set(REFLGEN_TEST_SOURCES
         tests/harness.cpp
         tests/version_tests.cpp
@@ -316,6 +329,12 @@ if(REFLGEN_BUILD_TESTS)
                     "-DSOURCE=${PROJECT_SOURCE_DIR}"
                     "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/msbuild_layouts"
                     -P "${PROJECT_SOURCE_DIR}/tests/msbuild/check_layouts.cmake")
+            add_test(NAME reflgen_msbuild_standard_writer
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DMSBUILD=${REFLGEN_MSBUILD_EXECUTABLE}"
+                    "-DSOURCE=${PROJECT_SOURCE_DIR}"
+                    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/standard_writer"
+                    -P "${PROJECT_SOURCE_DIR}/tests/msbuild/check_standard_writer.cmake")
         endif()
     endif()
 endif()
@@ -330,9 +349,22 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 install(TARGETS reflgen EXPORT reflgen-targets)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY modules/ DESTINATION ${CMAKE_INSTALL_DATADIR}/reflgen/modules)
 install(FILES cmake/reflgen.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/reflgen)
+install(FILES cmake/reflgen-standard.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/reflgen)
 # .vcxproj 용 — <prefix>/share/reflgen/msbuild/reflgen.targets 가 <prefix>/include 와 <prefix>/bin 을 찾는다.
-install(FILES msbuild/reflgen.targets DESTINATION ${CMAKE_INSTALL_DATADIR}/reflgen/msbuild)
+install(FILES msbuild/reflgen.targets msbuild/reflgen.ifc.targets msbuild/reflgen.ifc.metadata.targets msbuild/reflgen.mixed.targets
+    msbuild/reflgen.standard.targets msbuild/reflgen.standard.probe.cpp
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/reflgen/msbuild)
+if(TARGET reflgen_ifc)
+    FetchContent_GetProperties(reflgen_ifc_sdk SOURCE_DIR reflgen_ifc_sdk_SOURCE_DIR)
+    FetchContent_GetProperties(reflgen_ifc_gsl SOURCE_DIR reflgen_ifc_gsl_SOURCE_DIR)
+    install(TARGETS reflgen_ifc RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES "${reflgen_ifc_sdk_SOURCE_DIR}/LICENSE.TXT"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/reflgen/licenses RENAME ifc-LICENSE.TXT)
+    install(FILES "${reflgen_ifc_gsl_SOURCE_DIR}/LICENSE"
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/reflgen/licenses RENAME gsl-LICENSE)
+endif()
 if(TARGET reflgen_cli)
     install(TARGETS reflgen_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     if(REFLGEN_LIBCLANG_DLL)

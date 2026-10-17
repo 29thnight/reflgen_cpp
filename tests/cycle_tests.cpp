@@ -244,7 +244,7 @@ namespace
         self->next = self;
         check_throws([&] { reflgen::json::to_string(self); }, "cyclic reference");
         self->next.reset();
-        check(reflgen::detail::active_indirections.empty(), "a failed write left entries on the active path");
+        check(reflgen::detail::active_indirections().empty(), "a failed write left entries on the active path");
         check_equal(reflgen::json::to_string(self), std::string(R"({"name":"","next":null})"));
     });
 

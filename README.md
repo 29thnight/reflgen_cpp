@@ -4,9 +4,15 @@ Macro-free reflection for C++20, with a serialization library whose formats you 
 
 [한국어](README.ko.md)
 
-- **Zero macros** — neither the public API nor the library internals use `#define` or `#if` (only `#pragma once` and
-  `#include`). Compiler differences are absorbed by **detecting behavior**, not by the preprocessor.
-- **C++20 baseline, C++23 supported** — standard library only. When C++26 reflection (P2996) arrives, only the way
+Backend selection, mixed projects and version guards: [backend guide](docs/reflection-backends.md).
+Compiler, runtime and live VS validation: [verification record](docs/verification-2026-10-17.md).
+
+The module/IFC and C++26 features below describe the current source tree; rebuild the tools and VSIX to use
+them. This change does not publish new release packages.
+
+- **Macro-free reflection API** — no declaration macros. Feature guards isolate C++26 syntax and compiler-specific
+  module TLS storage; backend selection uses an actual compile probe.
+- **C++20 baseline, C++23 supported** — standard library only. With the optional C++26 standard backend, only the way
   descriptions are produced changes; the query and serialization APIs stay (see the roadmap).
 - **The whole STL serializes** — every standard container, adapter and value wrapper, plus user containers shaped
   like the STL, automatically.
@@ -36,6 +42,132 @@ the installed headers actually changed.
 
 From source: `cmake --preset release`, `cmake --build --preset release`,
 `cmake --install build/release --prefix <folder>` gives the same layout as the zip. CMake 3.25 or later.
+
+## Importing the library as named modules
+
+Use `import reflgen.json;` in place of `#include "reflgen/json.h"`. Available modules are `reflgen.core`,
+`reflgen.runtime`, `reflgen.serialization`, `reflgen.json`, `reflgen.binary`, and the umbrella `reflgen`.
+Format modules re-export the common API, so importing JSON alone also provides schemas and runtime registration.
+Include the standard headers your own code uses before importing modules.
+
+```cpp
+#include <string>
+import reflgen.json;
+struct item {
+    int count = 7;
+    static consteval auto reflect() {
+        return reflgen::schema<item>(reflgen::field<&item::count>);
+    }
+};
+auto text = reflgen::json::to_string(item{});
+auto value = reflgen::json::from_string<item>(text);
+```
+
+Requires CMake 3.28+ and a module-capable toolchain; verified with MSVC + Ninja in Debug and Release.
+For `add_subdirectory`, enable `REFLGEN_BUILD_MODULES` and link `reflgen::modules`. For an installed package:
+
+```cmake
+find_package(reflgen CONFIG REQUIRED)
+reflgen_add_modules(my_reflgen_modules)
+target_link_libraries(app PRIVATE my_reflgen_modules)
+set_target_properties(app PROPERTIES CXX_SCAN_FOR_MODULES ON)
+```
+
+Module sources are installed under `share/reflgen/modules`; consumer builds produce their own compiler/configuration
+specific BMIs. Apply the same language standard to the module target when using C++23. In a normal `.vcxproj`, add the
+module sources to a static-library project, configure its include directory and reference it from consumer projects.
+Facades export the existing global-module declarations, preserving type/registry identity with header-based translation
+units and allowing `reflection<T>`/`serializer<T>` specializations. See [tests/modules](tests/modules).
+The header-only route remains available with the module build option off.
+When mixing headers and imports in one translation unit, include headers containing reflgen library definitions before
+`import reflgen...;`. MSVC reports redefinitions if the same library headers are included after importing it.
+
+For IFC-generated schemas combined with the library modules, use the following order. It was verified in the VS 18.10
+editor for build/run, JSON API completion and new-field completion after saving the provider module. Pre-including the
+common support header prevents the generated schema header from redefining library entities after the imports:
+
+```cpp
+#include <iostream>
+#include <string>
+#include "reflgen/generated.h"
+import reflgen.json;
+import game.types;
+#include "reflgen_game.h"
+```
+
+## MSVC C++20 module reflection from IFC
+
+Optional: configure with `-DREFLGEN_BUILD_IFC=ON` to build `reflgen-ifc` (MSVC with C++23 support).
+The provider and consumers remain C++20. Pinned Microsoft IFC SDK/GSL sources are fetched on first configure;
+offline builds can set `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK` and `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL`.
+
+The frontend reads the primary module's compiler-produced IFC, without reparsing its source. It generates descriptions
+for exported namespace/global class/struct types, public ordinary fields, public non-overloaded named methods, and
+exported enum entries. Non-exported types and private/protected members are excluded. Inheritance, public nested types,
+public bit-fields/reference fields, and overloaded methods fail with `RG0200`. Templates, member templates, operators,
+conversion functions, static data fields and partitions/reexports remain outside this backend. Exported types are reflected
+by default; `ignore` excludes a type/member, and `reflect("name")` changes the schema name when metadata is enabled.
+
+```cmake
+# game must produce this IFC path. Keep the provider independent of its reflection target.
+reflgen_generate_ifc(game_reflection
+    PROVIDER game IFC "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/game.ifc"
+    IMPORT game.types MODULE game)
+target_link_libraries(app PRIVATE game_reflection)
+```
+
+For attributes, add `SOURCE path/to/types.ixx`. The helper preprocesses it with MSVC `/P` after the provider compiles,
+using the provider's target definitions, include directories, options, runtime and configuration flags. Supply per-source
+flags with `PREPROCESS_OPTIONS`, or supply your own compiler-produced sidecar with `METADATA path/to/types.i` instead.
+Do not pass raw source or `/EP` output. The sidecar must be produced after its IFC with the same compiler settings.
+IFC supplies types and visibility; `/P` supplies expanded attributes with original `#line` locations. Without `SOURCE` or
+`METADATA`, the IFC-only mode still has no attributes.
+
+```cmake
+reflgen_generate_ifc(game_reflection
+    PROVIDER game IFC "${game_ifc}" IMPORT game.types MODULE game
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/types.ixx"
+    ATTRIBUTE_SCOPES editor
+    ATTRIBUTE_MODULES "editor.attributes=${editor_attributes_ifc}")
+```
+
+All built-in metadata (`serialized_name`, `transient`, `required`, `range`, `display_name`, `description`, `category`,
+`hidden`, `readonly`) is carried into the ordinary schema/runtime/serialization APIs. Custom constexpr attribute types
+can be exported by another module: list its namespace in `ATTRIBUTE_SCOPES` and its import-to-IFC mapping in
+`ATTRIBUTE_MODULES`. The generated header imports it explicitly, including when the provider only imports it privately.
+Attribute argument names outside class static constants should be fully qualified; helper types/constants must be exported.
+Ambiguous source-line matches fail with `RG0200`; put repeated declaration names on separate lines. Unsupported public
+bit-fields/reference fields can be excluded with `ignore` before validation.
+
+Consumers first include their library/standard headers (for example `reflgen/json.h`), then write `import game.types;`
+directly in their `.cpp`, then `#include "reflgen_game.h"` for schemas and registration
+declarations. In a live VS 18.10 test, relying on the import inside the header alone did not activate member completion;
+the direct import enabled it. Generated registration sources also import the provider directly.
+Call `reflgen::generated::register_game(registry)` once at startup. Use that same generated header in every
+translation unit that reflects these types. No forward declarations of module-owned types or forced includes are used.
+The build order is provider → IFC extraction → separate reflection target → consumers.
+
+For MSBuild, import `msbuild/reflgen.ifc.targets` after `Microsoft.Cpp.targets` in a separate reflection project. Add a
+`ProjectReference` to the provider and one `ReflgenIfc` item whose `Include` is its IFC path and `Module` metadata is the
+C++ import name. Set `ReflgenIfcExecutable`, `ReflgenModule`, and `ReflgenIfcSourceProject` (provider project path).
+Other consumer projects need the generated include directory and the module reference mapping too.
+
+For MSBuild attributes, import `msbuild/reflgen.ifc.metadata.targets` in the **provider**, after `Microsoft.Cpp.targets`.
+Set `ModuleOutputFile` on each primary module source. This writes `<ModuleOutputFile>.i` using the source's compiler
+settings, preserving unchanged timestamps. In the reflection project, set `Metadata` on `ReflgenIfc` to that path.
+Use `ReflgenAttributeScope` items for custom namespaces and `ReflgenAttributeModule` items (`Include` = IFC path,
+`Module` = import name). Attribute-only saves follow the same provider-build/generation/rescan route as member changes.
+Module completion includes built-ins and custom attributes used in the preprocessed module; custom entries show `(...)`,
+not constructor parameter documentation. See [the module attribute fixture](tests/ifc/attributes).
+
+The VS extension routes `.ixx`/`.cppm`/`.mpp` saves to loaded reflection projects declaring that provider. Its existing
+queue invokes `ReflgenGenerate`, which builds the provider first, reports diagnostics and refreshes IntelliSense after
+schema changes. It does not insert friends into module sources. Provider compilation and IFC extraction/validation failures
+preserve the previous successful output.
+
+See [tests/ifc](tests/ifc) for executable CMake/MSBuild examples. Run `ctest -R reflgen_ifc --output-on-failure` after building.
+The reader validates IFC version, integrity and import identity. Only the optional MSVC codegen traits
+`evaluated-initializer` and `class-template-inheriting-ctors` are ignored; unknown semantic partitions are rejected.
 
 ## Quick start
 
@@ -224,8 +356,8 @@ reflgen_generate(my_game
   of the referenced reflgen projects. The registration function of a module without reflected classes does not
   include the registration headers (the same setting can be given to every project).
 
-- **What is reflected**: every non-static data member of a `[[reflgen::reflect]]` class (the same result as C++26
-  native reflection). Leave one out with `[[reflgen::ignore]]`. Methods only when marked `[[reflgen::reflect]]`.
+- **What is reflected**: the generator includes every non-static data member of a `[[reflgen::reflect]]` class.
+  Leave one out with `[[reflgen::ignore]]`. Methods only when marked `[[reflgen::reflect]]`.
   Reflected `public` bases become `base<>`; bases that are not reflected (a CRTP middle layer, a third-party base) are
   skipped over to the nearest reflected ancestor above them.
 - **Carrying attributes over**: only the `reflgen::` namespace and the `ATTRIBUTE_SCOPES` namespaces go into the
@@ -434,6 +566,15 @@ no header has to be registered or marked.
 
 ### Visual Studio extension
 
+MSVC mixed projects use both paths through the single `reflgen.targets` import above. `ClInclude` headers use libclang;
+public types in `.ixx`, `.cppm`, `.mpp`, or `CompileAsCppModule` sources use IFC. Set `ReflgenIfcExecutable` to
+`reflgen-ifc.exe` (by default beside `reflgen.exe`). Module providers and their `/P` metadata are built before extraction;
+header injection is excluded from module sources. For `ReflgenModule=mixed` and `types.ixx`, the module schema is
+`reflgen_mixed_types.h` and registration is `reflgen::generated::register_mixed_types`. Include that schema after the
+consumer's import and call it alongside the header path's `register_mixed`. Normalized module source filenames must be
+unique. Automatic routing currently applies to MSVC `.vcxproj` projects; CMake uses the separate `reflgen_generate`
+and `reflgen_generate_ifc` helpers. The IFC public-type and attribute restrictions described above still apply.
+
 VS 2026 (18.x), x64 — the version it is tested with. Run `Reflgen.VisualStudio.vsix` (a release asset, or build
 `vs/`) to install it.
 
@@ -454,12 +595,16 @@ files.
   `ReflgenGenerate` in a separate MSBuild process and puts the RG diagnostics in the Error List. It is skipped while a
   VS build is running (that build generates). Progress goes to the "reflgen" Output pane (selected once, on the
   first log after VS starts).
+  Module saves in mixed projects use the same entry point. Each generation stage tracks its inputs separately: an
+  independent header edit updates header reflection, and a module edit updates IFC reflection. Shared dependencies can
+  invalidate both paths.
 - **Generate on first open** — a project that has never generated does so when opened. Otherwise IntelliSense sees
   an empty injection header and underlines code that uses reflection.
 - **IntelliSense refresh** — IntelliSense does not notice changes to forced-include files outside the project
   (`$(IntDir)`). When generated code changes, the extension calls "Rescan Solution" (Project > Rescan Solution). This
   can be heavy in large solutions, so it can be turned off.
-- **Attribute completion** — after `[[` or `,` it suggests attribute namespaces, and after `reflgen::` it suggests
+- **Attribute completion** — after `[[` or `,` it suggests standard C++ attributes alongside `reflgen::` and custom
+  namespaces; after `reflgen::` it suggests
   attributes with their constructor signatures and descriptions. The list comes from the generator's catalog (see
   `[[reflgen::attribute]]` above); before the first generation only the built-in attributes appear.
 - Settings: Tools > Options > reflgen > General (friend insertion, generation, IntelliSense refresh, MSBuild.exe path).
@@ -659,11 +804,67 @@ written in Korean and say why, not what.
 
 ## C++26 migration
 
-When C++26 reflection (P2996) and annotations (P3394) arrive, only the front end that builds schemas moves from the
-generator to `std::meta` (roadmap 3). User code changes its attribute notation once, mechanically — the C++20/23
-`[[…]]` stays valid in C++26, but `annotations_of` only sees `[[=…]]`. `[[=…]]` is a syntax error in C++20/23 and this
-library does not use `#if`, so the two notations are not mixed in one source; they are switched in one go when
-migrating.
+### Internal language and feature guards
+
+`core/features.h` normalizes `_MSVC_LANG`/`__cplusplus` as `REFLGEN_CPLUSPLUS` and `REFLGEN_CXX20/23/26`.
+`REFLGEN_HAS_IF_CONSTEVAL`, `REFLGEN_HAS_BYTESWAP` and `REFLGEN_HAS_STD_REFLECTION` test actual facilities.
+The build's `REFLGEN_USE_STD_REFLECTION=0/1` is the final selection; forcing unavailable reflection is a compile
+error. MSVC module TLS compatibility guards are centralized there too.
+
+Binary floating-point I/O uses byte assembly in C++20 and fixed-width copies when C++23 byteswap is available.
+Both retain the same eight little-endian payload bytes; no measured speedup is claimed. Compile named modules
+and consumers with the same backend and language mode. See
+[`tests/standard/check_matrix.cmake`](tests/standard/check_matrix.cmake) for reproducible version/backend checks.
+
+### Standard backend selection
+
+The optional standard backend builds schemas from `std::meta` and typed annotations. The runtime registry,
+query, JSON and binary APIs stay the same. Existing header/libclang and module/IFC paths remain available.
+`[[reflgen::…]]` is generator metadata; the standard backend reads `[[=reflgen::…]]`. AUTO selects a backend,
+but does not rewrite source syntax. Supporting both in one source requires conditional declarations guarded by
+`REFLGEN_USE_STD_REFLECTION`.
+
+```cmake
+set_property(TARGET game PROPERTY CXX_STANDARD 26)
+reflgen_generate(game BACKEND AUTO HEADERS player.h TYPES game::player MODULE game)
+# STD uses the provider's exported types without reading an IFC:
+reflgen_generate_ifc(game_registration PROVIDER game_types IMPORT game.types
+    BACKEND AUTO TYPES game::actor MODULE actors IFC "${actor_ifc}")
+# Compile named library modules with the same backend as consumers:
+reflgen_add_modules(reflgen_modules BACKEND STD)
+```
+
+`AUTO` probes reflection, annotations, member splicing and static strings when the target requests C++26 and
+supplies `TYPES`. A failed probe keeps the legacy path. Calls without `TYPES` retain legacy behavior, including
+existing C++26 projects. `STD` requires a successful probe; `LEGACY` explicitly opts out. The standard backend
+generates only registration code: list class types in `TYPES`, since standard reflection cannot enumerate all
+types in a namespace or module. Enums do not require registry entries. Use `BACKEND STD NO_REGISTRATION` for
+schemas alone. Named library modules default to LEGACY; their backend must match consumers. The helper adds
+GCC's `-freflection` after a successful probe.
+
+For MSBuild, import `reflgen.targets` as before and add:
+
+```xml
+<PropertyGroup><ReflgenReflectionBackend>Auto</ReflgenReflectionBackend></PropertyGroup>
+<ItemGroup>
+  <ReflgenReflectType Include="game::player" />
+  <!-- For a type exported by a module: -->
+  <ReflgenStandardImport Include="game.types" />
+</ItemGroup>
+```
+
+AUTO probes `stdcpplatest`/`stdcpp26` projects with a type manifest. `Std` fails with RG0261 when unsupported;
+`Legacy` preserves generation. Results and `standard.probe.log` are cached beside generated files.
+The VS extension reads the active configuration's C++ version: it filters standard attributes accordingly,
+keeps `[[reflgen::…]]` completion, and handles `[[=reflgen::…]]` in C++26/latest mode. It inserts `{}` for
+argument-free annotation values and `(` for values with arguments. Editor support does not imply that the
+compiler implements reflection. Save uses the same backend-selecting MSBuild target.
+
+The standard backend reflects public fields and explicitly annotated public methods, preserves typed user
+annotations (including module-exported types), honors `ignore`, and obtains exact annotated enum entries.
+Manual/external schemas take precedence. Non-ignored bit-fields, reference fields and public inheritance require
+a manual schema; private members are excluded. Verified with GCC 16.2 in WSL, including `import reflgen.json`,
+registration and serialization. Local MSVC 19.51 fails the probe and retains legacy generation.
 
 | C++20/23 | C++26 |
 |---|---|
@@ -689,7 +890,7 @@ Already in place:
 - Directive types are not attributes — `.with(reflgen::ignore{})` is a compile error (to leave a member out, do not
   list it in the schema).
 
-Not yet available: a codemod that rewrites the notation (a VS extension command) and the native backend.
+Not yet available: a codemod that rewrites the notation (a VS extension command).
 
 ## Known limitations
 
@@ -705,8 +906,8 @@ Not yet available: a codemod that rewrites the notation (a VS extension command)
 - Reflecting private members requires `friend struct reflgen::access;` (the VS extension inserts it on save). The
   C++20 way of getting constant pointers to private members without a friend (injecting a friend function through
   the access-check exemption of explicit instantiation) works with Clang, but MSVC 19.51 cannot use that function in
-  constant evaluation (C3779, C2131, measured). The C++26 backend no longer needs the friend, thanks to
-  `access_context::unchecked()`.
+  constant evaluation (C3779, C2131, measured). The standard backend uses unprivileged access and reflects public
+  members only; use a manual schema for private state.
 - The VS extension handles .vcxproj only. In CMake (Open Folder) projects, `reflgen_generate()` generates at build
   time. Completion appears only in the attribute name position — inside arguments it is up to C++ IntelliSense.
 - Names in attribute arguments are looked up in the enclosing namespaces by opening every one of them with
@@ -729,8 +930,6 @@ Not yet available: a codemod that rewrites the notation (a VS extension command)
 2. **Visual Studio extension** — first version done (generate on save and open, Error List, IntelliSense refresh,
    completion, automatic friend insertion). Remaining: refreshing IntelliSense for the changed translation units
    instead of the whole solution, CMake (Open Folder) support, the C++26 migration codemod, Marketplace publishing.
-3. **C++26 native backend** — build `schema_of<T>` from `std::meta::nonstatic_data_members_of`
-   (`access_context::unchecked()`) + `annotations_of`. The query and serialization APIs do not change and the friend
-   is no longer needed. Ready: attributes and directive types are all structural, strings are `static_string`
-   ([C++26 migration](#c26-migration)).
+3. **C++26 standard backend** — public types, typed annotations, registration and serialization implemented
+   ([C++26 migration](#c26-migration)). Remaining: broader compiler coverage and inherited/private member support.
 4. GCC and libc++ CI.

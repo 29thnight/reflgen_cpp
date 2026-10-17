@@ -1,0 +1,15 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{7814846F-9708-456C-82A4-BD08951A6992}</ProjectGuid>
+    <IfcTestKind>StaticLibrary</IfcTestKind>
+  </PropertyGroup>
+  <Import Project="common.props" />
+  <ItemGroup>
+    <ClCompile Include="..\types.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+      <ModuleOutputFile>$(OutDir)types.ifc</ModuleOutputFile>
+    </ClCompile>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="..\..\..\msbuild\reflgen.ifc.metadata.targets" />
+</Project>

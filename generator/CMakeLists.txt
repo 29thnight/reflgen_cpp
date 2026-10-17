@@ -22,7 +22,6 @@ find_library(REFLGEN_LIBCLANG NAMES libclang clang HINTS ${reflgen_libclang_hint
 if(NOT REFLGEN_LIBCLANG)
     message(WARNING "reflgen: libclang was not found; the generator is not built. "
                     "Set REFLGEN_LIBCLANG_DIR to the directory containing libclang.")
-    return()
 endif()
 message(STATUS "reflgen: libclang = ${REFLGEN_LIBCLANG}")
 
@@ -36,6 +35,17 @@ target_include_directories(reflgen_generator_core PUBLIC src)
 # 생성 코드 형식(reflgen/core/version.h)을 라이브러리와 같은 곳에서 읽는다.
 target_link_libraries(reflgen_generator_core PUBLIC reflgen::reflgen)
 target_compile_features(reflgen_generator_core PUBLIC cxx_std_20)
+
+option(REFLGEN_BUILD_IFC "Build the optional MSVC IFC reflection generator" OFF)
+if(REFLGEN_BUILD_IFC)
+    if(NOT MSVC OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        message(FATAL_ERROR "The IFC frontend currently requires MSVC on Windows")
+    endif()
+    add_subdirectory(ifc)
+endif()
+if(NOT REFLGEN_LIBCLANG)
+    return()
+endif()
 
 add_executable(reflgen_cli
     src/catalog.cpp

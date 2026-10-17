@@ -7,6 +7,11 @@ namespace Reflgen.VisualStudio.Tests
     {
         private const string Friend = "friend struct reflgen::access;";
 
+        [Theory]
+        [InlineData("class [[=reflgen::reflect{}]] a { int secret; public: int value; };")]
+        [InlineData("class [[=editor::label{}, =reflgen::reflect(\"a\")]] a { int secret; };")]
+        public void AnnotationsDoNotRequestPrivateAccess(string text) => Assert.Empty(AccessFriend.Insertions(text));
+
         private static string Apply(string text) =>
             AccessFriend.Insertions(text)
                         .OrderByDescending(insertion => insertion.Position)
