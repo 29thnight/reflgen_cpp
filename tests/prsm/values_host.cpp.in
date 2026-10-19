@@ -1,0 +1,32 @@
+// D-042 value types end to end: PrSM source -> LLVM object -> generated bridge
+// -> the scene fixture's "third-party" vec3 and shade.
+#include <stdint.h>
+#include <reflgen/prsm/validator.h>
+#include "reflgen_scene_prsm.h"
+#include "scene.h"
+#include "scene_adapter.h"
+extern "C" int32_t prsm_entry(int64_t* result);
+extern "C" int32_t ce_prsm_validate_binding(const uint8_t* symbol, uint32_t length, const uint8_t* digest) noexcept
+{
+    uint32_t count = 0;
+    const auto* entries = @SCENE_TABLE@(&count);
+    const reflgen::prsm::binding_table_view view{entries, count};
+    return reflgen::prsm::validate_binding(&view, 1, symbol, length, digest);
+}
+int main()
+{
+    scene::Entity entity;
+    scene_fixture::entity = &entity;
+    int64_t value = 0;
+    // Position (1,2,3) -> (2,2,6) -> Move (+3,0,0) = (5,2,6), sum 13; dim then bright.
+    if (prsm_entry(&value) != 0 || value != 111) return 1;
+    if (entity.position.x != 5.0f || entity.position.y != 2.0f || entity.position.z != 6.0f) return 2;
+    if (entity.shade != thirdparty::shade::bright) return 3;
+    // A native enumerator outside the selected cases fails the script's call.
+    entity.position = {1.0f, 2.0f, 3.0f};
+    entity.shade = static_cast<thirdparty::shade>(7);
+    value = 0;
+    if (prsm_entry(&value) == 0) return 4;
+    if (entity.shade != static_cast<thirdparty::shade>(7)) return 5;
+    return 0;
+}

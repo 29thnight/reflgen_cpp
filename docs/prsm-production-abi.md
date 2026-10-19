@@ -28,9 +28,12 @@ production JSON catalogs; compiled native signature/address tables; strict PrSM
 catalog consumption, semantic checking and checked LLVM calls; explicit nominal
 owner ingress; AOT execution through both generated provider paths.
 
+Also implemented: D-042 value records and enumerations (see "Value types").
+
 Not implemented yet: module fingerprint aggregation, general free/static
-functions, direct fields, conversions, strings, enums, records, callbacks,
-handle-valued parameters/results beyond explicit owner ingress, ownership transfer or suspension.
+functions, direct fields, conversions, strings, callbacks, nested or
+non-numeric record fields, handle-valued parameters/results beyond explicit
+owner ingress, ownership transfer or suspension.
 
 The Rust crate under `generator/tests/prsm_abi_rust` is a standalone consumer-side
 contract test. The production consumer lives in PrSM's `compiler/prsm-catalog`;
@@ -160,6 +163,57 @@ implementation is compiled with the project (outside unity files) and
 `ReflgenPrsmCatalog` names the catalog for the PrSM compiler. The generated
 bridge includes only the headers that declare selected types. It cannot be
 combined with `ReflgenInterop`.
+
+### Value types (D-042)
+
+Plain data crosses the boundary as a *value type*: a record of numeric scalars
+(vectors, colors, quaternions) or an enumeration. Consent is an engine-owned
+alias declaration, so third-party headers such as a math library stay
+untouched:
+
+```cpp
+// engine/PrsmValueTypes.h - compiled with the module that selects it
+using Vector3 [[reflgen::interop("prsm"), reflgen::value("creator::Vector3")]] = math::vector3;
+using LightType [[reflgen::interop("prsm"), reflgen::value("creator::LightType")]] = ::LightType;
+```
+
+The alias must carry exactly `interop("prsm")` and `value("Name")`. Selected
+methods can then take a value by value or by `const&`, and return it by value
+or by `const&`. A mutable reference, rvalue reference or pointer is rejected,
+and so is any record or enumeration that no alias selects.
+
+| Kind | Requirements | C wrapper | Script side |
+|---|---|---|---|
+| record | no bases; public, non-bit-field numeric fields (no `bool`); trivially copyable and standard layout (asserted in the bridge) | parameter `const void*`, result `void*`; the bytes are copied with `memcpy`/`bit_cast` | a struct with the same fields, constructible and mutable as a local |
+| enumeration | integer underlying type; every case has a distinct value | `uint32_t` case index in declaration order; the wrapper maps it to the native enumerator | an enum with the same cases |
+
+Records never cross as by-value C aggregates, so the target's aggregate
+lowering is irrelevant. The descriptor still records the native layout: the
+bridge `static_assert`s size, alignment, every field offset, width, signedness
+and every enumerator value against the real declaration. PrSM additionally
+accepts a record only when the layout is the natural C layout of its fields,
+which is the layout of the PrSM struct that represents it.
+
+An index outside the case count fails the call as `INVALID_ARGUMENT`. A native
+result whose enumerator is not one of the selected cases fails as
+`NATIVE_FAILURE`, and the output is left untouched.
+
+ABI identity: a value slot's token is `value:<cpp>` or `enum:<cpp>` in the
+result/parameter fields and in the normalized signature. After the parameter
+types, the descriptor appends each referenced value's full definition, once,
+in first-appearance order (result, then parameters):
+
+- `record`, cpp name, size, align, field count, then name/type/offset per field
+- `enum`, cpp name, underlying type, case count, then name/value per case
+
+A call that uses no value types appends nothing, so every scalar-only
+descriptor (and catalog) is byte-identical to before. The catalog's top-level
+`values` array (present only when non-empty) carries the same definitions plus
+the script names. In v1, values come from the header frontend only; IFC input
+has no alias extraction yet. `tests/prsm/scene.h` is the fixture.
+`check_bridge.ps1` round-trips it and checks the failure statuses and the
+rejections. `check_compiler.ps1` runs `values.prsm` through PrSM, LLVM, the
+bridge and native code.
 
 ## C calling contract
 
@@ -370,7 +424,9 @@ The deterministic UTF-8 JSON has `format: "reflgen.prsm.bindings"`, `version: 1`
 `pointer_width`), `types` (`name`, `cpp_name`) and `callables`. Each callable has
 `name`, `cpp_name`, required nullable `receiver`, `operation`, normalized
 `signature`, `const`, `noexcept`, `effect`, `result`, `params`, `symbol`, and
-`abi_sha256`. It contains no native addresses. PrSM reconstructs the canonical
+`abi_sha256`. A module with value types also has `values` (each `name`,
+`cpp_name`, `kind` and either `size`/`align`/`fields` or `underlying`/`cases`).
+It contains no native addresses. PrSM reconstructs the canonical
 descriptor, recomputes SHA-256 and rejects inconsistent symbols, nominal types,
 properties, duplicates, unknown fields, unsupported versions and targets before
 name lookup. Limits are 16 MiB, 4096 types/calls and 64 parameters per call.

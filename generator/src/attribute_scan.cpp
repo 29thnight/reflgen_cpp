@@ -226,7 +226,7 @@ namespace reflgen::generator
         return declares_attribute(text, "interop") || declares_attribute(text, "lifetime") ||
                declares_attribute(text, "property_get") || declares_attribute(text, "property_set") ||
                declares_attribute(text, "effect") || declares_attribute(text, "owner") ||
-               declares_attribute(text, "receiver");
+               declares_attribute(text, "receiver") || declares_attribute(text, "value");
     }
 
     std::optional<std::size_t> next_token_offset(std::span<const token> tokens, std::size_t offset)

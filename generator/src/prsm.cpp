@@ -10,7 +10,7 @@ namespace reflgen::generator
         bool directive(std::string_view name)
         {
             return name == "interop" || name == "lifetime" || name == "property_get" || name == "property_set" ||
-                   name == "effect" || name == "owner" || name == "receiver";
+                   name == "effect" || name == "owner" || name == "receiver" || name == "value";
         }
 
         std::map<std::string, std::string> policy(const std::vector<attribute_use>& attributes, diagnostics& report)
@@ -121,6 +121,88 @@ namespace reflgen::generator
             return "binding_owner";
         }
 
+        std::string case_table(const std::string& cpp_name)
+        {
+            return "reflgen_prsm_cases_" + hex(cpp_name);
+        }
+
+        // Two's-complement 64-bit image of a canonical decimal, as an unsigned literal.
+        // Comparing through unsigned long long avoids ill-formed negative minimum literals.
+        std::string unsigned_image(const std::string& value)
+        {
+            const bool negative = value.front() == '-';
+            unsigned long long magnitude = std::stoull(negative ? value.substr(1) : value);
+            return std::to_string(negative ? ~magnitude + 1 : magnitude) + "ULL";
+        }
+
+        bool signed_scalar(binding_scalar type)
+        {
+            return type == binding_scalar::int8 || type == binding_scalar::int16 || type == binding_scalar::int32 ||
+                   type == binding_scalar::int64;
+        }
+
+        std::size_t scalar_size(binding_scalar type)
+        {
+            const auto name = binding_scalar_name(type);
+            if (name == "int8" || name == "uint8")
+                return 1;
+            if (name == "int16" || name == "uint16")
+                return 2;
+            if (name == "int64" || name == "uint64" || name == "float64")
+                return 8;
+            return 4;
+        }
+
+        // The native declarations must have exactly the layout and enumerators the
+        // descriptor recorded; otherwise the bridge does not compile.
+        std::string emit_value_contracts(const binding_module& module)
+        {
+            std::string out;
+            bool floats = false;
+            for (const auto& value : module.values())
+            {
+                const auto type = "::" + value.cpp_name;
+                if (value.kind == binding_value_kind::record)
+                {
+                    out += "static_assert(std::is_trivially_copyable_v<" + type + "> && std::is_standard_layout_v<" +
+                           type + ">, \"PrSM value records must be trivially copyable standard-layout types\");\n";
+                    out += "static_assert(sizeof(" + type + ") == " + std::to_string(value.size) + " && alignof(" +
+                           type + ") == " + std::to_string(value.align) + ");\n";
+                    for (const auto& field : value.fields)
+                    {
+                        const auto member = "decltype(" + type + "::" + field.name + ")";
+                        const bool is_float =
+                            field.type == binding_scalar::float32 || field.type == binding_scalar::float64;
+                        floats |= is_float;
+                        out += "static_assert(offsetof(" + type + ", " + field.name +
+                               ") == " + std::to_string(field.offset) + " && sizeof(" + member +
+                               ") == " + std::to_string(scalar_size(field.type)) + " && " +
+                               (is_float ? "std::is_floating_point_v<" + member + ">"
+                                         : "std::is_integral_v<" + member + "> && !std::is_same_v<" + member +
+                                               ", bool> && std::is_signed_v<" + member +
+                                               "> == " + (signed_scalar(field.type) ? "true" : "false")) +
+                               ");\n";
+                    }
+                    continue;
+                }
+                out += "static_assert(std::is_enum_v<" + type + "> && sizeof(" + type +
+                       ") == " + std::to_string(scalar_size(value.underlying)) +
+                       " && std::is_signed_v<std::underlying_type_t<" + type +
+                       ">> == " + (signed_scalar(value.underlying) ? "true" : "false") + ");\n";
+                out += "namespace { constexpr " + type + " " + case_table(value.cpp_name) + "[] = {";
+                for (std::size_t i = 0; i < value.cases.size(); ++i)
+                    out += std::string(i ? ", " : "") + type + "::" + value.cases[i].name;
+                out += "}; }\n";
+                for (const auto& item : value.cases)
+                    out += "static_assert(static_cast<unsigned long long>(static_cast<std::underlying_type_t<" + type +
+                           ">>(" + type + "::" + item.name + ")) == " + unsigned_image(item.value) + ");\n";
+            }
+            if (floats)
+                out += "static_assert(std::numeric_limits<float>::is_iec559 && "
+                       "std::numeric_limits<double>::is_iec559);\n";
+            return out;
+        }
+
         std::string quote(std::string_view text)
         {
             std::string result = "\"";
@@ -136,7 +218,7 @@ namespace reflgen::generator
 
     std::optional<binding_module> lower_prsm(const std::vector<class_model>& declarations, const target_model& target,
                                              const std::string& module, std::vector<binding_source> sources,
-                                             diagnostics& report)
+                                             diagnostics& report, const std::vector<value_model>& values)
     {
         binding_module_input input;
         input.name = module;
@@ -152,6 +234,86 @@ namespace reflgen::generator
                 input.target.triple = std::string(windows_profile);
         }
         input.sources = std::move(sources);
+        const auto source_index = [&](const source_position& position) -> std::optional<std::size_t> {
+            if (input.sources.empty() || input.sources[0].kind != binding_source_kind::header)
+                return std::size_t{0};
+            const auto found = std::find_if(input.sources.begin(), input.sources.end(),
+                                            [&](const auto& s) { return s.name == position.file; });
+            if (found == input.sources.end())
+                return std::nullopt;
+            return static_cast<std::size_t>(found - input.sources.begin());
+        };
+        for (const auto& alias : values)
+        {
+            const auto p = policy(alias.attributes, report);
+            if (p.size() != 2 || !p.contains("interop") || p.at("interop") != "prsm" || !p.contains("value"))
+            {
+                report.error("RG0301", alias.position,
+                             "a PrSM value alias requires exactly interop(\"prsm\") and value(\"Name\"): " +
+                                 alias.alias);
+                continue;
+            }
+            binding_value value;
+            value.cpp_name = alias.target.declaration;
+            value.script_name = p.at("value");
+            const auto source = source_index(alias.position);
+            if (!source)
+            {
+                report.error("RG0301", alias.position, "PrSM value alias source is not a selected input");
+                continue;
+            }
+            value.source = *source;
+            if (alias.target.kind == "record")
+            {
+                value.size = alias.target.size_bytes > 0 ? static_cast<std::uint64_t>(alias.target.size_bytes) : 0;
+                value.align = alias.align_bytes > 0 ? static_cast<std::uint64_t>(alias.align_bytes) : 0;
+                if (alias.has_bases)
+                    report.error("RG0302", alias.position, "a PrSM value record cannot have base classes");
+                for (const auto& field : alias.fields)
+                {
+                    const auto type = scalar(field.type);
+                    if (!field.is_public || field.is_bitfield || field.offset_bytes < 0 || !type ||
+                        *type == binding_scalar::void_ || *type == binding_scalar::boolean)
+                    {
+                        report.error("RG0302", alias.position,
+                                     "PrSM value record fields must be public, non-bit-field numeric scalars: " +
+                                         value.cpp_name + "::" + field.name);
+                        continue;
+                    }
+                    value.fields.push_back({field.name, *type, static_cast<std::uint64_t>(field.offset_bytes)});
+                }
+            }
+            else if (alias.target.kind == "enum")
+            {
+                value.kind = binding_value_kind::enumeration;
+                const auto underlying = scalar(alias.underlying);
+                if (!underlying || *underlying == binding_scalar::void_ || *underlying == binding_scalar::boolean)
+                    report.error("RG0302", alias.position, "unsupported PrSM value enumeration underlying type");
+                else
+                    value.underlying = *underlying;
+                for (const auto& item : alias.cases)
+                    value.cases.push_back({item.name, item.value});
+            }
+            else
+            {
+                report.error("RG0302", alias.position,
+                             "a PrSM value alias must name a record or an enumeration: " + alias.alias);
+                continue;
+            }
+            input.values.push_back(std::move(value));
+        }
+        // A value slot is a selected value by value or const lvalue reference; never a
+        // mutable reference, rvalue reference or pointer.
+        const auto value_slot = [&](const declaration_type& type) -> std::string {
+            const declaration_type* target = &type;
+            if (type.kind == "lvalue_reference" && type.pointee && type.pointee->is_const)
+                target = type.pointee.get();
+            if ((target->kind != "record" && target->kind != "enum") || target->is_volatile)
+                return {};
+            const auto found = std::find_if(input.values.begin(), input.values.end(),
+                                            [&](const binding_value& v) { return v.cpp_name == target->declaration; });
+            return found == input.values.end() ? std::string() : found->cpp_name;
+        };
         for (const auto& type : declarations)
         {
             const auto type_policy = policy(type.attributes, report);
@@ -253,7 +415,9 @@ namespace reflgen::generator
                 call.is_const = method.is_const;
                 call.is_noexcept = method.exception_specification != "none";
                 call.symbol = "ce_prsm_bind_" + hex(module) + "_" + hex(type.qualified_name) + "_" + hex(method.name);
-                const auto result = scalar(method.return_type);
+                call.result_value = value_slot(method.return_type);
+                const auto result = call.result_value.empty() ? scalar(method.return_type)
+                                                              : std::optional(binding_scalar::void_);
                 if (!result)
                 {
                     report.error("RG0302", method.position, "unsupported PrSM return type");
@@ -261,17 +425,25 @@ namespace reflgen::generator
                 }
                 call.result = *result;
                 call.native_result = method.return_type.canonical_spelling;
+                bool any_value = false;
+                std::vector<std::string> parameter_values;
                 for (const auto& parameter : method.parameter_declarations)
                 {
-                    const auto value = scalar(parameter.type);
+                    const auto slot = value_slot(parameter.type);
+                    // A value slot's scalar entry is a placeholder; the slot token comes from the value.
+                    const auto value = slot.empty() ? scalar(parameter.type) : std::optional(binding_scalar::int32);
                     if (!value || *value == binding_scalar::void_)
                         report.error("RG0302", parameter.position, "unsupported PrSM parameter type");
                     else
                     {
+                        any_value |= !slot.empty();
                         call.parameters.push_back(*value);
+                        parameter_values.push_back(slot);
                         call.native_parameters.push_back(parameter.type.canonical_spelling);
                     }
                 }
+                if (any_value)
+                    call.parameter_values = std::move(parameter_values);
                 if (p.contains("property_get") && p.contains("property_set"))
                     report.error("RG0301", method.position, "a method cannot be both getter and setter");
                 if (p.contains("property_get"))
@@ -294,10 +466,13 @@ namespace reflgen::generator
                     else
                         report.error("RG0301", method.position, "unknown PrSM effect");
                 }
-                // Shared normalized signature: fixed scalar tokens, no frontend spelling/aliases.
-                call.cpp_signature = binding_scalar_name(call.result) + "(";
+                // Shared normalized signature: fixed scalar/value tokens, no frontend spelling/aliases.
+                call.cpp_signature = binding_slot_token(input, call.result, call.result_value) + "(";
                 for (std::size_t i = 0; i < call.parameters.size(); ++i)
-                    call.cpp_signature += (i ? "," : "") + binding_scalar_name(call.parameters[i]);
+                    call.cpp_signature +=
+                        (i ? "," : "") +
+                        binding_slot_token(input, call.parameters[i],
+                                           call.parameter_values.empty() ? std::string() : call.parameter_values[i]);
                 call.cpp_signature += ")";
                 if (call.is_const)
                     call.cpp_signature += " const";
@@ -307,21 +482,24 @@ namespace reflgen::generator
             }
         }
         // The generated bridge includes only the inputs that declare selected
-        // types, not every reflected header of a large discovering module.
-        if (!report.has_errors() && !input.types.empty() && !input.sources.empty() &&
+        // types or value aliases, not every reflected header of a large discovering module.
+        if (!report.has_errors() && (!input.types.empty() || !input.values.empty()) && !input.sources.empty() &&
             input.sources[0].kind == binding_source_kind::header)
         {
             std::vector<binding_source> used;
             std::vector<std::size_t> remap(input.sources.size(), input.sources.size());
-            for (auto& type : input.types)
-            {
-                if (remap[type.source] == input.sources.size())
+            const auto keep = [&](std::size_t& source) {
+                if (remap[source] == input.sources.size())
                 {
-                    remap[type.source] = used.size();
-                    used.push_back(input.sources[type.source]);
+                    remap[source] = used.size();
+                    used.push_back(input.sources[source]);
                 }
-                type.source = remap[type.source];
-            }
+                source = remap[source];
+            };
+            for (auto& type : input.types)
+                keep(type.source);
+            for (auto& value : input.values)
+                keep(value.source);
             input.sources = std::move(used);
         }
         return build_binding_module(std::move(input), report);
@@ -364,6 +542,9 @@ namespace reflgen::generator
             output.source += source.kind == binding_source_kind::header ? "#include " + quote(source.name) + "\n"
                                                                         : "import " + source.name + ";\n";
         output.source += "#include " + quote(adapter_header) + "\n";
+        if (!module.values().empty())
+            output.source += "#include <array>\n#include <bit>\n#include <cstddef>\n#include <cstring>\n" +
+                             emit_value_contracts(module);
         output.abi_table = "# reflgen.prsm.calls\t1\n";
         for (const auto& contract : module.callables())
         {
@@ -403,17 +584,47 @@ namespace reflgen::generator
                                     contract.abi_descriptor + "\n";
                 continue;
             }
-            std::string args = "uint64_t receiver", native_args, invocation;
+            // Value slots (D-042): records cross as pointers to their exact native bytes,
+            // enumerations as a uint32 case index. Both are checked before the access guard.
+            std::string args = "uint64_t receiver", native_args, invocation, checks, conversions;
             for (std::size_t i = 0; i < call.parameters.size(); ++i)
             {
                 const auto name = "arg" + std::to_string(i);
-                args += ", " + c_type(call.parameters[i]) + " " + name;
+                const auto* value =
+                    call.parameter_values.empty() ? nullptr : module.value(call.parameter_values[i]);
                 native_args += (i ? ", " : "") + (call.native_parameters.empty() ? c_type(call.parameters[i], true)
                                                                                  : call.native_parameters[i]);
-                invocation +=
-                    (i ? ", " : "") + (call.parameters[i] == binding_scalar::boolean ? "(" + name + " != 0)" : name);
+                if (value == nullptr)
+                {
+                    args += ", " + c_type(call.parameters[i]) + " " + name;
+                    invocation += (i ? ", " : "") +
+                                  (call.parameters[i] == binding_scalar::boolean ? "(" + name + " != 0)" : name);
+                    continue;
+                }
+                const auto type = "::" + value->cpp_name;
+                if (value->kind == binding_value_kind::record)
+                {
+                    args += ", const void* " + name;
+                    checks += "    if (!" + name + ") return REFLGEN_PRSM_BINDING_INVALID_ARGUMENT;\n";
+                    conversions += "        std::array<unsigned char, sizeof(" + type + ")> raw" + std::to_string(i) +
+                                   ";\n        std::memcpy(raw" + std::to_string(i) + ".data(), " + name + ", raw" +
+                                   std::to_string(i) + ".size());\n        const auto value" + std::to_string(i) +
+                                   " = std::bit_cast<" + type + ">(raw" + std::to_string(i) + ");\n";
+                    invocation += (i ? ", " : "") + std::string("value") + std::to_string(i);
+                }
+                else
+                {
+                    args += ", uint32_t " + name;
+                    checks += "    if (" + name + " >= " + std::to_string(value->cases.size()) +
+                              "u) return REFLGEN_PRSM_BINDING_INVALID_ARGUMENT;\n";
+                    invocation += (i ? ", " : "") + case_table(value->cpp_name) + "[" + name + "]";
+                }
             }
-            if (call.result != binding_scalar::void_)
+            const auto* result_value = call.result_value.empty() ? nullptr : module.value(call.result_value);
+            if (result_value != nullptr)
+                args += result_value->kind == binding_value_kind::record ? ", void* out_value"
+                                                                         : ", uint32_t* out_value";
+            else if (call.result != binding_scalar::void_)
                 args += ", " + c_type(call.result) + "* out_value";
             const auto declaration = "int32_t REFLGEN_PRSM_BINDING_CDECL " + call.symbol + "(" + args + ")";
             output.header += "REFLGEN_PRSM_API " + declaration + " REFLGEN_PRSM_NOEXCEPT;\n";
@@ -429,8 +640,9 @@ namespace reflgen::generator
                 output.source += "static_assert(sizeof(float) == 4 && sizeof(double) == 8 && "
                                  "std::numeric_limits<float>::is_iec559 && std::numeric_limits<double>::is_iec559);\n";
             output.source += "extern \"C\" " + declaration + " noexcept\n{\n";
-            if (call.result != binding_scalar::void_)
+            if (call.result != binding_scalar::void_ || result_value != nullptr)
                 output.source += "    if (!out_value) return REFLGEN_PRSM_BINDING_INVALID_ARGUMENT;\n";
+            output.source += checks;
             output.source += "    try {\n        ::reflgen::prsm::" + access_template(call.receiver_kind) + "<::" + call.receiver +
                              "> access(receiver);\n"
                              "        static_assert(std::is_nothrow_destructible_v<decltype(access)>);\n"
@@ -441,16 +653,37 @@ namespace reflgen::generator
                              "*>);\n"
                              "        const auto status = access.status();\n        if (status != 0) return status;\n"
                              "        auto* object = access.get();\n        if (!object) return "
-                             "REFLGEN_PRSM_BINDING_INVALID_HANDLE;\n        ";
-            if (call.result != binding_scalar::void_)
-                output.source += "const auto result = ";
-            output.source += "object->" + call.cpp_name + "(" + invocation + ");\n";
-            if (call.result != binding_scalar::void_)
-                output.source +=
-                    "        *out_value = " +
-                    std::string(call.result == binding_scalar::boolean ? "static_cast<uint8_t>(result ? 1 : 0)"
-                                                                       : "result") +
-                    ";\n";
+                             "REFLGEN_PRSM_BINDING_INVALID_HANDLE;\n" +
+                             conversions + "        ";
+            if (result_value != nullptr)
+            {
+                const auto type = "::" + result_value->cpp_name;
+                if (result_value->kind == binding_value_kind::record)
+                    output.source += "const auto& result = object->" + call.cpp_name + "(" + invocation +
+                                     ");\n        static_assert(std::is_same_v<std::remove_cvref_t<decltype(result)>, " +
+                                     type + ">);\n        std::memcpy(out_value, &result, sizeof(" + type + "));\n";
+                else
+                    // An enumerator outside the selected cases is a failed native result conversion.
+                    output.source += "const " + type + " result = object->" + call.cpp_name + "(" + invocation +
+                                     ");\n        uint32_t index = 0;\n        while (index < " +
+                                     std::to_string(result_value->cases.size()) + "u && " +
+                                     case_table(result_value->cpp_name) +
+                                     "[index] != result) ++index;\n        if (index == " +
+                                     std::to_string(result_value->cases.size()) +
+                                     "u) return REFLGEN_PRSM_BINDING_NATIVE_FAILURE;\n        *out_value = index;\n";
+            }
+            else
+            {
+                if (call.result != binding_scalar::void_)
+                    output.source += "const auto result = ";
+                output.source += "object->" + call.cpp_name + "(" + invocation + ");\n";
+                if (call.result != binding_scalar::void_)
+                    output.source +=
+                        "        *out_value = " +
+                        std::string(call.result == binding_scalar::boolean ? "static_cast<uint8_t>(result ? 1 : 0)"
+                                                                           : "result") +
+                        ";\n";
+            }
             output.source += "        return REFLGEN_PRSM_BINDING_OK;\n    } catch (...) { return "
                              "REFLGEN_PRSM_BINDING_NATIVE_FAILURE; }\n}\n";
             output.abi_table += call.symbol + "\t" + call.receiver + "\t" + call.script_name + "\t" +

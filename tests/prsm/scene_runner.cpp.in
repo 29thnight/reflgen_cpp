@@ -28,6 +28,29 @@ int main()
     if (@ENTITY_GET@(handle, &enabled) != 0 || enabled != 1) return 7;
     if (@ENTITY_SET@(handle, 0) != 0 || entity.IsEnabled()) return 8;
 
+    // Value records cross as their exact native bytes through pointers (D-042).
+    thirdparty::vec3 position{};
+    if (@POSITION_GET@(handle, &position) != 0 || position.x != 1.0f || position.y != 2.0f || position.z != 3.0f)
+        return 20;
+    const thirdparty::vec3 moved{4.0f, 5.0f, 6.0f};
+    if (@POSITION_SET@(handle, &moved) != 0 || entity.position.z != 6.0f) return 21;
+    if (@POSITION_SET@(handle, nullptr) != REFLGEN_PRSM_BINDING_INVALID_ARGUMENT) return 22;
+    float sum = 0.0f;
+    const thirdparty::vec3 delta{1.0f, 1.0f, 1.0f};
+    if (@MOVE@(handle, &delta, 2.0f, &sum) != 0 || sum != 21.0f || entity.position.x != 6.0f) return 23;
+    // Enumerations cross as case indices in declaration order: dim=0, off=1, bright=2.
+    uint32_t shade = 99;
+    if (@SHADE_GET@(handle, &shade) != 0 || shade != 0) return 24;
+    if (@SHADE_SET@(handle, 2) != 0 || entity.shade != thirdparty::shade::bright) return 25;
+    if (@SHADE_SET@(handle, 1) != 0 || entity.shade != thirdparty::shade::off) return 26;
+    if (@SHADE_SET@(handle, 3) != REFLGEN_PRSM_BINDING_INVALID_ARGUMENT || entity.shade != thirdparty::shade::off)
+        return 27;
+    // A native value outside the selected cases is a failed result conversion; output untouched.
+    entity.shade = static_cast<thirdparty::shade>(7);
+    shade = 99;
+    if (@SHADE_GET@(handle, &shade) != REFLGEN_PRSM_BINDING_NATIVE_FAILURE || shade != 99) return 28;
+    entity.shade = thirdparty::shade::dim;
+
     // Removing the component makes the same entity handle fail closed for it only.
     entity.light = nullptr;
     intensity = -1.0f;

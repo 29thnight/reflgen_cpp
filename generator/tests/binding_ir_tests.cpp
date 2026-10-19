@@ -257,6 +257,70 @@ namespace
         check_equal(binding_receiver_validation(binding_receiver::entity), std::string("entity_generation"));
     });
 
+    binding_module_input with_values()
+    {
+        auto input = example();
+        binding_value vector;
+        vector.cpp_name = "math::vec2";
+        vector.script_name = "Engine::Vec2";
+        vector.size = 8;
+        vector.align = 4;
+        vector.fields = {{"x", binding_scalar::float32, 0}, {"y", binding_scalar::float32, 4}};
+        binding_value mode;
+        mode.cpp_name = "engine::Mode";
+        mode.script_name = "Engine::Mode";
+        mode.kind = binding_value_kind::enumeration;
+        mode.underlying = binding_scalar::int8;
+        mode.cases = {{"Low", "-128"}, {"High", "127"}};
+        input.values = {vector, mode};
+        auto& call = input.callables.front();
+        call.operation = binding_operation::method;
+        call.cpp_name = "Place";
+        call.script_name = "Place";
+        call.effect = binding_effect::write;
+        call.result = binding_scalar::void_;
+        call.result_value = "engine::Mode";
+        call.parameters = {binding_scalar::int32, binding_scalar::float32};
+        call.parameter_values = {"math::vec2", ""};
+        // Value slots have no default C spelling; the exact native one is required.
+        call.native_result = "engine::Mode";
+        call.native_parameters = {"const math::vec2 &", "float"};
+        return input;
+    }
+
+    const test value_types("PrSM IR: value records and enumerations are validated and fully described", [] {
+        const auto module = valid(with_values());
+        const auto& call = module.callables().front();
+        check_equal(binding_slot_token(module, call.declaration.result, call.declaration.result_value),
+                    std::string("enum:engine::Mode"));
+        // Result first, then parameters; each definition once, after the parameter types.
+        check(call.abi_descriptor.find("17:enum:engine::Mode;1:2;16:value:math::vec2;7:float32;4:enum;12:engine::Mode;"
+                                       "4:int8;1:2;3:Low;4:-128;4:High;3:127;6:record;10:math::vec2;1:8;1:4;1:2;") !=
+              std::string::npos);
+        // A scalar-only call keeps its exact descriptor bytes in a module that also has values.
+        auto scalar = example();
+        scalar.values = with_values().values;
+        check_equal(valid(scalar).callables().front().abi_descriptor,
+                    valid(example()).callables().front().abi_descriptor);
+
+        const auto broken = [](auto mutate) {
+            auto input = with_values();
+            mutate(input);
+            diagnostics report;
+            check(!build_binding_module(std::move(input), report).has_value());
+        };
+        broken([](auto& in) { in.values[0].fields[1].offset = 2; });                     // misaligned field
+        broken([](auto& in) { in.values[0].fields[1].offset = 6; });                     // past the record
+        broken([](auto& in) { in.values[0].fields[0].type = binding_scalar::boolean; }); // bool field
+        broken([](auto& in) { in.values[0].align = 3; });                                // not a power of two
+        broken([](auto& in) { in.values[1].cases[0].value = "-129"; });                  // outside int8
+        broken([](auto& in) { in.values[1].cases[1].value = "-128"; });                  // duplicate value
+        broken([](auto& in) { in.values[1].cases[1].value = "0127"; });                  // not canonical
+        broken([](auto& in) { in.values[1].underlying = binding_scalar::float32; });     // non-integral
+        broken([](auto& in) { in.values[1].script_name = "Engine::Actor"; });            // collides with a type
+        broken([](auto& in) { in.callables.front().parameter_values = {"math::vec3", ""}; }); // unknown value
+    });
+
     const test common_vectors("PrSM ABI: independently encoded cross-language vectors", [] {
         std::ifstream input(REFLGEN_PRSM_VECTOR_FILE, std::ios::binary);
         require(input.good(), "cannot read PrSM ABI vectors");

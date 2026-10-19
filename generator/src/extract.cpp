@@ -197,7 +197,7 @@ namespace reflgen::generator
             return attribute.scope == library_scope &&
                    (attribute.name == "interop" || attribute.name == "lifetime" || attribute.name == "property_get" ||
                     attribute.name == "property_set" || attribute.name == "effect" || attribute.name == "owner" ||
-                    attribute.name == "receiver");
+                    attribute.name == "receiver" || attribute.name == "value");
         }
 
         bool is_directive(const scanned_attribute& attribute)
@@ -312,6 +312,8 @@ namespace reflgen::generator
             std::vector<header_model> take() { return std::move(models_); }
 
             std::vector<class_model> take_exports() { return std::move(exports_); }
+
+            std::vector<value_model> take_values() { return std::move(values_); }
 
           private:
             header_model* model_for(CXCursor cursor)
@@ -460,6 +462,14 @@ namespace reflgen::generator
                     {
                         visit_scope(cursor);
                     }
+                    else if (kind == CXCursor_TypeAliasDecl && collect_interop_ && model_for(cursor) != nullptr)
+                    {
+                        const std::vector<attribute_group> groups = function_groups(cursor);
+                        if (find_directive(groups, "value") != nullptr)
+                        {
+                            visit_value_alias(cursor, groups);
+                        }
+                    }
                     else if (clang_isCursorDefinition(cursor) && model_for(cursor) != nullptr)
                     {
                         visit_definition(cursor, kind);
@@ -474,7 +484,7 @@ namespace reflgen::generator
                        find_directive(groups, "property_get") != nullptr ||
                        find_directive(groups, "property_set") != nullptr ||
                        find_directive(groups, "effect") != nullptr || find_directive(groups, "owner") != nullptr ||
-                       find_directive(groups, "receiver") != nullptr;
+                       find_directive(groups, "receiver") != nullptr || find_directive(groups, "value") != nullptr;
             }
 
             void interop_error(CXCursor cursor, const std::string& message)
@@ -510,6 +520,10 @@ namespace reflgen::generator
                                                             clang_getCursorKind(lexical_parent) == CXCursor_StructDecl))
                     {
                         // 메서드의 public/static/cv/type 조건은 emitter 가 진단한다.
+                    }
+                    else if (kind == CXCursor_TypeAliasDecl && find_directive(groups, "value") != nullptr)
+                    {
+                        // 값 타입 동의(using V [[reflgen::value(...)]] = T). 대상 조건은 emitter 가 진단한다.
                     }
                     else
                     {
@@ -744,6 +758,60 @@ namespace reflgen::generator
                     }
                 }
                 exports_.push_back(std::move(result));
+            }
+
+            // using V [[reflgen::interop("prsm"), reflgen::value("S")]] = T; — 값 타입 동의 하나.
+            // 대상의 배치(필드·오프셋)나 열거자는 여기서 사실로만 읽고, 허용 여부는 lower_prsm 이 정한다.
+            void visit_value_alias(CXCursor cursor, const std::vector<attribute_group>& groups)
+            {
+                const qualifier_lookup no_lookup = [](std::string_view) { return std::string(); };
+                std::vector<std::string> external;
+                value_model value;
+                value.alias = type_name_of(cursor);
+                value.position = position_of(clang_getCursorLocation(cursor));
+                value.attributes = uses_of(groups, source_of(cursor), no_lookup, external, true);
+                note_declaration(cursor, value.position);
+                const CXType target = clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor));
+                value.target = describe_type(target);
+                value.align_bytes = std::max(-1LL, clang_Type_getAlignOf(target));
+                const CXCursor declaration = clang_getTypeDeclaration(target);
+                if (target.kind == CXType_Record)
+                {
+                    visit_children(declaration, [&](CXCursor child, CXCursor) {
+                        if (clang_getCursorKind(child) == CXCursor_CXXBaseSpecifier)
+                        {
+                            value.has_bases = true;
+                        }
+                        else if (clang_getCursorKind(child) == CXCursor_FieldDecl)
+                        {
+                            value_field_model field;
+                            field.name = cursor_spelling(child);
+                            field.type = describe_type(clang_getCursorType(child));
+                            const long long bits = clang_Cursor_getOffsetOfField(child);
+                            field.offset_bytes = bits >= 0 && bits % 8 == 0 ? bits / 8 : -1;
+                            field.is_public = clang_getCXXAccessSpecifier(child) == CX_CXXPublic;
+                            field.is_bitfield = clang_Cursor_isBitField(child) != 0;
+                            value.fields.push_back(std::move(field));
+                        }
+                        return CXChildVisit_Continue;
+                    });
+                }
+                else if (target.kind == CXType_Enum)
+                {
+                    value.underlying = describe_type(clang_getEnumDeclIntegerType(declaration));
+                    const bool is_signed = value.underlying.kind == "signed_integer";
+                    visit_children(declaration, [&](CXCursor child, CXCursor) {
+                        if (clang_getCursorKind(child) == CXCursor_EnumConstantDecl)
+                        {
+                            value.cases.push_back(
+                                {cursor_spelling(child),
+                                 is_signed ? std::to_string(clang_getEnumConstantDeclValue(child))
+                                           : std::to_string(clang_getEnumConstantDeclUnsignedValue(child))});
+                        }
+                        return CXChildVisit_Continue;
+                    });
+                }
+                values_.push_back(std::move(value));
             }
 
             void visit_definition(CXCursor cursor, CXCursorKind kind)
@@ -1186,6 +1254,7 @@ namespace reflgen::generator
             std::vector<declaration_extent> extents_;
             bool collect_interop_ = false;
             std::vector<class_model> exports_;
+            std::vector<value_model> values_;
             std::vector<declaration_extent> macro_expansions_;
         };
 
@@ -1392,7 +1461,7 @@ namespace reflgen::generator
         };
         extract_result result{walker.take(), included_files(unit.get()),
                               collect_attribute_catalog(unit.get(), scopes, declares), target_of(unit.get()),
-                              walker.take_exports()};
+                              walker.take_exports(), walker.take_values()};
         // 메모리에만 있는 주 파일은 디스크에 없다. 이 실행의 출력이 의존에 끼면 빌드 도구가 순환 의존으로 멈춘다.
         std::set<std::string> outputs = {main_path};
         for (const std::string& header : options.headers)

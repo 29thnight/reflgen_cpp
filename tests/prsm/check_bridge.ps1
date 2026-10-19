@@ -65,12 +65,19 @@ if (-not $sceneSchema.Contains('field<&T::intensity_>') -or $sceneSchema -match 
     throw 'PrSM binding directives leaked into the reflection schema'
 }
 $sceneTable = @(Get-Content (Join-Path $sceneDir 'reflgen_scene_prsm.abi.tsv') | Where-Object { -not $_.StartsWith('#') })
-if ($sceneTable.Count -ne 6 -or ($sceneTable -join "`n").Contains('Hidden')) { throw 'wrong entity/component binding surface' }
+if ($sceneTable.Count -ne 11 -or ($sceneTable -join "`n").Contains('Hidden')) { throw 'wrong entity/component binding surface' }
+# Value types (D-042): the descriptor carries each referenced value's full definition.
+if (-not ($sceneTable -join "`n").Contains('6:record;16:thirdparty::vec3;2:12;1:4;1:3;1:x;7:float32;1:0;') -or
+    -not ($sceneTable -join "`n").Contains('4:enum;17:thirdparty::shade;5:int32;1:3;3:dim;1:4;3:off;2:-1;6:bright;1:9;')) {
+    throw 'value type definitions missing from ABI descriptors'
+}
 if (-not ($sceneTable -join "`n").Contains('34:entity_generation_component_lookup;') -or
     -not ($sceneTable -join "`n").Contains('17:entity_generation;')) { throw 'receiver kind missing from ABI descriptors' }
 $sceneCatalog = Get-Content -Raw (Join-Path $sceneDir 'reflgen_scene_prsm.bindings.json') | ConvertFrom-Json
 $kinds = @($sceneCatalog.types | ForEach-Object { $_.name + '=' + $_.receiver }) -join ','
 if ($kinds -ne 'scene::Entity=entity,scene::LightComponent=component') { throw "unexpected catalog receiver kinds: $kinds" }
+$values = @($sceneCatalog.values | ForEach-Object { $_.name + '=' + $_.cpp_name + ':' + $_.kind }) -join ','
+if ($values -ne 'scene::Shade=thirdparty::shade:enum,scene::Vector3=thirdparty::vec3:record') { throw "unexpected catalog values: $values" }
 $sceneBridge = [System.IO.File]::ReadAllText((Join-Path $sceneDir 'reflgen_scene_prsm.cpp'))
 if (-not $sceneBridge.Contains('component_access<::scene::LightComponent>') -or $sceneBridge.Contains('binding_access<')) {
     throw 'component receivers must use the generic component adapter'
@@ -87,6 +94,11 @@ $sceneSymbols = [ordered]@{
     '@LIGHT_SET@' = SceneSymbol 'scene::LightComponent' 'SetIntensity'
     '@ENTITY_GET@' = SceneSymbol 'scene::Entity' 'IsEnabled'
     '@ENTITY_SET@' = SceneSymbol 'scene::Entity' 'SetEnabled'
+    '@POSITION_GET@' = SceneSymbol 'scene::Entity' 'GetPosition'
+    '@POSITION_SET@' = SceneSymbol 'scene::Entity' 'SetPosition'
+    '@SHADE_GET@' = SceneSymbol 'scene::Entity' 'GetShade'
+    '@SHADE_SET@' = SceneSymbol 'scene::Entity' 'SetShade'
+    '@MOVE@' = SceneSymbol 'scene::Entity' 'Move'
 }
 foreach ($key in $sceneSymbols.Keys) { $sceneRunner = $sceneRunner.Replace($key, $sceneSymbols[$key]) }
 [System.IO.File]::WriteAllText((Join-Path $sceneDir 'scene_runner.cpp'), $sceneRunner, [System.Text.UTF8Encoding]::new($false))
@@ -94,6 +106,23 @@ Run $Compiler ($common + @("/I$sceneDir", '/c', (Join-Path $sceneDir 'reflgen_sc
 Run $Compiler ($common + @("/I$sceneDir", '/c', (Join-Path $sceneDir 'scene_runner.cpp'), "/Fo$sceneDir/runner.obj"))
 Run $Compiler @('/nologo', "$sceneDir/bridge.obj", "$sceneDir/runner.obj", "/Fe$sceneDir/runner.exe", '/link', "/IMPLIB:$sceneDir/runner.lib")
 Run (Join-Path $sceneDir 'runner.exe') @()
+# Invalid value declarations are rejected before any output (D-042).
+$owner = "class [[reflgen::interop(`"prsm`"), reflgen::lifetime(`"borrowed`")]] Holder { public: "
+$badValues = [ordered]@{
+    'value-no-interop' = @("struct rec { float x; }; using Rec [[reflgen::value(`"bad::Rec`")]] = rec;", 'requires exactly interop')
+    'value-bool-field' = @("struct rec { bool on; }; using Rec [[reflgen::interop(`"prsm`"), reflgen::value(`"bad::Rec`")]] = rec;", 'numeric scalars')
+    'value-duplicate-case' = @("enum class e { a = 1, b = 1 }; using E [[reflgen::interop(`"prsm`"), reflgen::value(`"bad::E`")]] = e;", 'distinct value')
+    'value-mutable-ref' = @("struct rec { float x; }; using Rec [[reflgen::interop(`"prsm`"), reflgen::value(`"bad::Rec`")]] = rec; $owner[[reflgen::interop(`"prsm`")]] void Set(rec& v); };", 'unsupported PrSM parameter type')
+}
+foreach ($case in $badValues.Keys) {
+    $input = Join-Path $sceneDir "$case.h"
+    [System.IO.File]::WriteAllText($input, $badValues[$case][0] + "`n", [System.Text.UTF8Encoding]::new($false))
+    $out = Join-Path $sceneDir "bad-$case"
+    $message = (& $HeaderGenerator --module bad --output $out --prsm --prsm-adapter-header $sceneAdapter $input -- -std=c++20 --target=x86_64-pc-windows-msvc 2>&1) -join "`n"
+    if ($LASTEXITCODE -eq 0 -or $message -notmatch $badValues[$case][1] -or (Test-Path (Join-Path $out 'reflgen_bad_prsm.cpp'))) {
+        throw "$case was not rejected before output: $message"
+    }
+}
 $unknownKind = Join-Path $sceneDir 'unknown_kind.h'
 [System.IO.File]::WriteAllText($unknownKind, "class [[reflgen::interop(`"prsm`"), reflgen::lifetime(`"borrowed`"), reflgen::receiver(`"actor`")]] Bad { public: [[reflgen::interop(`"prsm`")]] int Get() const; };`n", [System.Text.UTF8Encoding]::new($false))
 $rejected = (& $HeaderGenerator --module bad --output (Join-Path $sceneDir 'bad') --prsm --prsm-adapter-header $sceneAdapter $unknownKind -- -std=c++20 --target=x86_64-pc-windows-msvc 2>&1) -join "`n"

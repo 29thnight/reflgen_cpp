@@ -4,9 +4,10 @@
 namespace reflgen::generator
 {
     // Shared semantic lowering for both libclang and IFC declaration facts.
+    // `values` are the reflgen::value alias declarations (header frontend only in v1).
     std::optional<binding_module> lower_prsm(const std::vector<class_model>& declarations, const target_model& target,
                                              const std::string& module, std::vector<binding_source> sources,
-                                             diagnostics& report);
+                                             diagnostics& report, const std::vector<value_model>& values = {});
     struct prsm_output
     {
         std::string header;

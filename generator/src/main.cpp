@@ -588,7 +588,8 @@ namespace
             for (const auto& path : options.headers)
                 sources.push_back({binding_source_kind::header, path});
             if (auto bindings =
-                    lower_prsm(extracted.exports, extracted.target, options.module_name, std::move(sources), report))
+                    lower_prsm(extracted.exports, extracted.target, options.module_name, std::move(sources), report,
+                               extracted.values))
                 prsm = emit_prsm(*bindings, cli->prsm_adapter, report);
         }
         if (cli->interop && !report.has_errors())

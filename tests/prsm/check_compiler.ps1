@@ -81,4 +81,20 @@ foreach ($provider in $providers) {
         if ($LASTEXITCODE -eq 0 -or $diagnostic -notmatch 'E0005') { throw "invalid production $case was accepted: $diagnostic" }
     }
 }
+# D-042 value records and enumerations through PrSM source, LLVM and the generated bridge.
+$sceneDir = Join-Path $Work 'scene'
+$sceneCatalog = Join-Path $sceneDir 'reflgen_scene_prsm.bindings.json'
+$sceneTable = 'ce_prsm_table_' + [Convert]::ToHexString([Text.Encoding]::UTF8.GetBytes('scene')).ToLowerInvariant()
+$valuesHost = [IO.File]::ReadAllText("$PSScriptRoot/values_host.cpp.in").Replace('@SCENE_TABLE@', $sceneTable)
+[IO.File]::WriteAllText("$sceneDir/values_host.cpp", $valuesHost, [Text.UTF8Encoding]::new($false))
+Run $Compiler ($flags + @("/I$sceneDir",'/c',"$sceneDir/values_host.cpp","/Fo$sceneDir/values_host.obj"))
+Run $PrsmCompiler @('build',"$PSScriptRoot/values.prsm",'--bindings',$sceneCatalog,'-o',"$sceneDir/values.obj")
+Run $PrsmCompiler @('emit-ir',"$PSScriptRoot/values.prsm",'--bindings',$sceneCatalog,'-o',"$sceneDir/values.ll")
+# Records cross the adapter by pointer (never as a by-value C aggregate), enums as an i32 index.
+$valuesIr = [IO.File]::ReadAllText("$sceneDir/values.ll")
+if (-not $valuesIr.Contains('_4d6f7665(i64, ptr, float, ptr)') -or -not $valuesIr.Contains('_5365745368616465(i64, i32)')) {
+    throw 'value types did not use the pointer/index adapter ABI'
+}
+Run $Compiler @('/nologo',"$sceneDir/values_host.obj","$sceneDir/bridge.obj","$sceneDir/values.obj","/Fe$sceneDir/values.exe",'/link',"/IMPLIB:$sceneDir/values.lib")
+Run "$sceneDir/values.exe" @()
 Write-Host 'PrSM production catalog -> type checking -> LLVM -> native calls passed'

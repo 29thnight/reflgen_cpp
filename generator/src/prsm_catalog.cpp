@@ -36,7 +36,39 @@ namespace reflgen::generator
             out += std::string(i ? "," : "") + "{\"name\":" + quoted(module.types()[i].script_name) +
                    ",\"cpp_name\":" + quoted(module.types()[i].cpp_name) +
                    ",\"receiver\":" + quoted(binding_receiver_name(module.types()[i].receiver)) + "}";
-        out += "],\"callables\":[";
+        out += "]";
+        // Value types (D-042). The key is absent for scalar-only modules, so their
+        // catalog bytes are unchanged and older consumers keep accepting them.
+        if (!module.values().empty())
+        {
+            out += ",\"values\":[";
+            for (std::size_t i = 0; i < module.values().size(); ++i)
+            {
+                const auto& v = module.values()[i];
+                out += std::string(i ? "," : "") + "{\"name\":" + quoted(v.script_name) +
+                       ",\"cpp_name\":" + quoted(v.cpp_name);
+                if (v.kind == binding_value_kind::record)
+                {
+                    out += ",\"kind\":\"record\",\"size\":" + std::to_string(v.size) +
+                           ",\"align\":" + std::to_string(v.align) + ",\"fields\":[";
+                    for (std::size_t f = 0; f < v.fields.size(); ++f)
+                        out += std::string(f ? "," : "") + "{\"name\":" + quoted(v.fields[f].name) +
+                               ",\"type\":" + quoted(binding_scalar_name(v.fields[f].type)) +
+                               ",\"offset\":" + std::to_string(v.fields[f].offset) + "}";
+                }
+                else
+                {
+                    out += ",\"kind\":\"enum\",\"underlying\":" + quoted(binding_scalar_name(v.underlying)) +
+                           ",\"cases\":[";
+                    for (std::size_t c = 0; c < v.cases.size(); ++c)
+                        out += std::string(c ? "," : "") + "{\"name\":" + quoted(v.cases[c].name) +
+                               ",\"value\":" + quoted(v.cases[c].value) + "}";
+                }
+                out += "]}";
+            }
+            out += "]";
+        }
+        out += ",\"callables\":[";
         for (std::size_t n = 0; n < module.callables().size(); ++n)
         {
             const auto& contract = module.callables()[n];
@@ -53,10 +85,13 @@ namespace reflgen::generator
                    ",\"const\":" + (c.is_const ? "true" : "false") +
                    ",\"noexcept\":" + (c.is_noexcept ? "true" : "false") +
                    ",\"effect\":" + quoted(c.effect == binding_effect::read ? "read" : "write") +
-                   ",\"result\":" + quoted(owner ? "handle:" + c.handle_result : binding_scalar_name(c.result)) +
+                   ",\"result\":" +
+                   quoted(owner ? "handle:" + c.handle_result : binding_slot_token(module, c.result, c.result_value)) +
                    ",\"params\":[";
             for (std::size_t i = 0; i < c.parameters.size(); ++i)
-                out += std::string(i ? "," : "") + quoted(binding_scalar_name(c.parameters[i]));
+                out += std::string(i ? "," : "") +
+                       quoted(binding_slot_token(module, c.parameters[i],
+                                                 c.parameter_values.empty() ? std::string() : c.parameter_values[i]));
             out += "],\"symbol\":" + quoted(c.symbol) + ",\"abi_sha256\":" + quoted(contract.abi_sha256) + "}";
         }
         return out + "]}\n";

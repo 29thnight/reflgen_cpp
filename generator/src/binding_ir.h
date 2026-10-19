@@ -2,6 +2,7 @@
 // Frontend-independent, explicitly selected PrSM contracts. Header/IFC readers
 // must prove declaration facts before building this IR; reflection is not consent.
 #include "diagnostics.h"
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -70,6 +71,40 @@ namespace reflgen::generator
         binding_receiver receiver = binding_receiver::handle;
     };
 
+    // A selected PrSM value type (D-042). Records are trivially copyable,
+    // standard-layout aggregates of numeric scalars passed through pointers in
+    // the C wrapper, never as by-value C aggregates whose lowering is target
+    // specific. Enumerations cross as a uint32 case index in declaration order;
+    // the wrapper maps it to and from the native enumerator value.
+    enum class binding_value_kind
+    {
+        record,
+        enumeration
+    };
+    struct binding_value_field
+    {
+        std::string name;
+        binding_scalar type = binding_scalar::int32;
+        std::uint64_t offset = 0;
+    };
+    struct binding_value_case
+    {
+        std::string name;
+        std::string value; // canonical decimal of the native enumerator value
+    };
+    struct binding_value
+    {
+        std::string cpp_name; // canonical nominal C++ identity of the target type
+        std::string script_name;
+        std::size_t source = 0;
+        binding_value_kind kind = binding_value_kind::record;
+        std::uint64_t size = 0;
+        std::uint64_t align = 0;
+        std::vector<binding_value_field> fields;
+        binding_scalar underlying = binding_scalar::int32;
+        std::vector<binding_value_case> cases;
+    };
+
     struct binding_callable
     {
         std::string receiver; // canonical C++ nominal type; receiver ABI is uint64_t
@@ -89,6 +124,11 @@ namespace reflgen::generator
         std::string handle_result;
         // Receiver kind of `receiver` (or of `handle_result` for owner ingress).
         binding_receiver receiver_kind = binding_receiver::handle;
+        // Value-type slots: the cpp_name of a selected binding_value, or empty for a
+        // scalar slot. `parameter_values` is empty or has one entry per parameter.
+        // A value slot's scalar entry (`result`/`parameters[i]`) is ignored.
+        std::string result_value;
+        std::vector<std::string> parameter_values;
     };
 
     struct binding_module_input
@@ -97,6 +137,7 @@ namespace reflgen::generator
         target_model target;
         std::vector<binding_source> sources;
         std::vector<binding_type> types;
+        std::vector<binding_value> values;
         std::vector<binding_callable> callables;
     };
 
@@ -116,6 +157,8 @@ namespace reflgen::generator
         const target_model& target() const noexcept { return input_.target; }
         const std::vector<binding_source>& sources() const noexcept { return input_.sources; }
         const std::vector<binding_type>& types() const noexcept { return input_.types; }
+        const std::vector<binding_value>& values() const noexcept { return input_.values; }
+        const binding_value* value(const std::string& cpp_name) const noexcept;
         const std::vector<binding_call_contract>& callables() const noexcept { return calls_; }
 
       private:
@@ -127,6 +170,10 @@ namespace reflgen::generator
 
     std::optional<binding_module> build_binding_module(binding_module_input input, diagnostics& report);
     std::string binding_scalar_name(binding_scalar type);
+    // ABI token of one slot: a scalar name, `value:<cpp>` (record) or `enum:<cpp>`.
+    std::string binding_slot_token(const binding_module_input& module, binding_scalar scalar,
+                                   const std::string& value);
+    std::string binding_slot_token(const binding_module& module, binding_scalar scalar, const std::string& value);
     std::string binding_receiver_name(binding_receiver kind);
     // Validation field of the ABI descriptor for one receiver kind.
     std::string binding_receiver_validation(binding_receiver kind);
