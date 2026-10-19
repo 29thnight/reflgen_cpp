@@ -34,7 +34,8 @@ namespace reflgen::generator
             ",\"pointer_width\":64},\"types\":[";
         for (std::size_t i = 0; i < module.types().size(); ++i)
             out += std::string(i ? "," : "") + "{\"name\":" + quoted(module.types()[i].script_name) +
-                   ",\"cpp_name\":" + quoted(module.types()[i].cpp_name) + "}";
+                   ",\"cpp_name\":" + quoted(module.types()[i].cpp_name) +
+                   ",\"receiver\":" + quoted(binding_receiver_name(module.types()[i].receiver)) + "}";
         out += "],\"callables\":[";
         for (std::size_t n = 0; n < module.callables().size(); ++n)
         {

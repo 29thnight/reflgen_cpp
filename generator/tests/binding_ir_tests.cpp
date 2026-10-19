@@ -4,6 +4,7 @@
 #include "reflgen/prsm/binding_abi.h"
 #include <algorithm>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -231,6 +232,29 @@ namespace
             diagnostics report;
             check(!build_binding_module(std::move(bad), report));
         }
+    });
+
+    const test receiver_kinds("PrSM IR: receiver kinds are ABI identity and must match their nominal type", [] {
+        const auto handle = valid(example()).callables().front();
+        check(handle.abi_descriptor.find("30:domain_generation_nominal_type;") != std::string::npos);
+        std::set<std::string> digests{handle.abi_sha256};
+        for (const auto kind : {binding_receiver::entity, binding_receiver::component})
+        {
+            auto input = example();
+            input.types.front().receiver = kind;
+            input.callables.front().receiver_kind = kind;
+            const auto call = valid(input).callables().front();
+            const auto field = binding_receiver_validation(kind);
+            check(call.abi_descriptor.find(std::to_string(field.size()) + ":" + field + ";") != std::string::npos);
+            check(digests.insert(call.abi_sha256).second);
+            // A callable cannot claim another kind than its type declares.
+            auto mismatched = input;
+            mismatched.callables.front().receiver_kind = binding_receiver::handle;
+            diagnostics report;
+            check(!build_binding_module(std::move(mismatched), report));
+        }
+        check_equal(binding_receiver_name(binding_receiver::component), std::string("component"));
+        check_equal(binding_receiver_validation(binding_receiver::entity), std::string("entity_generation"));
     });
 
     const test common_vectors("PrSM ABI: independently encoded cross-language vectors", [] {

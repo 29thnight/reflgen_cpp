@@ -1,0 +1,40 @@
+#include <stdint.h>
+#include "reflgen_scene_prsm.h"
+#include "scene.h"
+#include "scene_adapter.h"
+
+int main()
+{
+    scene::Entity entity;
+    scene::LightComponent light;
+    scene_fixture::entity = &entity;
+    const auto handle = scene_fixture::entity_handle;
+
+    // Component ingress yields the owning entity's handle, never a component handle.
+    uint64_t owner = 0;
+    if (@LIGHT_OWNER@(&owner) != REFLGEN_PRSM_BINDING_INVALID_HANDLE || owner != 0) return 1; // no light yet
+    entity.light = &light;
+    if (@LIGHT_OWNER@(&owner) != 0 || owner != handle) return 2;
+    if (@ENTITY_OWNER@(&owner) != 0 || owner != handle) return 3;
+
+    float intensity = 0.0f;
+    const auto lookups = scene_fixture::lookups;
+    if (@LIGHT_GET@(handle, &intensity) != 0 || intensity != 2.0f) return 4;
+    if (@LIGHT_SET@(handle, 5.5f) != 0 || light.GetIntensity() != 5.5f) return 5;
+    // Every call resolves the component again; nothing is cached between calls.
+    if (scene_fixture::lookups - lookups != 2) return 6;
+
+    uint8_t enabled = 7;
+    if (@ENTITY_GET@(handle, &enabled) != 0 || enabled != 1) return 7;
+    if (@ENTITY_SET@(handle, 0) != 0 || entity.IsEnabled()) return 8;
+
+    // Removing the component makes the same entity handle fail closed for it only.
+    entity.light = nullptr;
+    intensity = -1.0f;
+    if (@LIGHT_GET@(handle, &intensity) != REFLGEN_PRSM_BINDING_INVALID_HANDLE || intensity != -1.0f) return 9;
+    if (@ENTITY_GET@(handle, &enabled) != 0 || enabled != 0) return 10;
+    if (@LIGHT_GET@(handle + 1, &intensity) != REFLGEN_PRSM_BINDING_INVALID_HANDLE) return 11;
+    scene_fixture::context = false;
+    if (@ENTITY_GET@(handle, &enabled) != REFLGEN_PRSM_BINDING_INVALID_CONTEXT) return 12;
+    return 0;
+}

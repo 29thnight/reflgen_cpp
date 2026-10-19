@@ -10,7 +10,7 @@ namespace reflgen::generator
         bool directive(std::string_view name)
         {
             return name == "interop" || name == "lifetime" || name == "property_get" || name == "property_set" ||
-                   name == "effect" || name == "owner";
+                   name == "effect" || name == "owner" || name == "receiver";
         }
 
         std::map<std::string, std::string> policy(const std::vector<attribute_use>& attributes, diagnostics& report)
@@ -93,6 +93,34 @@ namespace reflgen::generator
             return name + "_t";
         }
 
+        // Engine adapter templates for each receiver kind (reflgen/prsm/access.h).
+        std::string access_template(binding_receiver kind)
+        {
+            switch (kind)
+            {
+            case binding_receiver::entity:
+                return "entity_access";
+            case binding_receiver::component:
+                return "component_access";
+            case binding_receiver::handle:
+                break;
+            }
+            return "binding_access";
+        }
+        std::string owner_template(binding_receiver kind)
+        {
+            switch (kind)
+            {
+            case binding_receiver::entity:
+                return "entity_owner";
+            case binding_receiver::component:
+                return "component_owner";
+            case binding_receiver::handle:
+                break;
+            }
+            return "binding_owner";
+        }
+
         std::string quote(std::string_view text)
         {
             std::string result = "\"";
@@ -151,6 +179,17 @@ namespace reflgen::generator
                 type_policy.contains("effect"))
                 report.error("RG0301", type.position,
                              "PrSM type requires borrowed lifetime and an ordinary nonnested class");
+            binding_receiver receiver = binding_receiver::handle;
+            if (type_policy.contains("receiver"))
+            {
+                const auto& kind = type_policy.at("receiver");
+                if (kind == "entity")
+                    receiver = binding_receiver::entity;
+                else if (kind == "component")
+                    receiver = binding_receiver::component;
+                else if (kind != "handle")
+                    report.error("RG0301", type.position, "unknown PrSM receiver kind: " + kind);
+            }
             std::size_t source = 0;
             if (!input.sources.empty() && input.sources[0].kind == binding_source_kind::header)
             {
@@ -161,7 +200,7 @@ namespace reflgen::generator
                 else
                     source = static_cast<std::size_t>(found - input.sources.begin());
             }
-            input.types.push_back({type.qualified_name, type.qualified_name, source});
+            input.types.push_back({type.qualified_name, type.qualified_name, source, receiver});
             if (type_policy.contains("owner"))
             {
                 binding_callable owner;
@@ -174,6 +213,7 @@ namespace reflgen::generator
                 owner.handle_result = type.qualified_name;
                 owner.cpp_signature = "handle:" + type.qualified_name + "()";
                 owner.position = type.position;
+                owner.receiver_kind = receiver;
                 input.callables.push_back(std::move(owner));
             }
             for (const auto& method : type.methods)
@@ -182,7 +222,7 @@ namespace reflgen::generator
                 if (!p.contains("interop"))
                 {
                     if (p.contains("property_get") || p.contains("property_set") || p.contains("effect") ||
-                        p.contains("lifetime") || p.contains("owner"))
+                        p.contains("lifetime") || p.contains("owner") || p.contains("receiver"))
                         report.error("RG0301", method.position, "PrSM method directives require interop(\"prsm\")");
                     continue;
                 }
@@ -196,6 +236,7 @@ namespace reflgen::generator
                     method.is_deleted || method.is_consteval || method.is_overloaded || method.is_variadic ||
                     method.is_volatile || method.ref_qualifier != "none" || !method.qualifiers_known ||
                     !method.declaration_specifiers_known || p.contains("lifetime") || p.contains("owner") ||
+                    p.contains("receiver") ||
                     (method.calling_convention != "c" && method.calling_convention != "default") ||
                     (method.exception_specification != "none" && method.exception_specification != "basic_noexcept"))
                 {
@@ -205,6 +246,7 @@ namespace reflgen::generator
                 }
                 binding_callable call;
                 call.receiver = type.qualified_name;
+                call.receiver_kind = receiver;
                 call.cpp_name = method.name;
                 call.script_name = method.name;
                 call.position = method.position;
@@ -264,6 +306,24 @@ namespace reflgen::generator
                 input.callables.push_back(std::move(call));
             }
         }
+        // The generated bridge includes only the inputs that declare selected
+        // types, not every reflected header of a large discovering module.
+        if (!report.has_errors() && !input.types.empty() && !input.sources.empty() &&
+            input.sources[0].kind == binding_source_kind::header)
+        {
+            std::vector<binding_source> used;
+            std::vector<std::size_t> remap(input.sources.size(), input.sources.size());
+            for (auto& type : input.types)
+            {
+                if (remap[type.source] == input.sources.size())
+                {
+                    remap[type.source] = used.size();
+                    used.push_back(input.sources[type.source]);
+                }
+                type.source = remap[type.source];
+            }
+            input.sources = std::move(used);
+        }
         return build_binding_module(std::move(input), report);
     }
 
@@ -316,17 +376,17 @@ namespace reflgen::generator
                                  " noexcept {\n"
                                  "    if (!out_value) return REFLGEN_PRSM_BINDING_INVALID_ARGUMENT;\n"
                                  "    try { uint64_t handle = 0;\n"
-                                 "        static_assert(std::is_same_v<decltype(&::reflgen::prsm::binding_owner<::" +
+                                 "        static_assert(std::is_same_v<decltype(&::reflgen::prsm::" + owner_template(call.receiver_kind) + "<::" +
                                  call.handle_result +
                                  ">::get), int32_t(*)(uint64_t*)> || "
-                                 "std::is_same_v<decltype(&::reflgen::prsm::binding_owner<::" +
+                                 "std::is_same_v<decltype(&::reflgen::prsm::" + owner_template(call.receiver_kind) + "<::" +
                                  call.handle_result +
                                  ">::get), int32_t(*)(uint64_t*) noexcept>);\n"
-                                 "        const auto status = ::reflgen::prsm::binding_owner<::" +
+                                 "        const auto status = ::reflgen::prsm::" + owner_template(call.receiver_kind) + "<::" +
                                  call.handle_result +
                                  ">::get(&handle);\n"
                                  "        if (status != 0) return status;\n"
-                                 "        ::reflgen::prsm::binding_access<::" +
+                                 "        ::reflgen::prsm::" + access_template(call.receiver_kind) + "<::" +
                                  call.handle_result +
                                  "> access(handle);\n"
                                  "        static_assert(std::is_nothrow_destructible_v<decltype(access)>);\n"
@@ -371,7 +431,7 @@ namespace reflgen::generator
             output.source += "extern \"C\" " + declaration + " noexcept\n{\n";
             if (call.result != binding_scalar::void_)
                 output.source += "    if (!out_value) return REFLGEN_PRSM_BINDING_INVALID_ARGUMENT;\n";
-            output.source += "    try {\n        ::reflgen::prsm::binding_access<::" + call.receiver +
+            output.source += "    try {\n        ::reflgen::prsm::" + access_template(call.receiver_kind) + "<::" + call.receiver +
                              "> access(receiver);\n"
                              "        static_assert(std::is_nothrow_destructible_v<decltype(access)>);\n"
                              "        static_assert(noexcept(access.status()) && noexcept(access.get()));\n"

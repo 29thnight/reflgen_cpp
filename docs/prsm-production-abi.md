@@ -28,8 +28,7 @@ production JSON catalogs; compiled native signature/address tables; strict PrSM
 catalog consumption, semantic checking and checked LLVM calls; explicit nominal
 owner ingress; AOT execution through both generated provider paths.
 
-Not implemented yet: CreatorEngine access-hook implementations,
-module fingerprint aggregation, general free/static
+Not implemented yet: module fingerprint aggregation, general free/static
 functions, direct fields, conversions, strings, enums, records, callbacks,
 handle-valued parameters/results beyond explicit owner ingress, ownership transfer or suspension.
 
@@ -127,6 +126,41 @@ access until destruction. The generator checks the C++ method types and adapter
 interface, not the correctness of the engine's registry. See `tests/prsm/adapter.h`
 for a bounded test adapter; its identity check is not a production registry.
 
+### Receiver kinds
+
+A selected type may add `receiver("handle" | "entity" | "component")`; the
+default is `handle`. The kind decides what the 64-bit receiver bits mean and
+which adapter template the generated wrapper instantiates:
+
+| Kind | Receiver bits | Adapter templates |
+|---|---|---|
+| `handle` | a type-specific registry handle | `binding_access<T>`, `binding_owner<T>` (one specialization per type) |
+| `entity` | the engine entity generation handle | `entity_access<T>`, `entity_owner<T>` |
+| `component` | the owning entity's generation handle | `component_access<T>`, `component_owner<T>` |
+
+Entity and component receivers share the entity handle domain. The engine
+defines `entity_access`/`component_access` (and the owners) once, generically —
+for example constrained by `std::derived_from<T, Component>` — so exposing
+another engine class adds annotations only, no adapter code. A component call
+resolves the live entity and then that entity's component of type `T` on every
+call; neither a component handle nor a component address survives a call. A
+missing component fails as `INVALID_HANDLE` for that call only. The kind is ABI
+identity: it selects the descriptor validation field below and is published as
+the catalog type's `receiver`. Unknown kinds are rejected before any output is
+written. `tests/prsm/scene.h` with its generic `scene_adapter.h` is the
+executable fixture (`check_bridge.ps1`).
+
+### MSBuild
+
+`ReflgenPrsm=true` with `ReflgenPrsmAdapterHeader=<adapter.h>` makes the same
+generator run that produces reflection (same include paths, definitions and
+language standard as the project's `ClCompile` items) also emit
+`reflgen_<module>_prsm.{h,cpp,abi.tsv,bindings.json}`. The `_prsm.cpp`
+implementation is compiled with the project (outside unity files) and
+`ReflgenPrsmCatalog` names the catalog for the PrSM compiler. The generated
+bridge includes only the headers that declare selected types. It cannot be
+combined with `ReflgenInterop`.
+
 ## C calling contract
 
 Every synchronous generated wrapper will have C linkage, explicit cdecl, a signed
@@ -210,7 +244,9 @@ The ordered fields for `reflgen.prsm.call.v1` are:
 
 1. `reflgen.prsm.call.v1`
 2. `cdecl`, `int32`, `0`, `typed_out_pointer`, `no_out_pointer`
-3. `generational_u64`, `domain_generation_nominal_type`, `borrowed_call_guard`, `game_thread`
+3. `generational_u64`, the receiver validation field (`domain_generation_nominal_type` for
+   `handle`, `entity_generation` for `entity`, `entity_generation_component_lookup` for
+   `component`), `borrowed_call_guard`, `game_thread`
 4. `caught_to_status`, `u8_nonzero_in_normalized_out`, `untouched`, `synchronous`
 5. Logical binding module name, exact target triple, decimal pointer width (`64`)
 6. C symbol, operation (`method`, `getter`, `setter`)

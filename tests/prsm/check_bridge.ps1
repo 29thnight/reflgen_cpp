@@ -54,6 +54,47 @@ $headerDir = Join-Path $Work 'header'
 Run $HeaderGenerator @('--module', 'demo', '--output', $headerDir, '--prsm', '--prsm-adapter-header', $adapter,
                        (Join-Path $fixture 'counter.h'), '--', '-std=c++20', '--target=x86_64-pc-windows-msvc')
 Check-Surface $headerDir '#include "counter.h"' @()
+# Entity/component receiver kinds: one generic adapter per kind, entity handles only.
+$sceneDir = Join-Path $Work 'scene'
+$sceneAdapter = (Join-Path $fixture 'scene_adapter.h').Replace([string][char]92, '/')
+Run $HeaderGenerator @('--module', 'scene', '--output', $sceneDir, '--prsm', '--prsm-adapter-header', $sceneAdapter,
+                       (Join-Path $fixture 'scene.h'), '--', '-std=c++20', '--target=x86_64-pc-windows-msvc')
+$sceneTable = @(Get-Content (Join-Path $sceneDir 'reflgen_scene_prsm.abi.tsv') | Where-Object { -not $_.StartsWith('#') })
+if ($sceneTable.Count -ne 6 -or ($sceneTable -join "`n").Contains('Hidden')) { throw 'wrong entity/component binding surface' }
+if (-not ($sceneTable -join "`n").Contains('34:entity_generation_component_lookup;') -or
+    -not ($sceneTable -join "`n").Contains('17:entity_generation;')) { throw 'receiver kind missing from ABI descriptors' }
+$sceneCatalog = Get-Content -Raw (Join-Path $sceneDir 'reflgen_scene_prsm.bindings.json') | ConvertFrom-Json
+$kinds = @($sceneCatalog.types | ForEach-Object { $_.name + '=' + $_.receiver }) -join ','
+if ($kinds -ne 'scene::Entity=entity,scene::LightComponent=component') { throw "unexpected catalog receiver kinds: $kinds" }
+$sceneBridge = [System.IO.File]::ReadAllText((Join-Path $sceneDir 'reflgen_scene_prsm.cpp'))
+if (-not $sceneBridge.Contains('component_access<::scene::LightComponent>') -or $sceneBridge.Contains('binding_access<')) {
+    throw 'component receivers must use the generic component adapter'
+}
+function SceneSymbol([string]$type, [string]$member) {
+    $hex = { param($t) [System.Convert]::ToHexString([System.Text.Encoding]::UTF8.GetBytes($t)).ToLowerInvariant() }
+    'ce_prsm_bind_' + (& $hex 'scene') + '_' + (& $hex $type) + '_' + (& $hex $member)
+}
+$sceneRunner = [System.IO.File]::ReadAllText((Join-Path $fixture 'scene_runner.cpp.in'))
+$sceneSymbols = [ordered]@{
+    '@LIGHT_OWNER@' = (SceneSymbol 'scene::LightComponent' 'x') -replace '_78$', '_owner'
+    '@ENTITY_OWNER@' = (SceneSymbol 'scene::Entity' 'x') -replace '_78$', '_owner'
+    '@LIGHT_GET@' = SceneSymbol 'scene::LightComponent' 'GetIntensity'
+    '@LIGHT_SET@' = SceneSymbol 'scene::LightComponent' 'SetIntensity'
+    '@ENTITY_GET@' = SceneSymbol 'scene::Entity' 'IsEnabled'
+    '@ENTITY_SET@' = SceneSymbol 'scene::Entity' 'SetEnabled'
+}
+foreach ($key in $sceneSymbols.Keys) { $sceneRunner = $sceneRunner.Replace($key, $sceneSymbols[$key]) }
+[System.IO.File]::WriteAllText((Join-Path $sceneDir 'scene_runner.cpp'), $sceneRunner, [System.Text.UTF8Encoding]::new($false))
+Run $Compiler ($common + @("/I$sceneDir", '/c', (Join-Path $sceneDir 'reflgen_scene_prsm.cpp'), "/Fo$sceneDir/bridge.obj"))
+Run $Compiler ($common + @("/I$sceneDir", '/c', (Join-Path $sceneDir 'scene_runner.cpp'), "/Fo$sceneDir/runner.obj"))
+Run $Compiler @('/nologo', "$sceneDir/bridge.obj", "$sceneDir/runner.obj", "/Fe$sceneDir/runner.exe", '/link', "/IMPLIB:$sceneDir/runner.lib")
+Run (Join-Path $sceneDir 'runner.exe') @()
+$unknownKind = Join-Path $sceneDir 'unknown_kind.h'
+[System.IO.File]::WriteAllText($unknownKind, "class [[reflgen::interop(`"prsm`"), reflgen::lifetime(`"borrowed`"), reflgen::receiver(`"actor`")]] Bad { public: [[reflgen::interop(`"prsm`")]] int Get() const; };`n", [System.Text.UTF8Encoding]::new($false))
+$rejected = (& $HeaderGenerator --module bad --output (Join-Path $sceneDir 'bad') --prsm --prsm-adapter-header $sceneAdapter $unknownKind -- -std=c++20 --target=x86_64-pc-windows-msvc 2>&1) -join "`n"
+if ($LASTEXITCODE -eq 0 -or $rejected -notmatch 'unknown PrSM receiver kind' -or (Test-Path (Join-Path $sceneDir 'bad/reflgen_bad_prsm.cpp'))) {
+    throw 'unknown receiver kind was not rejected before output'
+}
 # Identical generation preserves both bytes and timestamps.
 $stable = Join-Path $headerDir 'reflgen_demo_prsm.cpp'
 $timestamp = [System.IO.File]::GetLastWriteTimeUtc($stable)

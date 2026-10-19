@@ -38,6 +38,12 @@
                              C++ 구현은 ReflgenRegistration 과 무관하게 컴파일한다.
     ReflgenInteropLibrary   C# 에서 불러올 native 라이브러리 이름. 기본은 ReflgenModule.
     ReflgenInteropNamespace C# 이름공간. 기본은 Reflgen.Generated.
+    ReflgenPrsm             true 면 같은 생성기 실행이 PrSM production 바인딩(reflgen_<module>_prsm.h/.cpp/
+                             .abi.tsv/.bindings.json)도 만든다. interop("prsm") 을 단 header 를 발견 대상에 넣고,
+                             C 래퍼·컴파일된 서명/주소 표 구현(_prsm.cpp)을 프로젝트 설정으로 컴파일한다.
+                             ReflgenInterop 과 함께 쓸 수 없다.
+    ReflgenPrsmAdapterHeader  binding_access/entity_access/component_access 등을 정의한 엔진 어댑터 header.
+                             ReflgenPrsm 이면 필수다.
     ReflgenRegistration      false 면 등록 함수(reflgen_<module>.cpp)를 컴파일하지 않는다 — 서술(schema_of·
                              for_each_field)만 쓰고 reflgen 의 등록소·직렬화는 쓰지 않는 코드베이스용이다(자기
                              직렬화·등록을 가진 엔진) — 쓰지 않을 런타임 서술자의 컴파일 시간을 치르지 않는다.
@@ -74,6 +80,10 @@
     <_ReflgenInteropHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.h</_ReflgenInteropHeader>
     <_ReflgenInteropSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.cpp</_ReflgenInteropSource>
     <_ReflgenInteropCSharp>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.cs</_ReflgenInteropCSharp>
+    <_ReflgenPrsmHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_prsm.h</_ReflgenPrsmHeader>
+    <_ReflgenPrsmSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_prsm.cpp</_ReflgenPrsmSource>
+    <_ReflgenPrsmTable>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_prsm.abi.tsv</_ReflgenPrsmTable>
+    <ReflgenPrsmCatalog>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_prsm.bindings.json</ReflgenPrsmCatalog>
     <!-- 참조하는 reflgen 프로젝트의 주입 header 들을 include 하는 header — 등록 함수 정의가 include 한다
          (_ReflgenInject 가 쓴다). -->
     <_ReflgenReferencesHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).references.h</_ReflgenReferencesHeader>
@@ -254,6 +264,7 @@
       <_ReflgenRunOutput Include="$(_ReflgenStamp)" />
       <_ReflgenOptionalOutput Include="$(_ReflgenDeclarationsJson)" Condition="'$(_ReflgenDeclarationsJson)' != ''" />
       <_ReflgenOptionalOutput Include="$(_ReflgenInteropHeader);$(_ReflgenInteropSource);$(_ReflgenInteropCSharp)" Condition="'$(ReflgenInterop)' == 'true'" />
+      <_ReflgenOptionalOutput Include="$(_ReflgenPrsmHeader);$(_ReflgenPrsmSource);$(_ReflgenPrsmTable);$(ReflgenPrsmCatalog)" Condition="'$(ReflgenPrsm)' == 'true'" />
       <!-- 내용이 같으면 시각도 그대로다. 없을 때만 출력에 넣어 재생성하고, 있으면 stamp 로 가린다. -->
       <_ReflgenRunOutput Include="@(_ReflgenOptionalOutput)" Condition="!Exists('%(FullPath)')" />
     </ItemGroup>
@@ -270,6 +281,8 @@
       <_ReflgenDistinctOptionalOutput Include="@(_ReflgenNormalizedOptionalOutput->Distinct())" />
       <_ReflgenUnownedOptionalOutput Include="@(_ReflgenOptionalOutput->'%(FullPath)')" Exclude="@(_ReflgenPreviouslyOwnedOutput)" />
     </ItemGroup>
+    <Error Condition="'$(ReflgenPrsm)' == 'true' and ('$(ReflgenInterop)' == 'true' or '$(ReflgenPrsmAdapterHeader)' == '' or !Exists('$(ReflgenPrsmAdapterHeader)'))"
+           Code="RG0001" Text="reflgen: ReflgenPrsm requires an existing ReflgenPrsmAdapterHeader and cannot be combined with ReflgenInterop" />
     <Error Condition="'@(_ReflgenOptionalOutput->Count())' != '@(_ReflgenSafeOptionalOutput->Count())'"
            Code="RG0001" Text="reflgen: an optional output collides with an input or reserved generated file" />
     <Error Condition="'@(_ReflgenOptionalOutput->Count())' != '@(_ReflgenDistinctOptionalOutput->Count())'"
@@ -294,6 +307,12 @@
       <!-- interop 구현은 등록 함수와 별개다. C# 파일은 C++ 컴파일 목록에 넣지 않는다. -->
       <ClCompile Include="$(_ReflgenInteropSource)" Condition="'$(ReflgenInterop)' == 'true'">
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
+        <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
+      </ClCompile>
+      <!-- PrSM 래퍼·네이티브 표. 선택한 엔진 header 와 어댑터를 스스로 include 한다. -->
+      <ClCompile Include="$(_ReflgenPrsmSource)" Condition="'$(ReflgenPrsm)' == 'true'">
+        <PrecompiledHeader>NotUsing</PrecompiledHeader>
+        <IncludeInUnityFile>false</IncludeInUnityFile>
         <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
     </ItemGroup>
@@ -346,6 +365,7 @@
       <_ReflgenCommandLine Include="--interop" Condition="'$(ReflgenInterop)' == 'true'" />
       <_ReflgenCommandLine Include="--interop-library;$(ReflgenInteropLibrary)" Condition="'$(ReflgenInterop)' == 'true' and '$(ReflgenInteropLibrary)' != ''" />
       <_ReflgenCommandLine Include="--interop-namespace;$(ReflgenInteropNamespace)" Condition="'$(ReflgenInterop)' == 'true' and '$(ReflgenInteropNamespace)' != ''" />
+      <_ReflgenCommandLine Include="--prsm;--prsm-adapter-header;$([MSBuild]::NormalizePath('$(ProjectDir)', '$(ReflgenPrsmAdapterHeader)'))" Condition="'$(ReflgenPrsm)' == 'true'" />
       <_ReflgenCommandLine Include="--discover" />
     </ItemGroup>
     <PropertyGroup>
@@ -370,7 +390,7 @@
        다시 부르지 않으려는 것) 생성 파일의 시각으로는 가릴 수 없다. -->
   <Target Name="_ReflgenRun"
           Condition="'@(_ReflgenHeader)' != '' and '$(ReflgenSelectedBackend)' != 'Std'"
-          Inputs="@(_ReflgenExistingHeader);@(_ReflgenDependency);$(ReflgenExecutable);$(_ReflgenArgumentsFile);$(_ReflgenResponseFile)"
+          Inputs="@(_ReflgenExistingHeader);@(_ReflgenDependency);$(ReflgenExecutable);$(_ReflgenArgumentsFile);$(_ReflgenResponseFile);$(ReflgenPrsmAdapterHeader)"
           Outputs="@(_ReflgenRunOutput)">
     <Error Condition="'$(ReflgenExecutable)' == '' or !Exists('$(ReflgenExecutable)')"
            Code="RG0001"

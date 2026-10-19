@@ -63,8 +63,13 @@ namespace reflgen::generator
             std::string output;
             for (const std::string_view item :
                  {"reflgen.prsm.call.v1", "cdecl", "int32", "0", "typed_out_pointer", "no_out_pointer",
-                  "generational_u64", "domain_generation_nominal_type", "borrowed_call_guard", "game_thread",
-                  "caught_to_status", "u8_nonzero_in_normalized_out", "untouched", "synchronous"})
+                  "generational_u64"})
+                append(output, item);
+            // The default handle kind keeps the original v1 descriptor bytes.
+            append(output, binding_receiver_validation(call.receiver_kind));
+            for (const std::string_view item :
+                 {"borrowed_call_guard", "game_thread", "caught_to_status", "u8_nonzero_in_normalized_out",
+                  "untouched", "synchronous"})
                 append(output, item);
             for (const auto& item :
                  {module.name, module.target.triple, std::to_string(module.target.pointer_width), call.symbol,
@@ -79,6 +84,32 @@ namespace reflgen::generator
         }
     } // namespace
 
+    std::string binding_receiver_name(binding_receiver kind)
+    {
+        switch (kind)
+        {
+        case binding_receiver::handle:
+            return "handle";
+        case binding_receiver::entity:
+            return "entity";
+        case binding_receiver::component:
+            return "component";
+        }
+        return {};
+    }
+    std::string binding_receiver_validation(binding_receiver kind)
+    {
+        switch (kind)
+        {
+        case binding_receiver::handle:
+            return "domain_generation_nominal_type";
+        case binding_receiver::entity:
+            return "entity_generation";
+        case binding_receiver::component:
+            return "entity_generation_component_lookup";
+        }
+        return {};
+    }
     std::string binding_scalar_name(binding_scalar type)
     {
         switch (type)
@@ -139,12 +170,15 @@ namespace reflgen::generator
                 fail({}, "invalid or duplicate PrSM binding source");
         }
         std::set<std::string> cpp_types, script_types, symbols;
+        std::map<std::string, binding_receiver> receiver_kinds;
         for (const auto& type : input.types)
         {
             if (!text(type.cpp_name) || !qualified(type.cpp_name) || !text(type.script_name) ||
                 !qualified(type.script_name) || type.source >= input.sources.size() ||
-                !cpp_types.insert(type.cpp_name).second || !script_types.insert(type.script_name).second)
+                binding_receiver_name(type.receiver).empty() || !cpp_types.insert(type.cpp_name).second ||
+                !script_types.insert(type.script_name).second)
                 fail({}, "invalid or duplicate PrSM nominal binding type: " + type.cpp_name);
+            receiver_kinds[type.cpp_name] = type.receiver;
         }
         std::set<std::pair<std::string, std::string>> cpp_members;
         std::map<std::pair<std::string, std::string>, std::vector<const binding_callable*>> members;
@@ -187,6 +221,9 @@ namespace reflgen::generator
                 fail(call.position, "invalid PrSM owner ingress");
             if (!owner && !call.handle_result.empty())
                 fail(call.position, "handle results require owner ingress in v1");
+            const auto kind = receiver_kinds.find(owner ? call.handle_result : call.receiver);
+            if (kind != receiver_kinds.end() && kind->second != call.receiver_kind)
+                fail(call.position, "PrSM callable receiver kind disagrees with its nominal type: " + call.symbol);
             if ((!owner && !cpp_types.contains(call.receiver)) || !text(call.cpp_name) || !identifier(call.cpp_name) ||
                 !text(call.cpp_signature) || !text(call.script_name) ||
                 !(owner ? qualified(call.script_name) : identifier(call.script_name)) || !text(call.symbol) ||

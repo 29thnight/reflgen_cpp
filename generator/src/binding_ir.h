@@ -47,11 +47,27 @@ namespace reflgen::generator
         write
     };
 
+    // How the uint64_t receiver bits identify the native object. The engine
+    // supplies one adapter per kind, never per selected type for entity/component:
+    //   handle    - a type-specific registry handle; binding_access<T>/binding_owner<T>
+    //   entity    - the engine entity generation handle; entity_access<T>/entity_owner<T>
+    //   component - the owning entity's generation handle, resolved to that entity's
+    //               component of type T on every call; component_access<T>/component_owner<T>
+    // Entity and component receivers share the entity handle domain, so a script
+    // never holds a component-specific handle or a cached component address.
+    enum class binding_receiver
+    {
+        handle,
+        entity,
+        component
+    };
+
     struct binding_type
     {
         std::string cpp_name; // canonical nominal identity, independent of input location
         std::string script_name;
         std::size_t source = 0;
+        binding_receiver receiver = binding_receiver::handle;
     };
 
     struct binding_callable
@@ -71,6 +87,8 @@ namespace reflgen::generator
         std::string native_result;
         std::vector<std::string> native_parameters;
         std::string handle_result;
+        // Receiver kind of `receiver` (or of `handle_result` for owner ingress).
+        binding_receiver receiver_kind = binding_receiver::handle;
     };
 
     struct binding_module_input
@@ -109,4 +127,7 @@ namespace reflgen::generator
 
     std::optional<binding_module> build_binding_module(binding_module_input input, diagnostics& report);
     std::string binding_scalar_name(binding_scalar type);
+    std::string binding_receiver_name(binding_receiver kind);
+    // Validation field of the ABI descriptor for one receiver kind.
+    std::string binding_receiver_validation(binding_receiver kind);
 } // namespace reflgen::generator

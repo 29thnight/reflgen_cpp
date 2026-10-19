@@ -12,4 +12,21 @@ namespace reflgen::prsm
     class binding_access;
     template<class T>
     class binding_owner;
+
+    // receiver("entity") / receiver("component") types. The engine defines each
+    // template once, generically, for its entity class and for every component
+    // class (for example constrained by std::derived_from<T, Component>); new
+    // selected types need no adapter code. The receiver bits are the engine's
+    // entity generation handle in both kinds. component_access<T> resolves the
+    // live entity, then that entity's component of type T, on every call and
+    // keeps neither a component handle nor an address across calls. The same
+    // members as binding_access/binding_owner are required.
+    template<class T>
+    class entity_access;
+    template<class T>
+    class entity_owner;
+    template<class T>
+    class component_access;
+    template<class T>
+    class component_owner;
 } // namespace reflgen::prsm
