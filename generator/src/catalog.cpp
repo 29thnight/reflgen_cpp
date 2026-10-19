@@ -198,10 +198,20 @@ namespace reflgen::generator
             {"directive", std::string(library_scope), "ignore", "ignore", "이 멤버를 반영에서 뺀다."},
             {"directive", std::string(library_scope), "attribute", "attribute",
              "이 타입을 편집기 자동완성의 attribute 로 내보낸다. 이름공간에 하나라도 있으면 표시한 타입만 내보낸다."},
-            {"directive", std::string(library_scope), "interop", "interop(\"c\")\ninterop(\"csharp\")",
-             "타입과 선택한 public 메서드의 C ABI/C# 바인딩 대상을 정한다. reflection 과 독립이며 --interop 이 필요하다."},
+            {"directive", std::string(library_scope), "interop",
+             "interop(\"c\")\ninterop(\"csharp\")\ninterop(\"prsm\")",
+             "타입과 각 public 메서드의 바인딩 대상을 명시한다. c/csharp는 --interop, prsm은 --prsm을 사용한다."},
             {"directive", std::string(library_scope), "lifetime", "lifetime(\"borrowed\")",
-             "interop 타입의 receiver 는 호출자가 수명을 보장하는 빌린 객체 포인터다. 생성·소멸은 내보내지 않는다."},
+             "borrowed는 소유권을 이전하지 않는다. c/csharp는 빌린 주소, PrSM은 엔진 접근 가드로 검사한 핸들을 "
+             "사용한다."},
+            {"directive", std::string(library_scope), "property_get", "property_get(\"Name\")",
+             "PrSM getter를 명시적 프로퍼티 이름에 연결한다."},
+            {"directive", std::string(library_scope), "property_set", "property_set(\"Name\")",
+             "PrSM setter를 같은 타입의 getter 프로퍼티에 연결한다."},
+            {"directive", std::string(library_scope), "owner", "owner(\"Namespace::Owner\")",
+             "PrSM 타입의 엔진 핸들 진입점을 생성한다. 엔진 binding_owner 특수화가 필요하다."},
+            {"directive", std::string(library_scope), "effect", "effect(\"read\")\neffect(\"write\")",
+             "PrSM 호출의 접근 의도이며 순수성·스레드 이동을 보장하지 않는다."},
         };
         catalog_map found;
         visit_namespaces(clang_getTranslationUnitCursor(unit), scopes, declares, found);

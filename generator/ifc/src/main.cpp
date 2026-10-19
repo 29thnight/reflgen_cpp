@@ -1,6 +1,7 @@
 // IFC supplies semantic declarations; optional MSVC /P metadata preserves tool attributes.
 #include "emit.h"
 #include "metadata.h"
+#include "prsm.h"
 #include <ifc/reader.hxx>
 #include <ifc/tooling.hxx>
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 void ifc_assert(const char* text, const char*, int)
 {
@@ -52,6 +54,203 @@ namespace
         header_model model;
         module_metadata* metadata = nullptr;
         std::set<std::string> scopes{"reflgen"};
+        bool prsm = false;
+        std::vector<class_model> exports;
+
+        bool binding_groups(const std::vector<attribute_group>& groups)
+        {
+            if (!metadata)
+                return false;
+            for (const auto name : {"interop", "lifetime", "property_get", "property_set", "effect", "owner"})
+                if (metadata->directive(groups, name))
+                    return true;
+            return false;
+        }
+
+        void reject_binding_location(DeclIndex index)
+        {
+            reader.visit_with_index(index, [&](auto, const auto& declaration) {
+                if constexpr (requires {
+                                  declaration.identity.locus;
+                                  declaration.identity.name;
+                              })
+                {
+                    std::string spelling;
+                    if constexpr (std::is_same_v<decltype(declaration.identity.name), NameIndex>)
+                        spelling = name(declaration.identity.name);
+                    else if constexpr (std::is_same_v<decltype(declaration.identity.name), TextOffset>)
+                        spelling = reader.get(declaration.identity.name);
+                    if (binding_groups(attributes(declaration.identity.locus, spelling, true)))
+                        fail(declaration.identity.locus,
+                             "PrSM directives require a class and ordinary nonstatic method");
+                }
+            });
+        }
+
+        declaration_type scalar_type(TypeIndex index, unsigned depth = 0)
+        {
+            declaration_type result;
+            if (depth > 32 || index_like::null(index))
+                return result;
+            if (const auto* alias = reader.get_if<DesignatedType>(index))
+            {
+                if (alias->decl.sort() == DeclSort::Alias)
+                    return scalar_type(reader.get<AliasDecl>(alias->decl).aliasee, depth + 1);
+                return result;
+            }
+            if (const auto* qualified = reader.get_if<QualifiedType>(index))
+            {
+                if ((to_underlying(qualified->qualifiers) & ~0x03) != 0)
+                    return result;
+                result = scalar_type(qualified->unqualified_type, depth + 1);
+                result.is_const = (to_underlying(qualified->qualifiers) & to_underlying(Qualifier::Const)) != 0;
+                result.is_volatile = (to_underlying(qualified->qualifiers) & to_underlying(Qualifier::Volatile)) != 0;
+                return result;
+            }
+            const auto* fundamental = reader.get_if<FundamentalType>(index);
+            if (!fundamental)
+                return result;
+            const auto& f = *fundamental;
+            if (f.sign != TypeSign::Plain && f.sign != TypeSign::Signed && f.sign != TypeSign::Unsigned)
+                return result;
+            if (f.basis == TypeBasis::Void)
+            {
+                result.kind = "void";
+                result.canonical_spelling = "void";
+                result.size_bytes = 0;
+            }
+            else if (f.basis == TypeBasis::Bool)
+            {
+                result.kind = "bool";
+                result.canonical_spelling = "bool";
+                result.size_bytes = 1;
+            }
+            else if (f.basis == TypeBasis::Float && f.precision == TypePrecision::Default)
+            {
+                result.kind = "floating_point";
+                result.canonical_spelling = "float";
+                result.size_bytes = 4;
+            }
+            else if (f.basis == TypeBasis::Double && f.precision == TypePrecision::Default)
+            {
+                result.kind = "floating_point";
+                result.canonical_spelling = "double";
+                result.size_bytes = 8;
+            }
+            else if (f.basis == TypeBasis::Int || (f.basis == TypeBasis::Char && f.sign != TypeSign::Plain))
+            {
+                std::string name;
+                long long size = -1;
+                if (f.basis == TypeBasis::Char || f.precision == TypePrecision::Bit8)
+                {
+                    name = "char";
+                    size = 1;
+                }
+                else if (f.precision == TypePrecision::Short || f.precision == TypePrecision::Bit16)
+                {
+                    name = "short";
+                    size = 2;
+                }
+                else if (f.precision == TypePrecision::Default || f.precision == TypePrecision::Bit32)
+                {
+                    name = "int";
+                    size = 4;
+                }
+                else if (f.precision == TypePrecision::Long)
+                {
+                    name = "long";
+                    size = 4;
+                }
+                else if (f.precision == TypePrecision::Bit64)
+                {
+                    name = "long long";
+                    size = 8;
+                }
+                if (size > 0)
+                {
+                    result.kind = f.sign == TypeSign::Unsigned ? "unsigned_integer" : "signed_integer";
+                    result.canonical_spelling =
+                        f.sign == TypeSign::Unsigned ? "unsigned " + name : (size == 1 ? "signed char" : name);
+                    result.size_bytes = size;
+                }
+            }
+            result.spelling = result.canonical_spelling;
+            return result;
+        }
+
+        void prsm_members(const ScopeDecl& scope, class_model& owner)
+        {
+            const auto* body = reader.try_get(scope.initializer);
+            if (!body)
+                return;
+            std::map<std::string, unsigned> counts;
+            for (const auto& entry : reader.sequence(*body))
+                if (entry.index.sort() == DeclSort::Method)
+                    ++counts[name(reader.get<NonStaticMemberFunctionDecl>(entry.index).identity.name)];
+                else if (entry.index.sort() == DeclSort::Function)
+                    ++counts[name(reader.get<FunctionDecl>(entry.index).identity.name)];
+            for (const auto& entry : reader.sequence(*body))
+            {
+                if (entry.index.sort() != DeclSort::Method)
+                {
+                    reject_binding_location(entry.index);
+                    continue;
+                }
+                const auto& method = reader.get<NonStaticMemberFunctionDecl>(entry.index);
+                const auto member_name = name(method.identity.name);
+                const auto groups = attributes(method.identity.locus, member_name, true);
+                if (!binding_groups(groups))
+                    continue;
+                if (!identifier(member_name))
+                    fail(method.identity.locus, "unsupported PrSM operator/conversion");
+                const auto* type = reader.get_if<MethodType>(method.type);
+                if (!type)
+                    fail(method.identity.locus, "unknown PrSM IFC method type");
+                method_model result;
+                result.name = member_name;
+                result.owner = owner.qualified_name;
+                result.position = position(method.identity.locus);
+                result.access = method.access == Access::Public ? "public" : "private";
+                result.attributes = metadata->uses(groups, scopes, {}, true);
+                result.is_const = (to_underlying(type->traits) & to_underlying(FunctionTypeTraits::Const)) != 0;
+                result.qualifiers_known = (to_underlying(type->traits) & ~0x0f) == 0;
+                result.is_volatile = (to_underlying(type->traits) & to_underlying(FunctionTypeTraits::Volatile)) != 0;
+                result.ref_qualifier = (to_underlying(type->traits) & (to_underlying(FunctionTypeTraits::Lvalue) |
+                                                                       to_underlying(FunctionTypeTraits::Rvalue)))
+                                           ? "unsupported"
+                                           : "none";
+                result.calling_convention =
+                    type->convention == CallingConvention::Cdecl || type->convention == CallingConvention::This
+                        ? "c"
+                        : "unsupported";
+                result.exception_specification = type->eh_spec.sort == NoexceptSort::None   ? "none"
+                                                 : type->eh_spec.sort == NoexceptSort::True ? "basic_noexcept"
+                                                                                            : "unsupported";
+                result.is_deleted = (to_underlying(method.traits) & to_underlying(FunctionTraits::Deleted)) != 0;
+                result.is_consteval = (to_underlying(method.traits) & to_underlying(FunctionTraits::Immediate)) != 0;
+                result.declaration_specifiers_known =
+                    (to_underlying(method.traits) &
+                     ~(to_underlying(FunctionTraits::Inline) | to_underlying(FunctionTraits::Constexpr) |
+                       to_underlying(FunctionTraits::Virtual) | to_underlying(FunctionTraits::NoReturn) |
+                       to_underlying(FunctionTraits::PureVirtual) | to_underlying(FunctionTraits::Deleted) |
+                       to_underlying(FunctionTraits::Immediate) | to_underlying(FunctionTraits::Final) |
+                       to_underlying(FunctionTraits::Override))) == 0;
+                result.is_overloaded = counts[member_name] > 1;
+                result.return_type = scalar_type(type->target);
+                const auto parameter = [&](TypeIndex parameter_type) {
+                    result.parameter_declarations.push_back({{}, scalar_type(parameter_type), result.position});
+                };
+                if (!index_like::null(type->source))
+                {
+                    if (const auto* tuple = reader.get_if<TupleType>(type->source))
+                        for (const auto item : reader.sequence(*tuple))
+                            parameter(item);
+                    else if (scalar_type(type->source).kind != "void")
+                        parameter(type->source);
+                }
+                owner.methods.push_back(std::move(result));
+            }
+        }
 
         std::vector<attribute_group> attributes(SourceLocation locus, std::string_view member, bool type = false)
         {
@@ -186,6 +385,8 @@ namespace
             {
                 if (entry.index.sort() == DeclSort::Enumeration)
                 {
+                    if (prsm)
+                        reject_binding_location(entry.index);
                     const auto& type = reader.get<EnumerationDecl>(entry.index);
                     if (has(type.basic_spec, BasicSpecifiers::NonExported) ||
                         has(type.basic_spec, BasicSpecifiers::IsMemberOfGlobalModule))
@@ -212,14 +413,20 @@ namespace
                     if (!identifier(short_name) || has(type.basic_spec, BasicSpecifiers::IsMemberOfGlobalModule))
                         continue;
                     if (fundamental->basis == TypeBasis::Namespace)
+                    {
+                        if (prsm && binding_groups(attributes(type.identity.locus, short_name, true)))
+                            fail(type.identity.locus, "PrSM namespace directives are unsupported");
                         walk(type.initializer, prefix + short_name + "::");
+                    }
                     else if (fundamental->basis == TypeBasis::Struct || fundamental->basis == TypeBasis::Class)
                     {
-                        if (has(type.basic_spec, BasicSpecifiers::NonExported) || !reader.try_get(type.initializer))
-                            continue;
                         const auto groups = attributes(type.identity.locus, short_name, true);
-                        if (ignored(groups) || (metadata && metadata->directive(groups, "attribute")))
+                        if (has(type.basic_spec, BasicSpecifiers::NonExported) || !reader.try_get(type.initializer))
+                        {
+                            if (prsm && binding_groups(groups))
+                                fail(type.identity.locus, "PrSM types must be exported complete definitions");
                             continue;
+                        }
                         if (!index_like::null(type.base))
                             fail(type.identity.locus,
                                  "inheritance is unsupported by the initial IFC backend: " + prefix + short_name);
@@ -229,6 +436,16 @@ namespace
                         result.schema_name = "\"" + result.qualified_name + "\"";
                         result.position = position(type.identity.locus);
                         result.attributes = uses(groups);
+                        if (prsm)
+                        {
+                            class_model selected = result;
+                            selected.attributes = metadata->uses(groups, scopes, {}, true);
+                            prsm_members(type, selected);
+                            if (binding_groups(groups) || !selected.methods.empty())
+                                exports.push_back(std::move(selected));
+                        }
+                        if (ignored(groups) || (metadata && metadata->directive(groups, "attribute")))
+                            continue;
                         if (metadata)
                             if (const auto* reflect = metadata->directive(groups, "reflect");
                                 reflect && reflect->has_arguments)
@@ -237,6 +454,8 @@ namespace
                         model.classes.push_back(std::move(result));
                     }
                 }
+                else if (prsm)
+                    reject_binding_location(entry.index);
             }
         }
     };
@@ -255,7 +474,8 @@ namespace
 
 int main(int argc, char** argv)
 {
-    std::string input, module, registration, directory, metadata_path;
+    std::string input, module, registration, directory, metadata_path, prsm_adapter;
+    bool prsm = false;
     std::set<std::string> scopes{"reflgen"};
     std::vector<std::string> attribute_imports;
     const char* stage = "arguments";
@@ -264,6 +484,11 @@ int main(int argc, char** argv)
         for (int i = 1; i < argc; ++i)
         {
             const std::string option = argv[i];
+            if (option == "--prsm")
+            {
+                prsm = true;
+                continue;
+            }
             if (i + 1 == argc)
                 throw std::runtime_error("missing option value");
             const std::string value = argv[++i];
@@ -277,6 +502,8 @@ int main(int argc, char** argv)
                 directory = value;
             else if (option == "--metadata")
                 metadata_path = value;
+            else if (option == "--prsm-adapter-header")
+                prsm_adapter = value;
             else if (option == "--attribute-scope")
             {
                 if (!identifier(value))
@@ -297,8 +524,19 @@ int main(int argc, char** argv)
         if (input.empty() || directory.empty() || !identifier(registration))
             throw std::runtime_error(
                 "usage: reflgen-ifc --ifc FILE --import MODULE --module REGISTRATION --output DIR "
-                "[--metadata MSVC_PREPROCESSED_FILE] [--attribute-scope NAMESPACE] [--attribute-import MODULE]");
+                "[--metadata MSVC_PREPROCESSED_FILE] [--attribute-scope NAMESPACE] [--attribute-import MODULE] "
+                "[--prsm --prsm-adapter-header FILE]");
         stage = "open";
+        if (prsm && (metadata_path.empty() || prsm_adapter.empty()))
+            throw std::runtime_error("--prsm requires --metadata and --prsm-adapter-header");
+        if (!prsm && !prsm_adapter.empty())
+            throw std::runtime_error("--prsm-adapter-header requires --prsm");
+        if (prsm)
+        {
+            if (!std::filesystem::is_regular_file(prsm_adapter))
+                throw std::runtime_error("--prsm-adapter-header must name an existing file");
+            prsm_adapter = std::filesystem::absolute(prsm_adapter).lexically_normal().generic_string();
+        }
         ifc::tool::InputFile container{std::filesystem::path(input)};
         InputIfc file{container.contents()};
         const auto u8path = std::filesystem::path(input).u8string();
@@ -308,7 +546,8 @@ int main(int argc, char** argv)
                                                          to_underlying(IfcOptions::AllowAnyPrimaryInterface))))
             throw std::runtime_error("not an IFC primary module interface");
         const auto actual_module = std::string(file.get(file.header()->unit.module_name()));
-        if (module.empty()) module = actual_module;
+        if (module.empty())
+            module = actual_module;
         if (file.header()->unit.sort() != UnitSort::Primary)
             throw std::runtime_error("only primary named module interfaces are supported");
         if (module != actual_module)
@@ -334,11 +573,50 @@ int main(int argc, char** argv)
                 throw std::runtime_error("metadata predates IFC; regenerate MSVC /P output after compiling the module");
         }
         extractor extract{reader, {input, {}, {}}, metadata.get(), scopes};
+        extract.prsm = prsm;
         stage = "extract";
         extract.walk(file.header()->global_scope);
+        std::optional<prsm_output> bridge;
+        if (prsm)
+        {
+            metadata->validate_prsm_selection();
+            if (file.header()->arch != Architecture::X64)
+                throw std::runtime_error("PrSM IFC currently requires Windows x64");
+            diagnostics report;
+            auto bindings = lower_prsm(extract.exports, {"x86_64-pc-windows-msvc", 64}, registration,
+                                       {{binding_source_kind::named_module, module}}, report);
+            if (bindings)
+                bridge = emit_prsm(*bindings, prsm_adapter, report);
+            if (report.has_errors())
+            {
+                report.print(stderr);
+                return 1;
+            }
+        }
         const auto output = std::filesystem::absolute(directory);
         std::filesystem::create_directories(output);
         const std::string stem = "reflgen_" + registration;
+        if (prsm)
+        {
+            std::vector<std::filesystem::path> inputs{input, metadata_path, prsm_adapter};
+            for (const auto& type : extract.exports)
+            {
+                inputs.emplace_back(type.position.file);
+                for (const auto& method : type.methods)
+                    inputs.emplace_back(method.position.file);
+            }
+            for (const auto suffix :
+                 {".h", ".cpp", ".attributes.tsv", "_prsm.h", "_prsm.cpp", "_prsm.abi.tsv", "_prsm.bindings.json"})
+            {
+                const auto destination = output / (stem + suffix);
+                for (const auto& source : inputs)
+                {
+                    std::error_code error;
+                    if (!source.empty() && std::filesystem::equivalent(source, destination, error))
+                        throw std::runtime_error("PrSM output collides with an input: " + destination.string());
+                }
+            }
+        }
         const auto header = output / (stem + ".h");
         const std::string header_text =
             emit_ifc_header(extract.model, module, registration, header.generic_string(), attribute_imports);
@@ -356,6 +634,13 @@ int main(int argc, char** argv)
                   "(::reflgen::default_registry()); }\n}\n";
         // Do not publish partial output if IFC extraction or code generation failed.
         write_changed(header, header_text);
+        if (bridge)
+        {
+            write_changed(output / (stem + "_prsm.h"), bridge->header);
+            write_changed(output / (stem + "_prsm.cpp"), bridge->source);
+            write_changed(output / (stem + "_prsm.abi.tsv"), bridge->abi_table);
+            write_changed(output / (stem + "_prsm.bindings.json"), bridge->catalog);
+        }
         write_changed(output / (stem + ".cpp"), source);
         write_changed(output / (stem + ".attributes.tsv"),
                       metadata ? metadata->catalog(scopes) : "reflgen-attributes\t1\n");

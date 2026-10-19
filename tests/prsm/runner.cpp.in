@@ -1,0 +1,39 @@
+#include <stdint.h>
+#include <thread>
+#include "reflgen_demo_prsm.h"
+@PROVIDER@
+#include "adapter.h"
+
+int main()
+{
+    demo::Counter counter;
+    fixture::object = &counter;
+    fixture::game_thread = true;
+    const auto handle = fixture::live_handle;
+    int32_t value = -123;
+    if (@GET@(handle, &value) != 0 || value != 7) return 1;
+    if (@SET@(handle, 20) != 0 || @ADD@(handle, 2, &value) != 0 || value != 22) return 2;
+    uint8_t enabled = 0;
+    if (@ENABLED@(handle, 255, &enabled) != 0 || enabled != 1) return 3;
+    double wide = 0;
+    if (@SCALE@(handle, 1.5f, 4.0, &wide) != 0 || wide != 6.0) return 4;
+    value = 918;
+    if (@ADD@(handle, -1, &value) != REFLGEN_PRSM_BINDING_NATIVE_FAILURE || value != 918) return 5;
+    const auto acquisitions = fixture::acquisitions;
+    if (@GET@(handle, nullptr) != REFLGEN_PRSM_BINDING_INVALID_ARGUMENT || fixture::acquisitions != acquisitions) return 6;
+    for (const auto invalid : {uint64_t(0), handle + 1, handle ^ (uint64_t(1) << 32), handle ^ (uint64_t(1) << 60)})
+        if (@GET@(invalid, &value) != REFLGEN_PRSM_BINDING_INVALID_HANDLE || value != 918) return 7;
+    fixture::context = false;
+    if (@GET@(handle, &value) != REFLGEN_PRSM_BINDING_INVALID_CONTEXT || value != 918) return 8;
+    fixture::context = true;
+    int32_t status = 0;
+    std::thread worker([&] { status = @GET@(handle, &value); });
+    worker.join();
+    if (status != REFLGEN_PRSM_BINDING_WRONG_THREAD || value != 918) return 9;
+    ++fixture::live_handle; // retired/reused slot makes the old handle stale
+    if (@GET@(handle, &value) != REFLGEN_PRSM_BINDING_INVALID_HANDLE || value != 918) return 10;
+    if (fixture::guards != 0 || @GET@(fixture::live_handle, &value) != 0 || value != 22) return 11;
+    fixture::object = nullptr;
+    if (@GET@(fixture::live_handle, &value) != REFLGEN_PRSM_BINDING_INVALID_HANDLE || value != 22) return 12;
+    return fixture::guards != 0;
+}

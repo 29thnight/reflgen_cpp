@@ -223,7 +223,9 @@ namespace reflgen::generator
 
     bool declares_interop(std::string_view text)
     {
-        return declares_attribute(text, "interop") || declares_attribute(text, "lifetime");
+        return declares_attribute(text, "interop") || declares_attribute(text, "lifetime") ||
+               declares_attribute(text, "property_get") || declares_attribute(text, "property_set") ||
+               declares_attribute(text, "effect") || declares_attribute(text, "owner");
     }
 
     std::optional<std::size_t> next_token_offset(std::span<const token> tokens, std::size_t offset)

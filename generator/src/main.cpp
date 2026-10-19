@@ -21,6 +21,7 @@
 #include "executable.h"
 #include "extract.h"
 #include "interop.h"
+#include "prsm.h"
 #include "clang_api.h"
 #include "reflgen/core/version.h"
 #include <algorithm>
@@ -44,22 +45,25 @@ namespace
         "usage: reflgen --module NAME --output DIR [--attribute-scope NS]... [--attribute-header FILE]... "
         "[--registration-header FILE]... "
         "[--clang-args-file FILE] [--depfile FILE] [--dependency-list FILE] [--declarations-json FILE] "
-        "[--interop [--interop-library NAME] [--interop-namespace NAME]] [--discover] HEADER... "
+        "[--interop [--interop-library NAME] [--interop-namespace NAME]] [--prsm --prsm-adapter-header FILE] "
+        "[--discover] HEADER... "
         "[-- CLANG_ARG...]\n"
         "       reflgen --version\n";
 
     struct cli_options
     {
         extract_options extraction;
-        std::string depfile;         // Makefile 문법(Ninja·Make). 비면 쓰지 않는다
-        std::string dependency_list; // 한 줄에 경로 하나(MSBuild). 비면 쓰지 않는다
-        std::string declarations_json; // 선택적 선언 manifest. 비면 기존 출력만 만든다
+        std::string depfile;                  // Makefile 문법(Ninja·Make). 비면 쓰지 않는다
+        std::string dependency_list;          // 한 줄에 경로 하나(MSBuild). 비면 쓰지 않는다
+        std::string declarations_json;        // 선택적 선언 manifest. 비면 기존 출력만 만든다
         std::vector<std::string> input_files; // discover 로 거른 파일·응답 파일도 덮어쓰지 않는다
         bool interop = false;
+        bool prsm = false;
+        std::string prsm_adapter;
         std::string interop_library;
         std::string interop_namespace = "Reflgen.Generated";
         bool interop_options_supplied = false;
-        bool discover = false;       // header 는 후보다 — 반영을 선언한 것만 남긴다
+        bool discover = false; // header 는 후보다 — 반영을 선언한 것만 남긴다
     };
 
     // 한 줄에 인자 하나. 빈 줄은 건너뛴다(빌드 시스템이 만든 파일의 끝 줄바꿈 등). 손으로 쓰거나 다른 도구가 만든
@@ -146,6 +150,15 @@ namespace
             else if (argument == "--discover")
             {
                 cli.discover = true;
+            }
+            else if (argument == "--prsm")
+            {
+                cli.prsm = true;
+            }
+            else if (argument == "--prsm-adapter-header")
+            {
+                if (const auto path = value(argument))
+                    cli.prsm_adapter = normalize_path(*path);
             }
             else if (argument == "--interop")
             {
@@ -276,7 +289,13 @@ namespace
         {
             cli.interop_library = options.module_name;
         }
-        options.collect_interop = cli.interop;
+        if (cli.prsm && (cli.interop || cli.prsm_adapter.empty()))
+            report.error("RG0001", {}, "--prsm requires --prsm-adapter-header and cannot be combined with --interop");
+        if (!cli.prsm && !cli.prsm_adapter.empty())
+            report.error("RG0001", {}, "--prsm-adapter-header requires --prsm");
+        if (cli.prsm && !std::filesystem::is_regular_file(cli.prsm_adapter))
+            report.error("RG0001", {}, "--prsm-adapter-header must name an existing file");
+        options.collect_interop = cli.interop || cli.prsm;
         // 후보 목록(프로젝트의 header 전부)에는 지워진 파일이 남아 있을 수 있다 — 그것은 discover 가 걸러 낸다.
         for (const std::string& header : options.headers)
         {
@@ -351,17 +370,18 @@ namespace
     // 선택적 출력이 소스·다른 생성물·빌드 입력을 덮어쓰면 복구할 수 없다. 상대 경로, 심볼릭 링크,
     // Windows 대소문자 차이도 같은 경로로 가른다. 파싱에서 찾은 간접 include 도 보호한다.
     void validate_optional_paths(const cli_options& cli, const extract_result& extracted,
-                                    const std::vector<std::string>& generated_names, diagnostics& report)
+                                 const std::vector<std::string>& generated_names, diagnostics& report)
     {
-        if (cli.declarations_json.empty() && !cli.interop)
+        if (cli.declarations_json.empty() && !cli.interop && !cli.prsm)
         {
             return;
         }
         const auto key = [](const std::string& path) {
-            return ascii_lowercase(std::filesystem::weakly_canonical(std::filesystem::path(normalize_path(path)))
-                                       .generic_string());
+            return ascii_lowercase(
+                std::filesystem::weakly_canonical(std::filesystem::path(normalize_path(path))).generic_string());
         };
         std::vector<std::string> reserved = cli.input_files;
+        reserved.push_back(cli.prsm_adapter);
         const extract_options& options = cli.extraction;
         reserved.insert(reserved.end(), options.attribute_headers.begin(), options.attribute_headers.end());
         reserved.insert(reserved.end(), options.registration_headers.begin(), options.registration_headers.end());
@@ -389,16 +409,19 @@ namespace
                 outputs.push_back(base + std::string(suffix));
             }
         }
+        if (cli.prsm)
+            for (const std::string_view suffix : {"_prsm.h", "_prsm.cpp", "_prsm.abi.tsv", "_prsm.bindings.json"})
+                outputs.push_back(base + std::string(suffix));
         for (const std::string& output : outputs)
         {
             for (const std::string& path : reserved)
             {
                 std::error_code error;
-                if (!path.empty() && (key(output) == key(path) ||
-                                      std::filesystem::equivalent(output, path, error)))
+                if (!path.empty() && (key(output) == key(path) || std::filesystem::equivalent(output, path, error)))
                 {
-                    report.error("RG0001", {}, "optional output '" + output +
-                                                   "' collides with input or generated file '" + path + "'");
+                    report.error("RG0001", {},
+                                 "optional output '" + output + "' collides with input or generated file '" + path +
+                                     "'");
                     return;
                 }
             }
@@ -531,7 +554,7 @@ namespace
         }
         if (cli->discover)
         {
-            cli->extraction.headers = reflected_headers(cli->extraction.headers, cli->interop);
+            cli->extraction.headers = reflected_headers(cli->extraction.headers, cli->interop || cli->prsm);
         }
         const extract_options& options = cli->extraction;
 
@@ -558,10 +581,20 @@ namespace
         const std::vector<header_model>& headers = extracted.headers;
         validate_optional_paths(*cli, extracted, generated_names, report);
         std::optional<interop_output> interop;
+        std::optional<prsm_output> prsm;
+        if (cli->prsm && !report.has_errors())
+        {
+            std::vector<binding_source> sources;
+            for (const auto& path : options.headers)
+                sources.push_back({binding_source_kind::header, path});
+            if (auto bindings =
+                    lower_prsm(extracted.exports, extracted.target, options.module_name, std::move(sources), report))
+                prsm = emit_prsm(*bindings, cli->prsm_adapter, report);
+        }
         if (cli->interop && !report.has_errors())
         {
             interop = emit_interop(extracted.exports, extracted.target,
-                                  {options.module_name, cli->interop_library, cli->interop_namespace}, report);
+                                   {options.module_name, cli->interop_library, cli->interop_namespace}, report);
         }
         if (!report.has_errors())
         {
@@ -580,6 +613,13 @@ namespace
                              emit_module_source(options.module_name, headers, options.registration_headers), report);
             write_if_changed(base + ".attributes.tsv", format_attribute_catalog(extracted.attributes), report,
                              byte_order_mark::without);
+            if (prsm)
+            {
+                write_if_changed(base + "_prsm.h", prsm->header, report, byte_order_mark::without);
+                write_if_changed(base + "_prsm.cpp", prsm->source, report, byte_order_mark::without);
+                write_if_changed(base + "_prsm.abi.tsv", prsm->abi_table, report, byte_order_mark::without);
+                write_if_changed(base + "_prsm.bindings.json", prsm->catalog, report, byte_order_mark::without);
+            }
             if (interop)
             {
                 write_if_changed(base + "_interop.h", interop->c_header, report);

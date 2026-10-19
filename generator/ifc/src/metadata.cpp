@@ -253,13 +253,16 @@ namespace reflgen::generator
 
     std::vector<attribute_use> module_metadata::uses(const std::vector<attribute_group>& groups,
                                                      const std::set<std::string>& scopes,
-                                                     const qualifier_lookup& lookup) const
+                                                     const qualifier_lookup& lookup, bool interop) const
     {
         std::vector<attribute_use> result;
         for (const auto& group : groups)
             for (const auto& a : group.attributes)
             {
-                if (!scopes.contains(a.scope) ||
+                const bool binding_directive =
+                    a.scope == "reflgen" && (a.name == "interop" || a.name == "lifetime" || a.name == "property_get" ||
+                                             a.name == "property_set" || a.name == "effect" || a.name == "owner");
+                if ((!interop && binding_directive) || !scopes.contains(a.scope) ||
                     (a.scope == "reflgen" && (a.name == "reflect" || a.name == "ignore" || a.name == "attribute")))
                     continue;
                 const auto index = std::lower_bound(tokens_.begin(), tokens_.end(), a.begin,
@@ -268,8 +271,29 @@ namespace reflgen::generator
                 result.push_back(
                     {"::" + a.scope + "::" + a.name + (a.has_arguments ? "(" + arguments(a, lookup) + ")" : "{}"),
                      {loc.file, loc.line, 1}});
+                auto& use = result.back();
+                if (interop && binding_directive)
+                    consumed_bindings_.insert(a.begin);
+                use.scope = a.scope;
+                use.name = a.name;
+                use.has_arguments = a.has_arguments;
+                if (a.has_arguments)
+                    for (const auto& t : tokens_)
+                        if (t.begin >= a.arguments_begin && t.end <= a.arguments_end && t.kind != token_kind::comment)
+                            use.argument_tokens.push_back(t.spelling);
             }
         return result;
+    }
+
+    void module_metadata::validate_prsm_selection() const
+    {
+        for (const auto& group : groups_)
+            for (const auto& a : group.attributes)
+                if (a.scope == "reflgen" &&
+                    ((a.name == "interop" && a.has_arguments && arguments(a) == "\"prsm\"") ||
+                     a.name == "property_get" || a.name == "property_set" || a.name == "effect" || a.name == "owner") &&
+                    !consumed_bindings_.contains(a.begin))
+                    throw std::runtime_error("selected PrSM annotation has no supported exported IFC declaration");
     }
 
     std::string module_metadata::catalog(const std::set<std::string>& scopes) const

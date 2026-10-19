@@ -1,5 +1,9 @@
 # Optional C ABI and C# bindings
 
+For the separate PrSM production handle-ABI foundation and shared header/module
+Binding IR, see [PrSM production ABI](docs/prsm-production-abi.md). It does not
+change this existing borrowed-address interop contract.
+
 Interop is an opt-in code generator. Reflection, serialization, and external
 exposure are separate decisions. A reflected field or a reflection friend does
 not authorize an external call.

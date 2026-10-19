@@ -150,9 +150,8 @@ namespace reflgen::generator
             case CXType_Pointer:
             case CXType_LValueReference:
             case CXType_RValueReference:
-            case CXType_MemberPointer:
-            {
-                result.kind = canonical.kind == CXType_Pointer ? "pointer"
+            case CXType_MemberPointer: {
+                result.kind = canonical.kind == CXType_Pointer           ? "pointer"
                               : canonical.kind == CXType_LValueReference ? "lvalue_reference"
                               : canonical.kind == CXType_RValueReference ? "rvalue_reference"
                                                                          : "member_pointer";
@@ -167,8 +166,7 @@ namespace reflgen::generator
             case CXType_ConstantArray:
             case CXType_IncompleteArray:
             case CXType_VariableArray:
-            case CXType_DependentSizedArray:
-            {
+            case CXType_DependentSizedArray: {
                 result.kind = "array";
                 result.array_size = clang_getArraySize(canonical);
                 CXType element = clang_getArrayElementType(type);
@@ -196,7 +194,9 @@ namespace reflgen::generator
         // 생성기가 해석하고 스키마에는 옮기지 않는 지시어.
         bool is_interop_directive(const scanned_attribute& attribute)
         {
-            return attribute.scope == library_scope && (attribute.name == "interop" || attribute.name == "lifetime");
+            return attribute.scope == library_scope &&
+                   (attribute.name == "interop" || attribute.name == "lifetime" || attribute.name == "property_get" ||
+                    attribute.name == "property_set" || attribute.name == "effect" || attribute.name == "owner");
         }
 
         bool is_directive(const scanned_attribute& attribute)
@@ -469,7 +469,10 @@ namespace reflgen::generator
 
             static bool has_interop(const std::vector<attribute_group>& groups)
             {
-                return find_directive(groups, "interop") != nullptr || find_directive(groups, "lifetime") != nullptr;
+                return find_directive(groups, "interop") != nullptr || find_directive(groups, "lifetime") != nullptr ||
+                       find_directive(groups, "property_get") != nullptr ||
+                       find_directive(groups, "property_set") != nullptr ||
+                       find_directive(groups, "effect") != nullptr || find_directive(groups, "owner") != nullptr;
             }
 
             void interop_error(CXCursor cursor, const std::string& message)
@@ -501,17 +504,15 @@ namespace reflgen::generator
                             interop_error(cursor, "interop attributes must be on a class definition");
                         }
                     }
-                    else if (kind == CXCursor_CXXMethod &&
-                             (clang_getCursorKind(lexical_parent) == CXCursor_ClassDecl ||
-                              clang_getCursorKind(lexical_parent) == CXCursor_StructDecl))
+                    else if (kind == CXCursor_CXXMethod && (clang_getCursorKind(lexical_parent) == CXCursor_ClassDecl ||
+                                                            clang_getCursorKind(lexical_parent) == CXCursor_StructDecl))
                     {
                         // 메서드의 public/static/cv/type 조건은 emitter 가 진단한다.
                     }
                     else
                     {
-                        interop_error(cursor,
-                                      "interop/lifetime attributes are supported only on class definitions and "
-                                      "ordinary in-class method declarations; this declaration is unsupported");
+                        interop_error(cursor, "interop/lifetime attributes are supported only on class definitions and "
+                                              "ordinary in-class method declarations; this declaration is unsupported");
                     }
                 }
                 // 매개변수 attribute 도 위치 오류다. 메서드 자체를 선택하지 않았더라도 놓치지 않는다.
@@ -535,9 +536,8 @@ namespace reflgen::generator
                 model.qualifiers_known = false;
                 const source_file& source = source_of(method);
                 const std::size_t name_offset = offset_of(clang_getCursorLocation(method));
-                const auto first = std::ranges::find_if(source.tokens, [&](const token& item) {
-                    return item.begin == name_offset;
-                });
+                const auto first =
+                    std::ranges::find_if(source.tokens, [&](const token& item) { return item.begin == name_offset; });
                 if (first == source.tokens.end() ||
                     (first->spelling != model.name &&
                      !(first->spelling == "operator" && model.name.starts_with("operator"))))
@@ -637,16 +637,17 @@ namespace reflgen::generator
                     }
                 }
                 const CXRefQualifierKind ref = clang_Type_getCXXRefQualifier(method_type);
-                model.ref_qualifier = ref == CXRefQualifier_LValue ? "lvalue"
-                                     : ref == CXRefQualifier_RValue ? "rvalue"
-                                                                    : "none";
+                model.ref_qualifier = ref == CXRefQualifier_LValue   ? "lvalue"
+                                      : ref == CXRefQualifier_RValue ? "rvalue"
+                                                                     : "none";
                 const int count = clang_Cursor_getNumArguments(method);
                 for (int i = 0; i < count; ++i)
                 {
                     const CXCursor parameter = clang_Cursor_getArgument(method, static_cast<unsigned>(i));
                     const std::string parameter_name = cursor_spelling(parameter);
                     model.parameters.push_back(parameter_name);
-                    model.parameter_declarations.push_back({parameter_name, describe_type(clang_getCursorType(parameter)),
+                    model.parameter_declarations.push_back({parameter_name,
+                                                            describe_type(clang_getCursorType(parameter)),
                                                             position_of(clang_getCursorLocation(parameter))});
                 }
                 return model;
@@ -724,8 +725,7 @@ namespace reflgen::generator
                 {
                     result.namespaces = *namespaces;
                 }
-                for (CXCursor owner = cursor; !clang_Cursor_isNull(owner);
-                     owner = clang_getCursorSemanticParent(owner))
+                for (CXCursor owner = cursor; !clang_Cursor_isNull(owner); owner = clang_getCursorSemanticParent(owner))
                 {
                     const CXCursorKind kind = clang_getCursorKind(owner);
                     if (kind == CXCursor_ClassTemplate || kind == CXCursor_ClassTemplatePartialSpecialization ||

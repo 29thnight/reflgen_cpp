@@ -1,0 +1,6 @@
+class Listener : Component {
+    contract fn OnInitialized() {
+        val counter = demo::Owner()
+        counter.Count = 15
+    }
+}

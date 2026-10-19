@@ -1,0 +1,4 @@
+fn main():uint64 {
+    val counter = demo::Owner()
+    return counter.Add(1)
+}

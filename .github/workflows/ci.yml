@@ -15,6 +15,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prsm-abi-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify independent production ABI vectors
+        shell: pwsh
+        run: ./scripts/generate-prsm-abi-vectors.ps1
+      - name: Verify Rust consumer encoder and SHA-256
+        run: cargo test --locked --manifest-path generator/tests/prsm_abi_rust/Cargo.toml --target-dir build/prsm-abi-rust
+
   cpp:
     name: cpp (${{ matrix.preset }})
     runs-on: windows-2025-vs2026
@@ -31,6 +41,23 @@ jobs:
       - name: Configure, build and test
         shell: pwsh
         run: ./scripts/test.ps1 -Presets ${{ matrix.preset }}
+
+  prsm-ifc:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build both frontends and execute generated PrSM bridges
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+          cmake --preset msvc-cpp20 -DREFLGEN_BUILD_IFC=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset msvc-cpp20 --target reflgen_cli reflgen_ifc reflgen_binding_contract_tests reflgen_generator_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --preset msvc-cpp20 -R '^reflgen_(binding_contract_tests|generator_tests|prsm_bridge)$'
 
   vs-extension:
     runs-on: windows-2025-vs2026
