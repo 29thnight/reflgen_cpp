@@ -59,6 +59,11 @@ $sceneDir = Join-Path $Work 'scene'
 $sceneAdapter = (Join-Path $fixture 'scene_adapter.h').Replace([string][char]92, '/')
 Run $HeaderGenerator @('--module', 'scene', '--output', $sceneDir, '--prsm', '--prsm-adapter-header', $sceneAdapter,
                        (Join-Path $fixture 'scene.h'), '--', '-std=c++20', '--target=x86_64-pc-windows-msvc')
+# 같은 실행의 반영 스키마에는 바인딩 지시어(receiver 포함)가 사용자 속성으로 새지 않아야 한다.
+$sceneSchema = [System.IO.File]::ReadAllText((Join-Path $sceneDir 'scene.reflgen.h'))
+if (-not $sceneSchema.Contains('field<&T::intensity_>') -or $sceneSchema -match 'receiver|interop|lifetime|owner\(') {
+    throw 'PrSM binding directives leaked into the reflection schema'
+}
 $sceneTable = @(Get-Content (Join-Path $sceneDir 'reflgen_scene_prsm.abi.tsv') | Where-Object { -not $_.StartsWith('#') })
 if ($sceneTable.Count -ne 6 -or ($sceneTable -join "`n").Contains('Hidden')) { throw 'wrong entity/component binding surface' }
 if (-not ($sceneTable -join "`n").Contains('34:entity_generation_component_lookup;') -or

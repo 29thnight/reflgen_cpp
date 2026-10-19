@@ -1,6 +1,11 @@
 #pragma once
 // Entity/component receiver fixture: script handles are entity generation
 // handles; component receivers resolve the entity's component on every call.
+namespace reflgen
+{
+    struct access;
+}
+
 namespace scene
 {
     class Component
@@ -9,7 +14,7 @@ namespace scene
         virtual ~Component() = default;
     };
 
-    class [[reflgen::interop("prsm"), reflgen::lifetime("borrowed"), reflgen::receiver("component"),
+    class [[reflgen::reflect, reflgen::interop("prsm"), reflgen::lifetime("borrowed"), reflgen::receiver("component"),
             reflgen::owner("scene::Light")]] LightComponent : public Component
     {
       public:
@@ -26,6 +31,8 @@ namespace scene
         float Hidden() const { return -1.0f; }
 
       private:
+        friend struct reflgen::access;
+
         float intensity_ = 2.0f;
     };
 

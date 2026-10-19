@@ -196,7 +196,8 @@ namespace reflgen::generator
         {
             return attribute.scope == library_scope &&
                    (attribute.name == "interop" || attribute.name == "lifetime" || attribute.name == "property_get" ||
-                    attribute.name == "property_set" || attribute.name == "effect" || attribute.name == "owner");
+                    attribute.name == "property_set" || attribute.name == "effect" || attribute.name == "owner" ||
+                    attribute.name == "receiver");
         }
 
         bool is_directive(const scanned_attribute& attribute)
@@ -472,7 +473,8 @@ namespace reflgen::generator
                 return find_directive(groups, "interop") != nullptr || find_directive(groups, "lifetime") != nullptr ||
                        find_directive(groups, "property_get") != nullptr ||
                        find_directive(groups, "property_set") != nullptr ||
-                       find_directive(groups, "effect") != nullptr || find_directive(groups, "owner") != nullptr;
+                       find_directive(groups, "effect") != nullptr || find_directive(groups, "owner") != nullptr ||
+                       find_directive(groups, "receiver") != nullptr;
             }
 
             void interop_error(CXCursor cursor, const std::string& message)
