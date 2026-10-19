@@ -307,12 +307,15 @@
       <!-- interop 구현은 등록 함수와 별개다. C# 파일은 C++ 컴파일 목록에 넣지 않는다. -->
       <ClCompile Include="$(_ReflgenInteropSource)" Condition="'$(ReflgenInterop)' == 'true'">
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
-        <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
       <!-- PrSM 래퍼·네이티브 표. 선택한 엔진 header 와 어댑터를 스스로 include 한다. -->
       <ClCompile Include="$(_ReflgenPrsmSource)" Condition="'$(ReflgenPrsm)' == 'true'">
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
         <IncludeInUnityFile>false</IncludeInUnityFile>
+      </ClCompile>
+      <!-- 강제 include 는 추가한 항목만 고친다. Include 안의 %(ClCompile.X) 는 기존 ClCompile 전부로 일괄 처리돼
+           값이 다른 파일 수만큼 같은 소스가 늘어난다(같은 .obj 를 병렬로 써서 C1083). -->
+      <ClCompile Condition="('$(ReflgenInterop)' == 'true' and '%(ClCompile.Identity)' == '$(_ReflgenInteropSource)') or ('$(ReflgenPrsm)' == 'true' and '%(ClCompile.Identity)' == '$(_ReflgenPrsmSource)')">
         <ForcedIncludeFiles>%(ClCompile.ForcedIncludeFiles);$(_ReflgenForcedIncludes)</ForcedIncludeFiles>
       </ClCompile>
     </ItemGroup>
