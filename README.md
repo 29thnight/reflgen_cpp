@@ -206,7 +206,7 @@ Module completion includes built-ins and custom attributes used in the preproces
 not constructor parameter documentation. See [the module attribute fixture](tests/ifc/attributes).
 
 Both the mixed-project and standalone IFC targets forward the semicolon-separated `ReflgenRegistrationHeaders` and
-`ReflgenRegistrationImports` properties. In a standalone IFC project, `ReflgenRegistrationModule` items (`Include` = IFC
+`ReflgenRegistrationImports` properties. `ReflgenRegistrationModule` items (`Include` = IFC
 path, `Module` = import name) also supply the compiler reference mapping. Add the corresponding provider project/build
 dependencies as usual. The [engine-style fixture](tests/ifc/engine) exercises inheritance, private state, overloads,
 nested types and custom serialization in CMake and MSBuild.

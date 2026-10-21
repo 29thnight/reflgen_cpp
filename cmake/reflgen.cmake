@@ -213,6 +213,8 @@ function(reflgen_generate_ifc target)
     add_dependencies(${target} ${target}_generate)
     target_link_libraries(${target} PUBLIC reflgen::reflgen "${ARG_PROVIDER}")
     target_include_directories(${target} PUBLIC "$<BUILD_INTERFACE:${ARG_OUTPUT_DIRECTORY}>")
+    # Imported template instantiations can repeat the provider's unknown-attribute warning in consumers.
+    target_compile_options(${target} PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:/wd5030>")
     # Explicit compiler mapping also supports providers built outside CMake's native module scanner.
     target_compile_options(${target} PUBLIC "SHELL:/reference \"${ARG_IMPORT}=${ifc}\"" ${attribute_mappings} ${registration_mappings})
 endfunction()

@@ -25,6 +25,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>$(ReflgenIncludeDirectory);$(ReflgenOutputDirectory);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>%(DisableSpecificWarnings);5030</DisableSpecificWarnings>
       <AdditionalOptions>%(AdditionalOptions) /reference &quot;$(_ReflgenIfcMapping)&quot; $(_ReflgenAttributeMappings) $(_ReflgenRegistrationMappings)</AdditionalOptions>
     </ClCompile>
   </ItemDefinitionGroup>

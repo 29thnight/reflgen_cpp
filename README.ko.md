@@ -239,7 +239,7 @@ MSBuild 어트리뷰트 경로는 **provider**의 `Microsoft.Cpp.targets` 뒤에
 `(...)` 표기이며 생성자 매개변수 설명까지 추출하지는 않는다. [실행 예제](tests/ifc/attributes)를 참고한다.
 
 혼합 프로젝트와 별도 IFC 프로젝트 모두 세미콜론 목록 속성 `ReflgenRegistrationHeaders`와
-`ReflgenRegistrationImports`를 전달한다. 별도 IFC 프로젝트에서는 `ReflgenRegistrationModule` 항목
+`ReflgenRegistrationImports`를 전달한다. `ReflgenRegistrationModule` 항목
 (`Include`는 IFC 경로, `Module`은 import 이름)으로 컴파일러 참조 매핑도 지정할 수 있다. 해당 provider의
 프로젝트·빌드 의존성도 함께 연결한다. [엔진 형태의 예제](tests/ifc/engine)는 상속·비공개 상태·오버로드·
 중첩 타입·사용자 직렬화를 CMake와 MSBuild에서 검사한다.

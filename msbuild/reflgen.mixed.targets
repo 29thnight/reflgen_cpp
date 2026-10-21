@@ -30,9 +30,6 @@
         <PrecompiledHeader>NotUsing</PrecompiledHeader>
         <CompileAs>CompileAsCpp</CompileAs>
       </ClCompile>
-      <ClCompile Update="@(_ReflgenPrimary->'$(ReflgenOutputDirectory)reflgen_%(Registration).cpp')">
-        <AdditionalOptions>%(ClCompile.AdditionalOptions) @(ReflgenRegistrationModule->'/reference &quot;%(Module)=%(FullPath)&quot;', ' ')</AdditionalOptions>
-      </ClCompile>
     </ItemGroup>
   </Target>
   <Import Project="reflgen.ifc.metadata.targets" Condition="'$(ReflgenProviderPass)' == 'true'" />
@@ -65,6 +62,18 @@
     <Exec Command="&quot;$(ReflgenIfcExecutable)&quot; --ifc &quot;%(_ReflgenPrimary.ModuleOutputFile)&quot; --metadata &quot;%(_ReflgenPrimary.ModuleOutputFile).i&quot; --module &quot;%(_ReflgenPrimary.Registration)&quot; --output &quot;$(ReflgenOutputDirectory).&quot; @(ReflgenAttributeScope->'--attribute-scope &quot;%(Identity)&quot;', ' ') @(_ReflgenModuleRegistrationHeader->'--registration-header &quot;%(FullPath)&quot;', ' ') @(_ReflgenModuleRegistrationImport->'--registration-import &quot;%(Identity)&quot;', ' ')" StdOutEncoding="utf-8" StdErrEncoding="utf-8" />
     <Touch Files="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).stamp" AlwaysCreate="true" />
     <ItemGroup><FileWrites Include="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).*" /></ItemGroup>
+  </Target>
+  <!-- Header registration sources are added dynamically during ReflgenGenerateHeaders. Registration headers
+       can import local modules too, so supply their IFCs after both generation routes have added sources. -->
+  <Target Name="_ReflgenRegistrationReferences" AfterTargets="ReflgenGenerate"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(ReflgenProviderPass)' != 'true' and '$(ReflgenSelectedBackend)' != 'Std'">
+    <ItemGroup>
+      <_ReflgenRegistrationConsumer Include="@(ClCompile)" Exclude="@(_ReflgenProvider)"
+          Condition="'%(ClCompile.CompileAs)' != 'CompileAsC' and ('%(ClCompile.Extension)' != '.c' or '%(ClCompile.CompileAs)' == 'CompileAsCpp')" />
+      <ClCompile Update="@(_ReflgenRegistrationConsumer)">
+        <AdditionalOptions>%(ClCompile.AdditionalOptions) @(_ReflgenPrimary->'/reference &quot;%(ModuleOutputFile)&quot;', ' ') @(ReflgenRegistrationModule->'/reference &quot;%(Module)=%(FullPath)&quot;', ' ')</AdditionalOptions>
+      </ClCompile>
+    </ItemGroup>
   </Target>
   <Target Name="_ReflgenBeforeModuleScan" BeforeTargets="SetModuleDependencies" DependsOnTargets="ReflgenGenerate"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(ReflgenProviderPass)' != 'true'" />

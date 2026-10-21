@@ -43,7 +43,7 @@ include해 라이브러리의 실제 선언을 사용한다. named module 안에
 
 등록 함수가 소비자와 같은 사용자 serializer를 보도록 `REGISTRATION_HEADERS`와
 `REGISTRATION_MODULES "import.name=path.ifc"`를 `reflgen_generate_ifc()`에 지정한다.
-MSBuild는 `ReflgenRegistrationHeaders`·`ReflgenRegistrationImports` 속성을 전달하며, 별도 IFC 프로젝트는
+MSBuild는 `ReflgenRegistrationHeaders`·`ReflgenRegistrationImports` 속성을 전달하며,
 `ReflgenRegistrationModule` 항목으로 `/reference`도 연결한다. 이 옵션은 생성된 등록 코드의 의존성만
 설정하고 reader가 다른 IFC를 탐색하게 하지는 않는다. 생성 스키마와 사용자 serializer를 포함한 다음
 등록 서술자를 인스턴스화하므로, 다른 번역 단위와 직렬화 동작이 달라지는 것을 막는다.
