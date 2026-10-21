@@ -117,12 +117,30 @@ ctest --preset msvc-cpp20 -R reflgen_ifc
 처음 설정할 때 고정된 IFC SDK/GSL 소스를 받는다. 오프라인에서는 `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK`와
 `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL`에 해당 소스 디렉터리를 지정한다. 기본 헤더 생성 방식은 이 기능을 켜지 않는다.
 
-**범위:** export된 이름공간/전역 class·struct의 public 일반 필드와, 이름으로 식별되는 오버로드 없는 public
-멤버 함수, export된 enum의 정확한 열거자 표. attribute나 friend 선언은 필요 없다. private/protected 멤버와
-비export 타입은 제외한다. 상속, public 중첩 타입, public bit-field·참조 필드, 오버로드 메서드는 `RG0200`으로
-실패한다. 템플릿 타입·멤버 템플릿, 연산자·변환 함수, static 데이터 필드, partition·재export 타입 수집은
-지원하지 않는다. 기본은 export 타입 전체 반영이며, 메타데이터를 켜면 `ignore`로 타입·멤버를 제외하고
-`reflect("이름")`으로 스키마 이름을 지정할 수 있다.
+**범위:** export된 class·struct와 enum을 기본으로 반영하며, public 중첩 타입도 포함한다. 메타데이터를 켜면
+`ignore`로 타입·멤버를 제외하고 `reflect("이름")`으로 스키마 이름을 지정할 수 있다.
+
+| 선언 | IFC 동작 |
+|---|---|
+| public 일반 필드와 이름 있는 멤버 함수 | attribute나 friend 없이 반영 |
+| 같은 IFC 안의 public 상속 | 미반영 public CRTP 중간 클래스를 통과해 가장 가까운 반영 부모를 연결 |
+| private/protected 멤버 | 전역 `::reflgen::access`를 friend로 선언하면 반영; friend 없는 기본 export 타입은 public만 반영 |
+| 명시적 `reflect`가 있고 접근할 수 없는 미제외 멤버 | friend 선언이 필요하다는 `RG0200` 진단 |
+| 이름 있는 메서드 오버로드 | 매개변수 타입·cv/ref 한정·지원하는 `noexcept` 명세를 보존한 정확한 멤버 포인터 캐스트 생성 |
+| public 중첩 class·struct·enum | 바깥 타입을 포함한 완전한 이름으로 스키마 생성 |
+
+friend는 라이브러리의 전역 선언을 가리켜야 한다. 예를 들어 global module fragment에서
+`#include "reflgen/core/hook.h"`를 사용하고 클래스 안에 `friend struct ::reflgen::access;`를 둔다.
+named module 안에서 같은 이름의 클래스를 새로 선언해도 라이브러리에 접근 권한을 주지 않는다.
+현재 단일 IFC reader는 다른 모듈의 IFC 참조를 해석하지 않으므로, 다른 named module에서만 가져온
+friend·부모 타입·메서드 시그니처 타입에도 이 제약이 적용된다.
+
+비export 타입은 등록하지 않는다. 반영하지 않는 private/protected 보조 부모는 제외하며, 접근할 수 없는
+반영 부모와 virtual 반영 상속은 불완전한 스키마를 만들지 않고 거부한다. public bit-field·참조 필드는
+여전히 `ignore`가 필요하다. 템플릿 타입 자체의 반영·멤버 템플릿, 연산자·변환 함수, static 데이터 필드,
+partition·재export 타입 수집은 지원하지 않는다. 해석하지 못하는 부모·타입·시그니처는 `RG0200`으로 실패한다.
+런타임 호출의 기존 한정자 제약은 유지한다. `find_method(name)`은 첫 번째 일치 항목을 반환하므로
+오버로드를 구분할 때는 `methods()`의 각 서술자를 확인한다.
 
 빌드 순서는 **모듈 provider → IFC 추출 → 별도 리플렉션 타깃 → 소비자**다. provider가 자기 리플렉션 결과에 의존하면
 순환이 생긴다. 생성 헤더는 강제 include하지 않으며, 소비자가 명시적으로 include한다. 그 헤더가 원본 모듈을
@@ -159,6 +177,23 @@ reflgen_generate_ifc(game_reflection
 그 밖의 이름은 완전 한정해서 쓴다. 외부에서 참조할 타입·상수는 export되어야 한다.
 같은 소스 줄의 이름을 모호하게 연결하는 경우 `RG0200`으로 실패하므로 반복되는 선언 이름은 줄을 나눈다.
 지원하지 않는 public bit-field·참조 필드도 `ignore`를 붙이면 검증 전에 제외된다.
+
+등록 함수의 번역 단위에도 소비자와 같은 사용자 serializer가 보여야 한다. 등록 전용 헤더·모듈을 지정하면
+`registry::add<T>()`가 서술자를 인스턴스화하기 전에 해당 선언을 볼 수 있다.
+
+```cmake
+reflgen_generate_ifc(game_reflection
+    PROVIDER game IFC "${game_ifc}" IMPORT game.types MODULE game
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/types.ixx"
+    REGISTRATION_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/registration_serializers.h"
+    REGISTRATION_MODULES "game.serialization=${serialization_ifc}")
+```
+
+`REGISTRATION_MODULES`는 import 이름과 MSVC `/reference` 매핑을 함께 준다. 타깃이 이미 매핑을 제공하면
+`REGISTRATION_IMPORTS`로 import 이름만 줄 수 있다. 이 설정은 등록 코드의 가시성을 위한 것으로,
+IFC reader의 의존 모듈 탐색을 활성화하지 않는다. CLI에서는 `--registration-header`와
+`--registration-import`를 반복해서 지정한다. 생성 `.cpp`는 라이브러리 헤더 → provider·등록 모듈 import →
+생성 스키마·등록 헤더 include → 등록 함수 순서다. 등록 헤더에서 모듈 소유 타입의 선언을 다시 include하지 않는다.
 
 ```cpp
 #include "reflgen/json.h"
@@ -199,13 +234,21 @@ MSBuild 어트리뷰트 경로는 **provider**의 `Microsoft.Cpp.targets` 뒤에
 모듈 자동완성에는 기본 어트리뷰트와 전처리 결과에서 사용된 사용자 어트리뷰트가 나온다. 사용자 항목은
 `(...)` 표기이며 생성자 매개변수 설명까지 추출하지는 않는다. [실행 예제](tests/ifc/attributes)를 참고한다.
 
+혼합 프로젝트와 별도 IFC 프로젝트 모두 세미콜론 목록 속성 `ReflgenRegistrationHeaders`와
+`ReflgenRegistrationImports`를 전달한다. 별도 IFC 프로젝트에서는 `ReflgenRegistrationModule` 항목
+(`Include`는 IFC 경로, `Module`은 import 이름)으로 컴파일러 참조 매핑도 지정할 수 있다. 해당 provider의
+프로젝트·빌드 의존성도 함께 연결한다. [엔진 형태의 예제](tests/ifc/engine)는 상속·비공개 상태·오버로드·
+중첩 타입·사용자 직렬화를 CMake와 MSBuild에서 검사한다.
+
 VS 확장은 `.ixx`·`.cppm`·`.mpp` 저장 시 `ReflgenIfcSourceProject`가 해당 provider를 가리키는 로드된 프로젝트의
 `ReflgenGenerate`를 예약한다. 이 target은 provider를 먼저 빌드하여 오래된 IFC를 쓰지 않는다. 기존 작업 큐,
 Error List와 IntelliSense 갱신을 재사용하며, 모듈 소스에는 friend를 자동 삽입하지 않는다.
 provider 컴파일이나 IFC 추출·검증 실패 시 마지막 성공 생성물은 보존하고 실패를 보고한다.
 
-실행 예제와 빌드 배선은 [tests/ifc](tests/ifc)에 있다. IFC 버전/무결성/모듈 이름을 확인하며, 지원하지 않는 형식은
-실패한다. 현재 MSVC의 두 선택적 codegen trait(`evaluated-initializer`, `class-template-inheriting-ctors`)만
+실행 예제와 빌드 배선은 [tests/ifc](tests/ifc)에 있다. 빌드 후
+`ctest -R "^reflgen_ifc_" --output-on-failure --no-tests=error`로 실행한다. CI는 MSVC Debug·Release에서
+IFC 생성·컴파일·런타임·직렬화 왕복·거부 진단을 검사한다. IFC 버전/무결성/모듈 이름을 확인하며,
+지원하지 않는 형식은 실패한다. 현재 MSVC의 두 선택적 codegen trait(`evaluated-initializer`, `class-template-inheriting-ctors`)만
 추출과 무관하여 건너뛴다. IFC SDK가 모르는 다른 partition은 오류다.
 
 ## 빠른 시작
@@ -884,8 +927,9 @@ public 상속은 수동 스키마가 필요하며 private 멤버는 제외한다
 - raw pointer·`weak_ptr` 는 직렬화하지 않는다(소유인지 참조인지 알 수 없다). ID·handle 로 적으려면
   `reflgen::serializer<T*>` 를 특수화한다.
 - `default_registry()` 는 모듈(DLL)마다 하나다.
-- 생성기는 클래스 template·멤버 함수 template·오버로드된 메서드·열거자 attribute·union 을 다루지 않는다(진단으로
-  알린다). 이름 없는 매개변수는 빈 이름으로 남는다.
+- 헤더 생성기는 클래스 template·멤버 함수 template·오버로드된 메서드·열거자 attribute·union 을 다루지 않는다
+  (진단으로 알린다). IFC 백엔드는 지원하는 타입 형식 안에서 메서드 오버로드와 public CRTP 조상을 처리한다.
+  구체적인 제약은 IFC 절을 참고한다. 이름 없는 매개변수는 빈 이름으로 남는다.
 - 비공개 멤버를 반영하려면 `friend struct reflgen::access;` 가 있어야 한다(VS 확장이 저장할 때 넣는다). friend
   없이 private 멤버의 포인터를 상수로 얻는 C++20 방법(명시적 인스턴스화의 접근 검사 예외로 friend 함수를
   주입)은 Clang 에서는 되지만 MSVC 19.51 은 그 함수를 상수 평가에서 쓰지 못한다(C3779·C2131, 실측).
@@ -906,8 +950,8 @@ public 상속은 수동 스키마가 필요하며 private 멤버는 제외한다
 
 ## 로드맵
 
-1. **코드 생성기** — CMake·MSBuild 연동, NuGet 패키지, vcpkg port 완료. 남은 것: 클래스 template, 오버로드된
-   메서드, 열거자 attribute.
+1. **코드 생성기** — CMake·MSBuild 연동, NuGet 패키지, vcpkg port 완료. 남은 것: 클래스 template, 헤더 백엔드의
+   메서드 오버로드, 열거자 attribute, 다른 IFC의 선언 해석.
 2. **Visual Studio 확장** — 첫 판 완료(저장·열기 시 생성, Error List, IntelliSense 새로 고침, 자동완성, friend
    자동 삽입). 남은 것: 솔루션 전체가 아니라 바뀐 번역 단위만 IntelliSense 를 새로 고치기, CMake(폴더 열기)
    지원, C++26 이행 codemod, Marketplace 배포.

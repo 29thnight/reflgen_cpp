@@ -71,3 +71,39 @@ add_test(NAME reflgen_ifc_metadata
         "-DMETADATA=${CMAKE_CURRENT_BINARY_DIR}/reflgen-ifc/reflgen_annotated/$<CONFIG>/reflgen_annotated.i"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/metadata-check/$<CONFIG>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/attributes/check_metadata.cmake")
+
+# Engine-shaped declarations exercise the actual provider -> generator -> registration -> consumer path.
+set(engine_ifc "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/engine.ifc")
+set(engine_object "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/engine.obj")
+set(serializer_ifc "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/engine-serialization.ifc")
+set(serializer_object "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/engine-serialization.obj")
+add_custom_command(OUTPUT "${engine_ifc}" "${engine_object}" "${serializer_ifc}" "${serializer_object}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+    COMMAND "${CMAKE_CXX_COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /W4 /WX /wd5030 /permissive-
+        "$<IF:$<CONFIG:Debug>,/MDd,/MD>" "/D$<IF:$<CONFIG:Debug>,_DEBUG,NDEBUG>"
+        "/I${PROJECT_SOURCE_DIR}/include" /interface /c "${CMAKE_CURRENT_SOURCE_DIR}/engine/types.ixx"
+        /ifcOutput "${engine_ifc}" "/Fo${engine_object}"
+    COMMAND "${CMAKE_CXX_COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /W4 /WX /permissive-
+        "$<IF:$<CONFIG:Debug>,/MDd,/MD>" "/D$<IF:$<CONFIG:Debug>,_DEBUG,NDEBUG>"
+        /interface /c "${CMAKE_CURRENT_SOURCE_DIR}/engine/serialization.ixx"
+        /ifcOutput "${serializer_ifc}" "/Fo${serializer_object}"
+    DEPENDS engine/types.ixx engine/serialization.ixx "${PROJECT_SOURCE_DIR}/include/reflgen/core/hook.h" VERBATIM)
+set_source_files_properties("${engine_object}" "${serializer_object}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+add_library(reflgen_engine_types STATIC "${engine_object}" "${serializer_object}")
+set_target_properties(reflgen_engine_types PROPERTIES LINKER_LANGUAGE CXX)
+target_include_directories(reflgen_engine_types PRIVATE "${PROJECT_SOURCE_DIR}/include")
+target_compile_options(reflgen_engine_types PRIVATE /wd5030)
+reflgen_generate_ifc(reflgen_engine PROVIDER reflgen_engine_types IFC "${engine_ifc}"
+    IMPORT reflgen.test.engine MODULE engine SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/engine/types.ixx"
+    REGISTRATION_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/engine/serializers.h"
+    REGISTRATION_MODULES "reflgen.test.engine.serialization=${serializer_ifc}")
+add_executable(reflgen_ifc_engine_test engine/main.cpp)
+target_link_libraries(reflgen_ifc_engine_test PRIVATE reflgen_engine)
+target_compile_options(reflgen_ifc_engine_test PRIVATE /W4 /WX /permissive-)
+add_test(NAME reflgen_ifc_engine COMMAND reflgen_ifc_engine_test)
+if(REFLGEN_IFC_MSBUILD AND REFLGEN_IFC_POWERSHELL)
+    add_test(NAME reflgen_ifc_engine_msbuild
+        COMMAND "${REFLGEN_IFC_POWERSHELL}" -NoProfile -File "${CMAKE_CURRENT_SOURCE_DIR}/check_engine_msbuild.ps1"
+            -Generator "$<TARGET_FILE:reflgen_ifc>" -MSBuild "${REFLGEN_IFC_MSBUILD}"
+            -Work "${CMAKE_CURRENT_BINARY_DIR}/engine-msbuild" -Configuration "$<CONFIG>")
+endif()

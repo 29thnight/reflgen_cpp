@@ -1,0 +1,25 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{805D5FAE-3A46-4F10-A96E-4391C7DE7A10}</ProjectGuid>
+    <IfcTestKind>StaticLibrary</IfcTestKind>
+  </PropertyGroup>
+  <Import Project="common.props" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(IfcTestInclude);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DisableSpecificWarnings>5030;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\types.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+      <ModuleOutputFile>$(OutDir)engine.ifc</ModuleOutputFile>
+    </ClCompile>
+    <ClCompile Include="..\serialization.ixx">
+      <CompileAs>CompileAsCppModule</CompileAs>
+      <ModuleOutputFile>$(OutDir)serialization.ifc</ModuleOutputFile>
+    </ClCompile>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(IfcMetadataTargets)" />
+</Project>

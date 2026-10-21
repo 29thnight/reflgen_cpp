@@ -8,6 +8,7 @@
 //   reflgen_<module>.cpp     등록 함수 reflgen::generated::register_<module>() 의 정의.
 #include "model.h"
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace reflgen::generator
@@ -15,6 +16,12 @@ namespace reflgen::generator
     std::string emit_ifc_header(const header_model& model, const std::string& imported_module,
                                 const std::string& registration, const std::string& generated_path,
                                 const std::vector<std::string>& attribute_imports = {});
+    // IFC 입력 경로는 include 하지 않는다. 제공 모듈과 등록 의존 모듈을 먼저 import 하고,
+    // 생성 스키마·사용자 serializer 특수화를 본 뒤 등록한다. schema_text 로 재생성 지문을 만든다.
+    std::string emit_ifc_source(const header_model& model, const std::string& imported_module,
+                                const std::string& registration, std::string_view schema_text,
+                                const std::vector<std::string>& registration_headers = {},
+                                const std::vector<std::string>& registration_imports = {});
     std::string emit_header(const header_model& header, const std::string& generated_path);
 
     // attribute_headers: 사용자 이름공간의 attribute 타입을 정의한 header(절대 경로) — 생성 코드가 그 타입을 쓴다.
@@ -27,3 +34,4 @@ namespace reflgen::generator
     std::string emit_module_source(const std::string& module_name, const std::vector<header_model>& headers,
                                    const std::vector<std::string>& registration_headers);
 } // namespace reflgen::generator
+

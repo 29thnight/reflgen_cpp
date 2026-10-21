@@ -2,6 +2,7 @@
 #include "emit.h"
 #include "harness.h"
 #include "reflgen/core/version.h"
+#include <stdexcept>
 #include <string>
 
 namespace
@@ -68,6 +69,66 @@ namespace
             check(text.find("::reflgen::enum_entry<E>{\"red\", E::red}") != std::string::npos, text);
         });
 
+    const test overloaded_methods("emit: header and IFC schemas select exact overloaded member pointers", [] {
+        reflgen::generator::header_model header = player_header(false);
+        reflgen::generator::method_model mutable_damage;
+        mutable_damage.name = "damage";
+        mutable_damage.parameters = {"amount"};
+        mutable_damage.position = {"C:/src/player.h", 8, 9};
+        mutable_damage.is_overloaded = true;
+        mutable_damage.pointer_type = "int (T::*)(int) &";
+        reflgen::generator::method_model const_damage = mutable_damage;
+        const_damage.pointer_type = "int (T::*)(float) const & noexcept";
+        const_damage.access = "private";
+        header.classes.front().methods = {mutable_damage, const_damage};
+
+        const std::string plain = reflgen::generator::emit_header(header, "C:/out/player.reflgen.h");
+        const std::string imported =
+            reflgen::generator::emit_ifc_header(header, "game.types", "game", "C:/out/reflgen_game.h");
+        for (const std::string* text : {&plain, &imported})
+        {
+            check(text->find("::reflgen::method<static_cast<int (T::*)(int) &>(&T::damage)>") != std::string::npos,
+                  *text);
+            check(text->find("::reflgen::method<static_cast<int (T::*)(float) const & noexcept>(&T::damage)>") !=
+                      std::string::npos,
+                  *text);
+            check(text->find(".named(\"damage\").parameters(\"amount\")") != std::string::npos, *text);
+            check(text->find("struct reflgen::access::describer<T>") < text->find("&T::damage"), *text);
+        }
+    });
+
+    const test unresolved_overload("emit: an overloaded method without an exact pointer type is rejected", [] {
+        reflgen::generator::header_model header = player_header(false);
+        reflgen::generator::method_model damage;
+        damage.name = "damage";
+        damage.is_overloaded = true;
+        header.classes.front().methods.push_back(damage);
+        reflgen_test::check_throws<std::invalid_argument>(
+            [&] { reflgen::generator::emit_ifc_header(header, "game.types", "game", "C:/out/reflgen_game.h"); },
+            "game::player::damage");
+    });
+
+    const test ifc_nested_base("emit: IFC schemas retain bases and friend access without redeclaring imported types", [] {
+        reflgen::generator::header_model header = player_header(true);
+        reflgen::generator::class_model& player = header.classes.front();
+        player.qualified_name = "game::outer::player";
+        player.fields.front().access = "private";
+        reflgen::generator::type_reference base;
+        base.qualified_name = "game::outer::base";
+        base.name = "base";
+        base.nested = true;
+        player.bases.push_back(base);
+        const std::string text =
+            reflgen::generator::emit_ifc_header(header, "game.types", "game", "C:/out/reflgen_game.h");
+        check(text.find("import game.types;") != std::string::npos, text);
+        check(text.find("requires ::std::same_as<T, ::game::outer::player>") != std::string::npos, text);
+        check(text.find("::reflgen::base<::game::outer::base>") != std::string::npos, text);
+        check(text.find("struct reflgen::access::describer<T>") < text.find("::reflgen::field<&T::hp>"), text);
+        check(text.find("class player;") == std::string::npos, text);
+        check(text.find("struct base;") == std::string::npos, text);
+        check(text.find("#include \"C:/src/player.h\"") == std::string::npos, text);
+    });
+
     const test module_source("emit: the registration source sees complete types and offers both overloads", [] {
         const std::string text = reflgen::generator::emit_module_source("game", {player_header(false)}, {});
         check(text.find("#include \"C:/src/player.h\"") != std::string::npos, text);
@@ -86,6 +147,47 @@ namespace
             check(registration < text.find("#include \"reflgen/runtime/registry.h\""), text);
             check(registration < text.find("#include \"C:/src/player.h\""), text);
         });
+
+    const test ifc_source_registration_dependencies(
+        "emit: IFC registration imports and schema precede serializer specialization headers", [] {
+            reflgen::generator::header_model model = player_header(false);
+            model.path = "C:/build/game.ifc";
+            const std::string text = reflgen::generator::emit_ifc_source(
+                model, "game.types", "game", "schema", {"C:/src/serializers.h"}, {"game.ownership", "game.resources"});
+            const std::size_t provider = text.find("import game.types;");
+            const std::size_t schema = text.find("#include \"reflgen_game.h\"");
+            const std::size_t registration = text.find("#include \"C:/src/serializers.h\"");
+            const std::size_t ownership = text.find("import game.ownership;");
+            const std::size_t resources = text.find("import game.resources;");
+            check(provider != std::string::npos, text);
+            check(schema != std::string::npos, text);
+            check(registration != std::string::npos, text);
+            check(ownership != std::string::npos, text);
+            check(resources != std::string::npos, text);
+            check(text.find("#include \"reflgen/runtime/registry.h\"") < provider, text);
+            check(provider < ownership && ownership < resources && resources < schema, text);
+            check(schema < registration, text);
+            check(registration < text.find("target.add<::game::player>();"), text);
+            check(text.find("register_game(::reflgen::default_registry());") != std::string::npos, text);
+            check(text.find("#include \"C:/build/game.ifc\"") == std::string::npos, text);
+        });
+
+    const test ifc_source_fingerprint("emit: IFC registration source changes when its schema changes", [] {
+        const reflgen::generator::header_model model = player_header(false);
+        const std::string first = reflgen::generator::emit_ifc_source(model, "game.types", "game", "old schema");
+        const std::string second = reflgen::generator::emit_ifc_source(model, "game.types", "game", "new schema");
+        check(first != second);
+        reflgen_test::check_equal(first, reflgen::generator::emit_ifc_source(model, "game.types", "game", "old schema"));
+    });
+
+    const test ifc_source_without_classes("emit: empty IFC registration omits serializer dependencies", [] {
+        const std::string text = reflgen::generator::emit_ifc_source(
+            {"C:/build/game.ifc", {}, {}}, "game.types", "game", "schema", {"C:/src/serializers.h"}, {"game.ownership"});
+        check(text.find("import game.types;") != std::string::npos, text);
+        check(text.find("serializers.h") == std::string::npos, text);
+        check(text.find("import game.ownership;") == std::string::npos, text);
+        check(text.find("static_cast<void>(target);") != std::string::npos, text);
+    });
 
     // 반영 클래스가 없는 모듈은 서술자를 만들지 않는다 — 등록 header 를 include 하지 않는다. 빌드 설정이 모든 프로젝트에
     // 같은 등록 header 를 주어도(그 header 의 include 경로가 없는 프로젝트라도) 빈 등록 함수는 컴파일된다.

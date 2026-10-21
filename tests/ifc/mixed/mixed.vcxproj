@@ -5,6 +5,9 @@
     <ReflgenModule>mixed</ReflgenModule>
   </PropertyGroup>
   <Import Project="common.props" />
+  <PropertyGroup>
+    <ReflgenRegistrationHeaders>$(ProjectDir)registration.h</ReflgenRegistrationHeaders>
+  </PropertyGroup>
   <ItemGroup>
     <ClCompile Include="types.ixx" />
     <ClCompile Include="main.cpp" />

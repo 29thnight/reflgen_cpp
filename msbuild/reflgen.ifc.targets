@@ -16,6 +16,7 @@
     <_ReflgenIfcStamp>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).stamp</_ReflgenIfcStamp>
     <_ReflgenIfcMapping>@(ReflgenIfc->'%(Module)=%(FullPath)')</_ReflgenIfcMapping>
     <_ReflgenAttributeMappings>@(ReflgenAttributeModule->'/reference &quot;%(Module)=%(FullPath)&quot;', ' ')</_ReflgenAttributeMappings>
+    <_ReflgenRegistrationMappings>@(ReflgenRegistrationModule->'/reference &quot;%(Module)=%(FullPath)&quot;', ' ')</_ReflgenRegistrationMappings>
     <_ReflgenIfcMetadata>@(ReflgenIfc->'%(Metadata)')</_ReflgenIfcMetadata>
     <_ReflgenIfcMetadataArguments Condition="'$(_ReflgenIfcMetadata)' != ''">--metadata &quot;$(_ReflgenIfcMetadata)&quot;</_ReflgenIfcMetadataArguments>
     <ReflgenCatalogFile>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).attributes.tsv</ReflgenCatalogFile>
@@ -24,10 +25,12 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>$(ReflgenIncludeDirectory);$(ReflgenOutputDirectory);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>%(AdditionalOptions) /reference &quot;$(_ReflgenIfcMapping)&quot; $(_ReflgenAttributeMappings)</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /reference &quot;$(_ReflgenIfcMapping)&quot; $(_ReflgenAttributeMappings) $(_ReflgenRegistrationMappings)</AdditionalOptions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <_ReflgenIfcRegistrationHeader Include="$(ReflgenRegistrationHeaders)" />
+    <_ReflgenIfcRegistrationImport Include="$(ReflgenRegistrationImports);@(ReflgenRegistrationModule->'%(Module)')" />
     <ClCompile Include="$(_ReflgenIfcSource)">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -44,14 +47,21 @@
     <MakeDir Directories="$(ReflgenOutputDirectory)" />
     <Delete Files="$(_ReflgenIfcStamp)" Condition="!Exists('$(_ReflgenIfcHeader)') or !Exists('$(_ReflgenIfcSource)') or !Exists('$(ReflgenCatalogFile)')" />
   </Target>
-  <Target Name="_ReflgenIfcRun" Inputs="@(ReflgenIfc);@(ReflgenIfc->'%(Metadata)');@(ReflgenAttributeModule);$(ReflgenIfcExecutable);$(MSBuildThisFileFullPath);$(MSBuildProjectFullPath)"
+  <Target Name="_ReflgenIfcRegistrationInputs">
+    <MakeDir Directories="$(ReflgenOutputDirectory)" />
+    <WriteLinesToFile File="$(ReflgenOutputDirectory)registration.inputs"
+        Lines="@(_ReflgenIfcRegistrationHeader->'%(FullPath)');@(_ReflgenIfcRegistrationImport);@(ReflgenRegistrationModule->'%(Module)=%(FullPath)')"
+        Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="UTF-8" />
+  </Target>
+  <Target Name="_ReflgenIfcRun" DependsOnTargets="_ReflgenIfcRegistrationInputs"
+          Inputs="@(ReflgenIfc);@(ReflgenIfc->'%(Metadata)');@(ReflgenAttributeModule);@(_ReflgenIfcRegistrationHeader);@(ReflgenRegistrationModule);$(ReflgenOutputDirectory)registration.inputs;$(ReflgenIfcExecutable);$(MSBuildThisFileFullPath);$(MSBuildProjectFullPath)"
           Outputs="$(_ReflgenIfcStamp)">
-    <Exec Command="&quot;$(ReflgenIfcExecutable)&quot; --ifc &quot;%(ReflgenIfc.FullPath)&quot; --import &quot;%(ReflgenIfc.Module)&quot; --module &quot;$(ReflgenModule)&quot; --output &quot;$(ReflgenOutputDirectory).&quot; $(_ReflgenIfcMetadataArguments) @(ReflgenAttributeScope->'--attribute-scope &quot;%(Identity)&quot;', ' ') @(ReflgenAttributeModule->'--attribute-import &quot;%(Module)&quot;', ' ')" />
+    <Exec Command="&quot;$(ReflgenIfcExecutable)&quot; --ifc &quot;%(ReflgenIfc.FullPath)&quot; --import &quot;%(ReflgenIfc.Module)&quot; --module &quot;$(ReflgenModule)&quot; --output &quot;$(ReflgenOutputDirectory).&quot; $(_ReflgenIfcMetadataArguments) @(ReflgenAttributeScope->'--attribute-scope &quot;%(Identity)&quot;', ' ') @(ReflgenAttributeModule->'--attribute-import &quot;%(Module)&quot;', ' ') @(_ReflgenIfcRegistrationHeader->'--registration-header &quot;%(FullPath)&quot;', ' ') @(_ReflgenIfcRegistrationImport->'--registration-import &quot;%(Identity)&quot;', ' ')" />
     <Touch Files="$(_ReflgenIfcStamp)" AlwaysCreate="true" />
   </Target>
   <Target Name="ReflgenGenerate" BeforeTargets="ClCompile" Condition="'$(DesignTimeBuild)' != 'true'"
           DependsOnTargets="_ReflgenIfcProvider;_ReflgenIfcRun" />
   <Target Name="_ReflgenIfcClean" AfterTargets="Clean">
-    <Delete Files="$(_ReflgenIfcHeader);$(_ReflgenIfcSource);$(_ReflgenIfcStamp);$(ReflgenCatalogFile)" />
+    <Delete Files="$(_ReflgenIfcHeader);$(_ReflgenIfcSource);$(_ReflgenIfcStamp);$(ReflgenCatalogFile);$(ReflgenOutputDirectory)registration.inputs" />
   </Target>
 </Project>

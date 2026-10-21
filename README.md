@@ -107,12 +107,30 @@ Optional: configure with `-DREFLGEN_BUILD_IFC=ON` to build `reflgen-ifc` (MSVC w
 The provider and consumers remain C++20. Pinned Microsoft IFC SDK/GSL sources are fetched on first configure;
 offline builds can set `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK` and `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL`.
 
-The frontend reads the primary module's compiler-produced IFC, without reparsing its source. It generates descriptions
-for exported namespace/global class/struct types, public ordinary fields, public non-overloaded named methods, and
-exported enum entries. Non-exported types and private/protected members are excluded. Inheritance, public nested types,
-public bit-fields/reference fields, and overloaded methods fail with `RG0200`. Templates, member templates, operators,
-conversion functions, static data fields and partitions/reexports remain outside this backend. Exported types are reflected
-by default; `ignore` excludes a type/member, and `reflect("name")` changes the schema name when metadata is enabled.
+The frontend reads the primary module's compiler-produced IFC, without reparsing its source. Exported class/struct and
+enum types are reflected by default, including public nested types. With metadata enabled, `ignore` excludes a type/member
+and `reflect("name")` changes the schema name.
+
+| Declaration | IFC behavior |
+|---|---|
+| Ordinary public fields and named methods | Reflected without an attribute or friend declaration |
+| Public inheritance within this IFC | Adds the nearest reflected ancestors, including through unreflected public CRTP intermediaries |
+| Private/protected members | Reflected when the class befriends the global `::reflgen::access`; otherwise default-exported types remain public-only |
+| Explicit `reflect` with an inaccessible, non-ignored member | Fails with `RG0200` and asks for the friend declaration |
+| Overloaded named methods | Uses an exact member-pointer cast, preserving parameter types, cv/ref qualifiers and supported `noexcept` specifications |
+| Public nested class/struct and enum types | Generates schemas under their complete enclosing type names |
+
+Declare the friend against the library's global entity, for example with `#include "reflgen/core/hook.h"` in the global
+module fragment, followed by `friend struct ::reflgen::access;` inside the class. A same-named class declared inside the
+named module does not grant access to the library. Imported IFC references are not resolved by this single-IFC reader;
+this also limits friends, bases and method signature types obtained only from another named module.
+
+Non-exported types are not registered. Non-reflected private/protected helper bases are excluded; inaccessible reflected
+bases and virtual reflected inheritance are rejected rather than producing an incomplete schema. Public bit-fields and
+reference fields still require `ignore`. Standalone class templates, member templates, operators, conversion functions,
+static data fields and partitions/reexports remain outside this backend. Unsupported base/type/signature forms fail with
+`RG0200`. Runtime invocation retains its existing qualifier restrictions; `find_method(name)` returns the first match,
+so use the entries in `methods()` when selecting between overloads.
 
 ```cmake
 # game must produce this IFC path. Keep the provider independent of its reflection target.
@@ -145,6 +163,24 @@ Attribute argument names outside class static constants should be fully qualifie
 Ambiguous source-line matches fail with `RG0200`; put repeated declaration names on separate lines. Unsupported public
 bit-fields/reference fields can be excluded with `ignore` before validation.
 
+The registration translation unit must see the same custom serializers as the consumer. Supply registration-only headers
+and imports explicitly; these are made visible before `registry::add<T>()` instantiates the descriptors:
+
+```cmake
+reflgen_generate_ifc(game_reflection
+    PROVIDER game IFC "${game_ifc}" IMPORT game.types MODULE game
+    SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/types.ixx"
+    REGISTRATION_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/registration_serializers.h"
+    REGISTRATION_MODULES "game.serialization=${serialization_ifc}")
+```
+
+`REGISTRATION_MODULES` supplies both the import name and MSVC `/reference` mapping. Use `REGISTRATION_IMPORTS` instead
+when the consuming target already supplies that mapping. These options control registration visibility; they do not make
+the IFC reader traverse dependency modules. At the CLI level, repeat `--registration-header` and `--registration-import`.
+The generated source includes library headers, imports the provider and registration modules, includes the generated
+schema and registration headers, then defines the registration functions. Do not include module-owned type declarations
+again in a registration header.
+
 Consumers first include their library/standard headers (for example `reflgen/json.h`), then write `import game.types;`
 directly in their `.cpp`, then `#include "reflgen_game.h"` for schemas and registration
 declarations. In a live VS 18.10 test, relying on the import inside the header alone did not activate member completion;
@@ -166,12 +202,20 @@ Use `ReflgenAttributeScope` items for custom namespaces and `ReflgenAttributeMod
 Module completion includes built-ins and custom attributes used in the preprocessed module; custom entries show `(...)`,
 not constructor parameter documentation. See [the module attribute fixture](tests/ifc/attributes).
 
+Both the mixed-project and standalone IFC targets forward the semicolon-separated `ReflgenRegistrationHeaders` and
+`ReflgenRegistrationImports` properties. In a standalone IFC project, `ReflgenRegistrationModule` items (`Include` = IFC
+path, `Module` = import name) also supply the compiler reference mapping. Add the corresponding provider project/build
+dependencies as usual. The [engine-style fixture](tests/ifc/engine) exercises inheritance, private state, overloads,
+nested types and custom serialization in CMake and MSBuild.
+
 The VS extension routes `.ixx`/`.cppm`/`.mpp` saves to loaded reflection projects declaring that provider. Its existing
 queue invokes `ReflgenGenerate`, which builds the provider first, reports diagnostics and refreshes IntelliSense after
 schema changes. It does not insert friends into module sources. Provider compilation and IFC extraction/validation failures
 preserve the previous successful output.
 
-See [tests/ifc](tests/ifc) for executable CMake/MSBuild examples. Run `ctest -R reflgen_ifc --output-on-failure` after building.
+See [tests/ifc](tests/ifc) for executable CMake/MSBuild examples. Run
+`ctest -R "^reflgen_ifc_" --output-on-failure --no-tests=error` after building. CI runs the IFC tests with MSVC in both
+Debug and Release, including generation, compilation, runtime/serialization checks and rejection diagnostics.
 The reader validates IFC version, integrity and import identity. Only the optional MSVC codegen traits
 `evaluated-initializer` and `class-template-inheriting-ctors` are ignored; unknown semantic partitions are rejected.
 
@@ -907,8 +951,9 @@ Not yet available: a codemod that rewrites the notation (a VS extension command)
 - Raw pointers and `weak_ptr` are not serialized (it cannot be known whether they own or refer). To write them as
   IDs or handles, specialize `reflgen::serializer<T*>`.
 - `default_registry()` is one per module (DLL).
-- The generator does not handle class templates, member function templates, overloaded methods, enumerator
-  attributes or unions (it reports them with diagnostics). Unnamed parameters keep an empty name.
+- The header generator does not handle class templates, member function templates, overloaded methods, enumerator
+  attributes or unions (it reports them with diagnostics). The IFC backend supports typed method overloads and public
+  CRTP ancestry within its supported type forms; see its separate restrictions above. Unnamed parameters keep an empty name.
 - Reflecting private members requires `friend struct reflgen::access;` (the VS extension inserts it on save). The
   C++20 way of getting constant pointers to private members without a friend (injecting a friend function through
   the access-check exemption of explicit instantiation) works with Clang, but MSVC 19.51 cannot use that function in
@@ -932,7 +977,7 @@ Not yet available: a codemod that rewrites the notation (a VS extension command)
 ## Roadmap
 
 1. **Code generator** — CMake and MSBuild integration, NuGet package and vcpkg port done. Remaining: class templates,
-   overloaded methods, enumerator attributes.
+   header-backend method overloads, enumerator attributes and cross-IFC declaration resolution.
 2. **Visual Studio extension** — first version done (generate on save and open, Error List, IntelliSense refresh,
    completion, automatic friend insertion). Remaining: refreshing IntelliSense for the changed translation units
    instead of the whole solution, CMake (Open Folder) support, the C++26 migration codemod, Marketplace publishing.
