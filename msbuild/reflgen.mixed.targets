@@ -9,6 +9,8 @@
     <TLogLocation_ModuleDependencies Condition="'$(ReflgenProviderPass)' == 'true'">$(IntDir)reflgen-provider-md-tlog\</TLogLocation_ModuleDependencies>
   </PropertyGroup>
   <ItemGroup>
+    <_ReflgenModuleRegistrationHeader Include="$(ReflgenRegistrationHeaders)" />
+    <_ReflgenModuleRegistrationImport Include="$(ReflgenRegistrationImports);@(ReflgenRegistrationModule->'%(Module)')" />
     <ClCompile Update="@(_ReflgenModuleCandidate)">
       <CompileAs>CompileAsCppModule</CompileAs>
       <ModuleOutputFile Condition="'%(ModuleOutputFile)' == '' or HasTrailingSlash('%(ModuleOutputFile)')">$(IntDir)%(Filename).reflgen.ifc</ModuleOutputFile>
@@ -47,11 +49,31 @@
     <Delete Files="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).stamp"
         Condition="!Exists('$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).h') or !Exists('$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).cpp')" />
   </Target>
-  <Target Name="_ReflgenRunModules" Inputs="%(_ReflgenPrimary.ModuleOutputFile);%(_ReflgenPrimary.ModuleOutputFile).i;$(ReflgenIfcExecutable);$(MSBuildThisFileFullPath);$(MSBuildProjectFullPath)"
+  <Target Name="_ReflgenModuleRegistrationInputs">
+    <MakeDir Directories="$(ReflgenOutputDirectory)" />
+    <WriteLinesToFile File="$(ReflgenOutputDirectory)module-registration.inputs"
+        Lines="@(_ReflgenModuleRegistrationHeader->'%(FullPath)');@(_ReflgenModuleRegistrationImport);@(ReflgenRegistrationModule->'%(Module)=%(FullPath)')"
+        Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="UTF-8" />
+    <ItemGroup><FileWrites Include="$(ReflgenOutputDirectory)module-registration.inputs" /></ItemGroup>
+  </Target>
+  <Target Name="_ReflgenRunModules" DependsOnTargets="_ReflgenModuleRegistrationInputs"
+          Inputs="%(_ReflgenPrimary.ModuleOutputFile);%(_ReflgenPrimary.ModuleOutputFile).i;@(_ReflgenModuleRegistrationHeader);@(ReflgenRegistrationModule);$(ReflgenOutputDirectory)module-registration.inputs;$(ReflgenIfcExecutable);$(MSBuildThisFileFullPath);$(MSBuildProjectFullPath)"
           Outputs="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).stamp">
-    <Exec Command="&quot;$(ReflgenIfcExecutable)&quot; --ifc &quot;%(_ReflgenPrimary.ModuleOutputFile)&quot; --metadata &quot;%(_ReflgenPrimary.ModuleOutputFile).i&quot; --module &quot;%(_ReflgenPrimary.Registration)&quot; --output &quot;$(ReflgenOutputDirectory).&quot; @(ReflgenAttributeScope->'--attribute-scope &quot;%(Identity)&quot;', ' ')" StdOutEncoding="utf-8" StdErrEncoding="utf-8" />
+    <Exec Command="&quot;$(ReflgenIfcExecutable)&quot; --ifc &quot;%(_ReflgenPrimary.ModuleOutputFile)&quot; --metadata &quot;%(_ReflgenPrimary.ModuleOutputFile).i&quot; --module &quot;%(_ReflgenPrimary.Registration)&quot; --output &quot;$(ReflgenOutputDirectory).&quot; @(ReflgenAttributeScope->'--attribute-scope &quot;%(Identity)&quot;', ' ') @(_ReflgenModuleRegistrationHeader->'--registration-header &quot;%(FullPath)&quot;', ' ') @(_ReflgenModuleRegistrationImport->'--registration-import &quot;%(Identity)&quot;', ' ')" StdOutEncoding="utf-8" StdErrEncoding="utf-8" />
     <Touch Files="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).stamp" AlwaysCreate="true" />
     <ItemGroup><FileWrites Include="$(ReflgenOutputDirectory)reflgen_%(_ReflgenPrimary.Registration).*" /></ItemGroup>
+  </Target>
+  <!-- Header registration sources are added dynamically during ReflgenGenerateHeaders. Registration headers
+       can import local modules too, so supply their IFCs after both generation routes have added sources. -->
+  <Target Name="_ReflgenRegistrationReferences" AfterTargets="ReflgenGenerate" DependsOnTargets="_ReflgenAddModuleSources"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(ReflgenProviderPass)' != 'true' and '$(ReflgenSelectedBackend)' != 'Std'">
+    <ItemGroup>
+      <_ReflgenRegistrationConsumer Include="@(ClCompile)" Exclude="@(_ReflgenProvider)"
+          Condition="'%(ClCompile.CompileAs)' != 'CompileAsC' and ('%(ClCompile.Extension)' != '.c' or '%(ClCompile.CompileAs)' == 'CompileAsCpp')" />
+      <ClCompile Update="@(_ReflgenRegistrationConsumer)">
+        <AdditionalOptions>%(ClCompile.AdditionalOptions) @(_ReflgenPrimary->'/reference &quot;%(ModuleOutputFile)&quot;', ' ') @(ReflgenRegistrationModule->'/reference &quot;%(Module)=%(FullPath)&quot;', ' ')</AdditionalOptions>
+      </ClCompile>
+    </ItemGroup>
   </Target>
   <Target Name="_ReflgenBeforeModuleScan" BeforeTargets="SetModuleDependencies" DependsOnTargets="ReflgenGenerate"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(ReflgenProviderPass)' != 'true'" />

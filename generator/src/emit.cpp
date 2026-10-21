@@ -2,7 +2,10 @@
 #include "reflgen/core/version.h"
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <map>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -100,6 +103,21 @@ namespace reflgen::generator
             return "    requires ::std::same_as<" + std::string(parameter) + ", ::" + qualified_name + ">";
         }
 
+        std::string method_pointer(const class_model& owner, const method_model& method)
+        {
+            const std::string address = "&T::" + method.name;
+            if (!method.pointer_type.empty())
+            {
+                return "static_cast<" + method.pointer_type + ">(" + address + ")";
+            }
+            if (method.is_overloaded)
+            {
+                throw std::invalid_argument("reflgen: overloaded method '" + owner.qualified_name + "::" + method.name +
+                                            "' has no unambiguous member pointer type");
+            }
+            return address;
+        }
+
         void emit_class(text_builder& out, const class_model& model, const std::string& generated_path)
         {
             std::vector<schema_entry> entries;
@@ -118,7 +136,7 @@ namespace reflgen::generator
             }
             for (const method_model& method : model.methods)
             {
-                std::string text = "::reflgen::method<&T::" + method.name + ">.named(\"" + method.name + "\")";
+                std::string text = "::reflgen::method<" + method_pointer(model, method) + ">.named(\"" + method.name + "\")";
                 if (!method.parameters.empty())
                 {
                     text += ".parameters(";
@@ -316,6 +334,35 @@ namespace reflgen::generator
             }
             out.line();
         }
+
+        void emit_registration(text_builder& out, const std::string& module_name, std::span<const header_model> headers)
+        {
+            out.line();
+            out.line("namespace reflgen::generated");
+            out.line("{");
+            out.line("    void register_" + module_name + "(::reflgen::registry& target)");
+            out.line("    {");
+            std::size_t count = 0;
+            for (const header_model& header : headers)
+            {
+                for (const class_model& model : header.classes)
+                {
+                    out.line("        target.add<::" + model.qualified_name + ">();");
+                    ++count;
+                }
+            }
+            if (count == 0)
+            {
+                out.line("        static_cast<void>(target);");
+            }
+            out.line("    }");
+            out.line();
+            out.line("    void register_" + module_name + "()");
+            out.line("    {");
+            out.line("        register_" + module_name + "(::reflgen::default_registry());");
+            out.line("    }");
+            out.line("} // namespace reflgen::generated");
+        }
     } // namespace
 
     std::string emit_ifc_header(const header_model& model, const std::string& imported_module,
@@ -338,6 +385,41 @@ namespace reflgen::generator
         out.line("    void register_" + registration + "(::reflgen::registry&);");
         out.line("    void register_" + registration + "();");
         out.line("}");
+        return out.take();
+    }
+
+    std::string emit_ifc_source(const header_model& model, const std::string& imported_module,
+                                const std::string& registration, std::string_view schema_text,
+                                const std::vector<std::string>& registration_headers,
+                                const std::vector<std::string>& registration_imports)
+    {
+        // 타입 목록이 같아도 스키마가 바뀌면 등록 번역 단위가 함께 다시 컴파일되어야 한다.
+        std::uint64_t fingerprint = 14695981039346656037ull;
+        for (const unsigned char byte : schema_text)
+        {
+            fingerprint = (fingerprint ^ byte) * 1099511628211ull;
+        }
+        text_builder out;
+        out.line(banner);
+        out.line("// schema: " + std::to_string(fingerprint));
+        out.line("#include \"reflgen/runtime/registry.h\"");
+        out.line("import " + imported_module + ";");
+        if (!model.classes.empty())
+        {
+            for (const std::string& imported : registration_imports)
+            {
+                out.line("import " + imported + ";");
+            }
+        }
+        out.line("#include \"reflgen_" + registration + ".h\"");
+        if (!model.classes.empty())
+        {
+            for (const std::string& header : registration_headers)
+            {
+                out.line("#include \"" + header + "\"");
+            }
+        }
+        emit_registration(out, registration, std::span<const header_model>(&model, 1));
         return out.take();
     }
 
@@ -439,31 +521,8 @@ namespace reflgen::generator
                 out.line("#include \"" + header.path + "\"");
             }
         }
-        out.line();
-        out.line("namespace reflgen::generated");
-        out.line("{");
-        out.line("    void register_" + module_name + "(::reflgen::registry& target)");
-        out.line("    {");
-        std::size_t count = 0;
-        for (const header_model& header : headers)
-        {
-            for (const class_model& model : header.classes)
-            {
-                out.line("        target.add<::" + model.qualified_name + ">();");
-                ++count;
-            }
-        }
-        if (count == 0)
-        {
-            out.line("        static_cast<void>(target);");
-        }
-        out.line("    }");
-        out.line();
-        out.line("    void register_" + module_name + "()");
-        out.line("    {");
-        out.line("        register_" + module_name + "(::reflgen::default_registry());");
-        out.line("    }");
-        out.line("} // namespace reflgen::generated");
+        emit_registration(out, module_name, headers);
         return out.take();
     }
 } // namespace reflgen::generator
+

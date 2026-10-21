@@ -9,7 +9,7 @@ reflgen은 스키마를 만드는 경로를 선택하면서 런타임 등록·�
 | 입력/설정 | 경로 | 속성 표기 |
 |---|---|---|
 | 기존 헤더 | libclang 생성기 | `[[reflgen::reflect]]`, `[[reflgen::ignore]]` |
-| MSVC 모듈의 export된 public 타입 | IFC 생성기 | 같은 표기; 속성은 전처리 sidecar 필요 |
+| MSVC 모듈의 export된 타입과 public 중첩 타입 | IFC 생성기 | 같은 표기; 속성은 전처리 sidecar 필요 |
 | C++26 + 기능 검사 성공 + 타입 목록 | 표준 리플렉션 | `[[=reflgen::reflect{}]]`, `[[=reflgen::ignore{}]]` |
 
 MSBuild에서는 기존 `reflgen.targets`를 import하면 혼합 프로젝트의 헤더와 모듈을 구분한다.
@@ -23,6 +23,33 @@ IFC는 타입·가시성 정보의 원천이다. 기존 사용자 어트리뷰�
 사용자 어트리뷰트에는 `ATTRIBUTE_SCOPES`와 `ATTRIBUTE_MODULES`를 지정한다.
 `ignore`는 생성 스키마에서 타입/멤버를 제외하며 `transient`는 멤버를 유지하고 직렬화에서 제외한다.
 모듈에서 export한 사용자 어트리뷰트도 테스트에 포함한다.
+
+## IFC 상속·접근·등록
+
+IFC 경로는 같은 primary IFC 안의 public 상속과 public 중첩 class·struct·enum을 처리한다.
+미반영 public 중간 클래스·CRTP를 지나 가장 가까운 반영 부모를 연결하므로, 부모의 필드·메서드는 기존
+`base<T>` 스키마를 통해 런타임 조회와 직렬화에 포함된다. 비반영 private/protected 보조 부모는 제외하며,
+접근할 수 없는 반영 부모와 public virtual·pack-expanded 상속 경로는 `RG0200`으로 거부한다.
+
+기본 export 타입은 friend가 없으면 public 멤버만 반영한다. 전역 `::reflgen::access`를 friend로 선언하면
+private/protected 필드·메서드도 포함하며, `ignore`를 먼저 적용한다. 명시적 `reflect` 타입에 접근할 수 없는
+미제외 멤버가 있으면 friend가 필요하다는 오류를 낸다. global module fragment에서 `reflgen/core/hook.h`를
+include해 라이브러리의 실제 선언을 사용한다. named module 안에서 같은 이름을 새로 선언하는 방식은 사용할 수 없다.
+
+오버로드 메서드는 IFC 시그니처에서 정확한 멤버 포인터 타입을 만들어 구분한다. cv/ref 한정자와 지원하는
+`noexcept` 명세를 유지하며, 타입을 해석할 수 없으면 임의로 추정하지 않는다. 런타임 호출 대상의 기존 한정자
+제약은 바뀌지 않는다. 외부 IFC 참조, partition·재export 수집, 템플릿 자체의 스키마 등은 아직 지원하지 않는다.
+특히 `import reflgen.core;`를 통해 얻은 friend가 외부 IFC 참조로 기록되면 현재 reader로는 해석할 수 없다.
+
+등록 함수가 소비자와 같은 사용자 serializer를 보도록 `REGISTRATION_HEADERS`와
+`REGISTRATION_MODULES "import.name=path.ifc"`를 `reflgen_generate_ifc()`에 지정한다.
+MSBuild는 `ReflgenRegistrationHeaders`·`ReflgenRegistrationImports` 속성을 전달하며,
+`ReflgenRegistrationModule` 항목으로 `/reference`도 연결한다. 이 옵션은 생성된 등록 코드의 의존성만
+설정하고 reader가 다른 IFC를 탐색하게 하지는 않는다. 생성 스키마와 사용자 serializer를 포함한 다음
+등록 서술자를 인스턴스화하므로, 다른 번역 단위와 직렬화 동작이 달라지는 것을 막는다.
+
+재현 예제는 [tests/ifc/engine](../tests/ifc/engine)에 있다. CI의 `ifc (Debug)`·`ifc (Release)` 작업이
+CMake/MSBuild 생성·컴파일, 상속·비공개 상태·오버로드 호출, JSON/binary 왕복과 거부 진단을 실행한다.
 
 ## 언어 버전과 기능 감지
 

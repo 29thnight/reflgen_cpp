@@ -1,6 +1,6 @@
 // IFC supplies semantic declarations; optional MSVC /P metadata preserves tool attributes.
 #include "emit.h"
-#include "metadata.h"
+#include "extractor.h"
 #include <ifc/reader.hxx>
 #include <ifc/tooling.hxx>
 #include <algorithm>
@@ -25,221 +25,7 @@ namespace
     using namespace ifc::symbolic;
     using namespace reflgen::generator;
 
-    struct diagnostic_failure : std::runtime_error
-    {
-        source_position source;
-        diagnostic_failure(source_position location, const std::string& message)
-            : std::runtime_error(message), source(std::move(location))
-        {
-        }
-    };
-
-    bool has(BasicSpecifiers flags, BasicSpecifiers bit)
-    {
-        return (to_underlying(flags) & to_underlying(bit)) != 0;
-    }
-
-    bool identifier(std::string_view text)
-    {
-        if (text.empty() || !(std::isalpha(static_cast<unsigned char>(text.front())) || text.front() == '_'))
-            return false;
-        return std::ranges::all_of(text, [](unsigned char c) { return std::isalnum(c) || c == '_'; });
-    }
-
-    struct extractor
-    {
-        Reader& reader;
-        header_model model;
-        module_metadata* metadata = nullptr;
-        std::set<std::string> scopes{"reflgen"};
-
-        std::vector<attribute_group> attributes(SourceLocation locus, std::string_view member, bool type = false)
-        {
-            if (!metadata)
-                return {};
-            try
-            {
-                return metadata->declaration(position(locus), member, type);
-            }
-            catch (const std::exception& e)
-            {
-                fail(locus, e.what());
-            }
-        }
-
-        bool ignored(const std::vector<attribute_group>& groups)
-        {
-            return metadata && metadata->directive(groups, "ignore");
-        }
-
-        std::vector<attribute_use> uses(const std::vector<attribute_group>& groups, const qualifier_lookup& lookup = {})
-        {
-            return metadata ? metadata->uses(groups, scopes, lookup) : std::vector<attribute_use>{};
-        }
-
-        std::string name(NameIndex index)
-        {
-            if (index.sort() == NameSort::Identifier)
-                return reader.get(TextOffset(to_underlying(index.index())));
-            return {}; // operators, conversions and specializations are outside this first backend.
-        }
-
-        source_position position(SourceLocation locus)
-        {
-            if (index_like::null(locus.line))
-                return {};
-            const auto& line = reader.get(locus.line);
-            std::string file;
-            if (line.file.sort() == NameSort::SourceFile)
-                file = reader.get(reader.get<SourceFileName>(line.file).name);
-            std::replace(file.begin(), file.end(), '\\', '/');
-            return {file, static_cast<unsigned>(to_underlying(line.line)),
-                    static_cast<unsigned>(to_underlying(locus.column))};
-        }
-
-        [[noreturn]] void fail(SourceLocation locus, const std::string& message)
-        {
-            throw diagnostic_failure(position(locus), message);
-        }
-
-        void members(const ScopeDecl& scope, class_model& result)
-        {
-            const auto* body = reader.try_get(scope.initializer);
-            if (!body)
-                return;
-            std::map<std::string, int> method_counts;
-            std::set<std::string> constants;
-            for (const auto& entry : reader.sequence(*body))
-                if (entry.index.sort() == DeclSort::Variable)
-                    constants.insert(name(reader.get<VariableDecl>(entry.index).identity.name));
-            const qualifier_lookup lookup = [&constants](std::string_view value) {
-                return constants.contains(std::string(value)) ? "T::" : "";
-            };
-            for (const auto& entry : reader.sequence(*body))
-            {
-                if (entry.index.sort() == DeclSort::Field)
-                {
-                    const auto& field = reader.get<FieldDecl>(entry.index);
-                    if (field.access != Access::Public)
-                        continue;
-                    const std::string field_name = reader.get(field.identity.name);
-                    const auto groups = attributes(field.identity.locus, field_name);
-                    if (ignored(groups))
-                        continue;
-                    if (field.type.sort() == TypeSort::LvalueReference ||
-                        field.type.sort() == TypeSort::RvalueReference)
-                        fail(field.identity.locus, "reference field is unsupported: " + result.qualified_name);
-                    if (!identifier(field_name))
-                        fail(field.identity.locus, "anonymous field is unsupported: " + result.qualified_name);
-                    result.fields.push_back({field_name, position(field.identity.locus), uses(groups, lookup)});
-                }
-                else if (entry.index.sort() == DeclSort::Bitfield)
-                {
-                    const auto& bit = reader.get<BitfieldDecl>(entry.index);
-                    if (bit.access == Access::Public &&
-                        !ignored(attributes(bit.identity.locus, reader.get(bit.identity.name))))
-                        fail(bit.identity.locus, "public bit-field is unsupported: " + result.qualified_name);
-                }
-                else if (entry.index.sort() == DeclSort::Method)
-                {
-                    const auto& method = reader.get<NonStaticMemberFunctionDecl>(entry.index);
-                    const std::string method_name = name(method.identity.name);
-                    if (!identifier(method_name))
-                        continue;
-                    const auto groups = attributes(method.identity.locus, method_name, true);
-                    if (ignored(groups))
-                        continue;
-                    if (identifier(method_name))
-                        ++method_counts[method_name];
-                    if (method.access == Access::Public && identifier(method_name))
-                    {
-                        result.methods.push_back(
-                            {method_name, {}, position(method.identity.locus), uses(groups, lookup)});
-                    }
-                }
-                else if (entry.index.sort() == DeclSort::Scope)
-                {
-                    const auto& nested = reader.get<ScopeDecl>(entry.index);
-                    if (nested.access == Access::Public)
-                        fail(nested.identity.locus, "public nested type is unsupported: " + result.qualified_name);
-                }
-                else if (entry.index.sort() == DeclSort::Enumeration)
-                {
-                    const auto& nested = reader.get<EnumerationDecl>(entry.index);
-                    if (nested.access == Access::Public)
-                        fail(nested.identity.locus, "public nested enum is unsupported: " + result.qualified_name);
-                }
-            }
-            for (const auto& [method, count] : method_counts)
-                if (count > 1 &&
-                    std::ranges::any_of(result.methods, [&method](const auto& item) { return item.name == method; }))
-                    fail(scope.identity.locus,
-                         "overloaded method is unsupported: " + result.qualified_name + "::" + method);
-        }
-
-        void walk(ScopeIndex index, const std::string& prefix = {})
-        {
-            const auto* scope = reader.try_get(index);
-            if (!scope)
-                return;
-            for (const auto& entry : reader.sequence(*scope))
-            {
-                if (entry.index.sort() == DeclSort::Enumeration)
-                {
-                    const auto& type = reader.get<EnumerationDecl>(entry.index);
-                    if (has(type.basic_spec, BasicSpecifiers::NonExported) ||
-                        has(type.basic_spec, BasicSpecifiers::IsMemberOfGlobalModule))
-                        continue;
-                    enum_model result;
-                    result.name = reader.get(type.identity.name);
-                    if (!identifier(result.name))
-                        continue;
-                    result.qualified_name = prefix + result.name;
-                    result.position = position(type.identity.locus);
-                    if (ignored(attributes(type.identity.locus, result.name, true)))
-                        continue;
-                    for (const auto& value : reader.sequence(type.initializer))
-                        result.enumerators.emplace_back(reader.get(value.identity.name));
-                    model.enums.push_back(std::move(result));
-                }
-                else if (entry.index.sort() == DeclSort::Scope)
-                {
-                    const auto& type = reader.get<ScopeDecl>(entry.index);
-                    const auto* fundamental = reader.get_if<FundamentalType>(type.type);
-                    if (!fundamental)
-                        continue;
-                    const std::string short_name = name(type.identity.name);
-                    if (!identifier(short_name) || has(type.basic_spec, BasicSpecifiers::IsMemberOfGlobalModule))
-                        continue;
-                    if (fundamental->basis == TypeBasis::Namespace)
-                        walk(type.initializer, prefix + short_name + "::");
-                    else if (fundamental->basis == TypeBasis::Struct || fundamental->basis == TypeBasis::Class)
-                    {
-                        if (has(type.basic_spec, BasicSpecifiers::NonExported) || !reader.try_get(type.initializer))
-                            continue;
-                        const auto groups = attributes(type.identity.locus, short_name, true);
-                        if (ignored(groups) || (metadata && metadata->directive(groups, "attribute")))
-                            continue;
-                        if (!index_like::null(type.base))
-                            fail(type.identity.locus,
-                                 "inheritance is unsupported by the initial IFC backend: " + prefix + short_name);
-                        class_model result;
-                        result.name = short_name;
-                        result.qualified_name = prefix + short_name;
-                        result.schema_name = "\"" + result.qualified_name + "\"";
-                        result.position = position(type.identity.locus);
-                        result.attributes = uses(groups);
-                        if (metadata)
-                            if (const auto* reflect = metadata->directive(groups, "reflect");
-                                reflect && reflect->has_arguments)
-                                result.schema_name = metadata->arguments(*reflect);
-                        members(type, result);
-                        model.classes.push_back(std::move(result));
-                    }
-                }
-            }
-        }
-    };
+    using namespace reflgen::generator::ifc_frontend;
 
     void write_changed(const std::filesystem::path& path, const std::string& text)
     {
@@ -258,6 +44,8 @@ int main(int argc, char** argv)
     std::string input, module, registration, directory, metadata_path;
     std::set<std::string> scopes{"reflgen"};
     std::vector<std::string> attribute_imports;
+    std::vector<std::string> registration_headers;
+    std::vector<std::string> registration_imports;
     const char* stage = "arguments";
     try
     {
@@ -283,13 +71,22 @@ int main(int argc, char** argv)
                     throw std::runtime_error("attribute scope must be an identifier");
                 scopes.insert(value);
             }
-            else if (option == "--attribute-import")
+            else if (option == "--registration-header")
+            {
+                if (value.empty() || value.find_first_of("\"\r\n") != std::string::npos)
+                    throw std::runtime_error("invalid registration header path");
+                std::string header = value;
+                std::replace(header.begin(), header.end(), '\\', '/');
+                registration_headers.push_back(std::move(header));
+            }
+            else if (option == "--attribute-import" || option == "--registration-import")
             {
                 if (value.empty() || !std::ranges::all_of(value, [](unsigned char c) {
                         return std::isalnum(c) || c == '_' || c == '.';
                     }))
                     throw std::runtime_error("invalid attribute module name");
-                attribute_imports.push_back(value);
+                if (option == "--attribute-import") attribute_imports.push_back(value);
+                else registration_imports.push_back(value);
             }
             else
                 throw std::runtime_error("unknown option: " + option);
@@ -297,7 +94,8 @@ int main(int argc, char** argv)
         if (input.empty() || directory.empty() || !identifier(registration))
             throw std::runtime_error(
                 "usage: reflgen-ifc --ifc FILE --import MODULE --module REGISTRATION --output DIR "
-                "[--metadata MSVC_PREPROCESSED_FILE] [--attribute-scope NAMESPACE] [--attribute-import MODULE]");
+                "[--metadata MSVC_PREPROCESSED_FILE] [--attribute-scope NAMESPACE] [--attribute-import MODULE] "
+                "[--registration-header HEADER] [--registration-import MODULE]");
         stage = "open";
         ifc::tool::InputFile container{std::filesystem::path(input)};
         InputIfc file{container.contents()};
@@ -333,7 +131,7 @@ int main(int argc, char** argv)
             if (std::filesystem::last_write_time(metadata_path) < std::filesystem::last_write_time(input))
                 throw std::runtime_error("metadata predates IFC; regenerate MSVC /P output after compiling the module");
         }
-        extractor extract{reader, {input, {}, {}}, metadata.get(), scopes};
+        extractor extract{reader, input, metadata.get(), scopes};
         stage = "extract";
         extract.walk(file.header()->global_scope);
         const auto output = std::filesystem::absolute(directory);
@@ -342,18 +140,8 @@ int main(int argc, char** argv)
         const auto header = output / (stem + ".h");
         const std::string header_text =
             emit_ifc_header(extract.model, module, registration, header.generic_string(), attribute_imports);
-        // Keep registration source tied to the complete schema, even when its list of types is unchanged.
-        std::uint64_t fingerprint = 14695981039346656037ull;
-        for (const unsigned char byte : header_text)
-            fingerprint = (fingerprint ^ byte) * 1099511628211ull;
-        std::string source =
-            "// <auto-generated/> Generated by reflgen IFC\n// schema: " + std::to_string(fingerprint) +
-            "\n#include \"reflgen/runtime/registry.h\"\nimport " + module + ";\n#include \"" + stem +
-            ".h\"\nnamespace reflgen::generated {\nvoid register_" + registration + "(::reflgen::registry& target) {\n";
-        for (const auto& type : extract.model.classes)
-            source += "    target.add<::" + type.qualified_name + ">();\n";
-        source += "    static_cast<void>(target);\n}\nvoid register_" + registration + "() { register_" + registration +
-                  "(::reflgen::default_registry()); }\n}\n";
+        const std::string source = emit_ifc_source(extract.model, module, registration, header_text,
+                                                   registration_headers, registration_imports);
         // Do not publish partial output if IFC extraction or code generation failed.
         write_changed(header, header_text);
         write_changed(output / (stem + ".cpp"), source);
@@ -386,3 +174,4 @@ int main(int argc, char** argv)
     }
     return 1;
 }
+

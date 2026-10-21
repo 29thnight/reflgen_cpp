@@ -198,6 +198,32 @@ namespace reflgen::generator
                                          [offset](const auto& g) { return g.begin <= offset && offset < g.end; }))
                     matches.push_back(index);
             }
+        if (matches.size() > 1 && type)
+        {
+            // A class name can appear again in its own CRTP base list on the same line.
+            // Select the declaration introducer, never a template argument or attribute operand.
+            std::vector<std::size_t> declarations;
+            for (const auto candidate : matches)
+            {
+                auto before = candidate;
+                while (before > 0)
+                {
+                    const auto group = std::ranges::find_if(groups_, [&](const auto& item) {
+                        return item.end == tokens_[before - 1].end;
+                    });
+                    if (group == groups_.end()) break;
+                    while (before > 0 && tokens_[before - 1].begin >= group->begin) --before;
+                }
+                if (before > 0)
+                {
+                    const auto& introducer = tokens_[before - 1].spelling;
+                    if (introducer == "class" || introducer == "struct" ||
+                        introducer == "enum" || introducer == "union")
+                        declarations.push_back(candidate);
+                }
+            }
+            if (declarations.size() == 1) matches = std::move(declarations);
+        }
         if (matches.size() != 1)
             throw std::runtime_error("ambiguous metadata declaration '" + std::string(name) +
                                      "'; put declarations on separate lines");
@@ -284,3 +310,4 @@ namespace reflgen::generator
         return result;
     }
 } // namespace reflgen::generator
+

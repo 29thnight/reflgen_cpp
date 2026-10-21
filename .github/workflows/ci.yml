@@ -32,6 +32,44 @@ jobs:
         shell: pwsh
         run: ./scripts/test.ps1 -Presets ${{ matrix.preset }}
 
+  ifc:
+    name: ifc (${{ matrix.configuration }})
+    runs-on: windows-2025-vs2026
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and execute the complete IFC reflection tests
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+          $build = "build/ifc-${{ matrix.configuration }}"
+          cmake -S . -B $build -G Ninja -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DREFLGEN_BUILD_IFC=ON -DREFLGEN_BUILD_TESTS=ON -DREFLGEN_BUILD_EXAMPLES=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build $build --target reflgen_cli reflgen_ifc_test reflgen_ifc_attributes_test reflgen_ifc_engine_test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $registered = (ctest --test-dir $build --show-only=json-v1 | ConvertFrom-Json).tests.name
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($name in 'runtime', 'generator', 'rejections', 'mixed', 'msbuild', 'attributes', 'metadata', 'engine', 'engine_msbuild') {
+            if ($registered -notcontains "reflgen_ifc_$name") { throw "Required IFC test was not registered: $name" }
+          }
+          ctest --test-dir $build -R '^reflgen_ifc_' --output-on-failure --no-tests=error
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve IFC test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ifc-${{ matrix.configuration }}-diagnostics
+          path: |
+            build/ifc-${{ matrix.configuration }}/Testing/Temporary/
+            build/ifc-${{ matrix.configuration }}/tests/ifc/
+          if-no-files-found: ignore
+
   vs-extension:
     runs-on: windows-2025-vs2026
     steps:
@@ -97,3 +135,4 @@ jobs:
           }
           & (Join-Path $installed 'tools\reflgen\reflgen.exe') --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+

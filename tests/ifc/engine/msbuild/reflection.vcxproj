@@ -1,0 +1,19 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{B120DFCB-F1AD-43F7-9F63-AD0BCB778125}</ProjectGuid>
+    <IfcTestKind>Application</IfcTestKind>
+  </PropertyGroup>
+  <Import Project="common.props" />
+  <PropertyGroup>
+    <ReflgenModule>engine</ReflgenModule>
+    <ReflgenRegistrationHeaders>$(ProjectDir)..\serializers.h</ReflgenRegistrationHeaders>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="provider.vcxproj"><Project>{805D5FAE-3A46-4F10-A96E-4391C7DE7A10}</Project></ProjectReference>
+    <ReflgenIfc Include="$(OutDir)engine.ifc"><Module>reflgen.test.engine</Module><Metadata>$(OutDir)engine.ifc.i</Metadata></ReflgenIfc>
+    <ReflgenRegistrationModule Include="$(OutDir)serialization.ifc"><Module>reflgen.test.engine.serialization</Module></ReflgenRegistrationModule>
+    <ClCompile Include="..\main.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(IfcTargets)" />
+</Project>

@@ -88,6 +88,10 @@ namespace reflgen::generator
         bool qualifiers_known = true;
         bool is_consteval = false;
         bool declaration_specifiers_known = true;
+        // 오버로드를 선택하는 멤버 함수 포인터 타입. 소유 클래스는 서술자의 T 로 적고,
+        // 반환형·인자·cv/ref·noexcept·호출 규약은 추출기가 의미 정보로 확정한다.
+        // 비면 기존의 &T::name 을 쓴다. 오버로드에는 반드시 타입이 있어야 한다.
+        std::string pointer_type = {};
     };
 
     // 다른 클래스를 가리키는 것(부모) — 생성 header 가 전방 선언할 수 있게 이름공간과 키를 함께 둔다.
