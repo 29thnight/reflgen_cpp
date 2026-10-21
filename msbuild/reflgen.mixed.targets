@@ -65,7 +65,7 @@
   </Target>
   <!-- Header registration sources are added dynamically during ReflgenGenerateHeaders. Registration headers
        can import local modules too, so supply their IFCs after both generation routes have added sources. -->
-  <Target Name="_ReflgenRegistrationReferences" AfterTargets="ReflgenGenerate"
+  <Target Name="_ReflgenRegistrationReferences" AfterTargets="ReflgenGenerate" DependsOnTargets="_ReflgenAddModuleSources"
           Condition="'$(DesignTimeBuild)' != 'true' and '$(ReflgenProviderPass)' != 'true' and '$(ReflgenSelectedBackend)' != 'Std'">
     <ItemGroup>
       <_ReflgenRegistrationConsumer Include="@(ClCompile)" Exclude="@(_ReflgenProvider)"
