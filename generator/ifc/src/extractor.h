@@ -63,7 +63,7 @@ namespace reflgen::generator::ifc_frontend
             const auto& line = reader_.get(locus.line);
             std::string file;
             if (line.file.sort() == NameSort::SourceFile)
-                file = reader_.get(reader_.get<SourceFileName>(line.file).name);
+                file = semantic_.text(reader_.get<SourceFileName>(line.file).name);
             std::replace(file.begin(), file.end(), '\\', '/');
             return {file, static_cast<unsigned>(to_underlying(line.line)),
                     static_cast<unsigned>(to_underlying(locus.column))};
@@ -78,7 +78,7 @@ namespace reflgen::generator::ifc_frontend
         {
             if (!metadata_) return {};
             try { return metadata_->declaration(position(locus), member, type); }
-            catch (const std::exception& error) { fail(locus, error.what()); }
+            catch (const std::exception& error) { fail(locus, std::string(error.what()) + " (declaration " + std::string(member) + ")"); }
         }
 
         const scanned_attribute* directive(const std::vector<attribute_group>& groups, std::string_view name) const
@@ -106,7 +106,7 @@ namespace reflgen::generator::ifc_frontend
                         (nested ? type.access != Access::Public : has_flag(type.basic_spec, BasicSpecifiers::NonExported)))
                         continue;
                     enum_model result;
-                    result.name = reader_.get(type.identity.name);
+                    result.name = semantic_.text(type.identity.name);
                     if (!identifier(result.name)) continue;
                     result.qualified_name = prefix + result.name;
                     result.position = position(type.identity.locus);
@@ -114,7 +114,7 @@ namespace reflgen::generator::ifc_frontend
                     result.namespaces = namespaces;
                     if (directive(attributes(type.identity.locus, result.name, true), "ignore")) continue;
                     for (const auto& value : reader_.sequence(type.initializer))
-                        result.enumerators.emplace_back(reader_.get(value.identity.name));
+                        result.enumerators.push_back(semantic_.text(value.identity.name));
                     model.enums.push_back(std::move(result));
                 }
                 else if (entry.index.sort() == DeclSort::Scope)
@@ -161,23 +161,25 @@ namespace reflgen::generator::ifc_frontend
 
         bool grants_access(const ScopeDecl& scope) const
         {
-            const auto* body = reader_.try_get(scope.initializer);
-            if (!body) return false;
-            for (const auto& entry : reader_.sequence(*body))
-            {
-                if (entry.index.sort() != DeclSort::Friend) continue;
-                const auto target = semantic_.friend_declaration(reader_.get<FriendDecl>(entry.index).index);
-                if (index_like::null(target)) continue;
-                if (target.sort() == DeclSort::Reference)
-                    fail(scope.identity.locus,
-                         "friend declaration belongs to another IFC; imported friend resolution is unsupported; "
-                         "declare reflgen::access through the global module fragment");
-                if (target.sort() != DeclSort::Scope) continue;
+            const auto grants = [this](DeclIndex index) {
+                if (index.sort() != DeclSort::Friend) return false;
+                const auto target = semantic_.friend_declaration(reader_.get<FriendDecl>(index).index);
+                if (index_like::null(target)) return false;
+                // An unrelated imported friend must not disable public-only reflection.
+                // Without its owning IFC it also cannot prove access to private members.
+                if (target.sort() != DeclSort::Scope) return false;
                 const auto& friend_scope = reader_.get<ScopeDecl>(target);
-                if (semantic_.declaration_name(target) == "reflgen::access" &&
-                    has_flag(friend_scope.basic_spec, BasicSpecifiers::IsMemberOfGlobalModule))
-                    return true;
-            }
+                return semantic_.declaration_name(target) == "reflgen::access" &&
+                    has_flag(friend_scope.basic_spec, BasicSpecifiers::IsMemberOfGlobalModule);
+            };
+            // MSVC stores friendship as an associated trait, outside the member scope.
+            if (const auto* friends = reader_.try_find<trait::Friends>(reader_.index_of<DeclIndex>(scope)))
+                for (const auto& entry : reader_.sequence(friends->trait))
+                    if (grants(entry.index)) return true;
+            // Retain the declaration form for IFC producers which put friends in the body.
+            if (const auto* body = reader_.try_get(scope.initializer))
+                for (const auto& entry : reader_.sequence(*body))
+                    if (grants(entry.index)) return true;
             return false;
         }
 
@@ -196,6 +198,7 @@ namespace reflgen::generator::ifc_frontend
             if (!body) return;
             const bool friend_access = grants_access(scope);
             std::map<std::string, std::size_t> method_counts;
+            std::set<std::string> imported_methods;
             std::set<std::string> constants;
             for (const auto& entry : reader_.sequence(*body))
             {
@@ -207,6 +210,12 @@ namespace reflgen::generator::ifc_frontend
                     ++method_counts[semantic_.name(reader_.get<FunctionDecl>(entry.index).identity.name)];
                 else if (entry.index.sort() == DeclSort::Template)
                     ++method_counts[semantic_.simple_name(reader_.get<TemplateDecl>(entry.index).identity.name)];
+                else if (entry.index.sort() == DeclSort::Using)
+                {
+                    const auto& use = reader_.get<UsingDecl>(entry.index);
+                    const auto name = index_like::null(use.name) ? use.identity.name : use.name;
+                    imported_methods.insert(semantic_.text(name));
+                }
             }
             const qualifier_lookup lookup = [&constants](std::string_view value) {
                 return constants.contains(std::string(value)) ? "T::" : "";
@@ -216,12 +225,16 @@ namespace reflgen::generator::ifc_frontend
                 if (entry.index.sort() == DeclSort::Field)
                 {
                     const auto& field = reader_.get<FieldDecl>(entry.index);
-                    const std::string field_name = reader_.get(field.identity.name);
+                    if (field.access != Access::Public && !friend_access && !explicit_reflect) continue;
+                    const std::string field_name = semantic_.text(field.identity.name);
                     const auto groups = attributes(field.identity.locus, field_name);
                     if (directive(groups, "ignore") ||
                         !visible(field.access, friend_access, explicit_reflect, field.identity.locus,
                                  result.qualified_name + "::" + field_name)) continue;
-                    if (field.type.sort() == TypeSort::LvalueReference || field.type.sort() == TypeSort::RvalueReference)
+                    bool is_reference;
+                    try { is_reference = semantic_.reference_type(field.type); }
+                    catch (const std::exception& error) { fail(field.identity.locus, error.what()); }
+                    if (is_reference)
                         fail(field.identity.locus, "reference field is unsupported: " + result.qualified_name);
                     if (!identifier(field_name)) fail(field.identity.locus, "anonymous field is unsupported: " + result.qualified_name);
                     result.fields.push_back({field_name, position(field.identity.locus), uses(groups, lookup)});
@@ -229,7 +242,8 @@ namespace reflgen::generator::ifc_frontend
                 else if (entry.index.sort() == DeclSort::Bitfield)
                 {
                     const auto& bit = reader_.get<BitfieldDecl>(entry.index);
-                    const auto groups = attributes(bit.identity.locus, reader_.get(bit.identity.name));
+                    if (bit.access != Access::Public && !friend_access && !explicit_reflect) continue;
+                    const auto groups = attributes(bit.identity.locus, semantic_.text(bit.identity.name));
                     if (!directive(groups, "ignore") &&
                         visible(bit.access, friend_access, explicit_reflect, bit.identity.locus, result.qualified_name))
                         fail(bit.identity.locus, "bit-field is unsupported: " + result.qualified_name);
@@ -237,6 +251,7 @@ namespace reflgen::generator::ifc_frontend
                 else if (entry.index.sort() == DeclSort::Method)
                 {
                     const auto& method = reader_.get<NonStaticMemberFunctionDecl>(entry.index);
+                    if (method.access != Access::Public && !friend_access && !explicit_reflect) continue;
                     const std::string method_name = semantic_.name(method.identity.name);
                     if (!identifier(method_name)) continue;
                     const auto groups = attributes(method.identity.locus, method_name, true);
@@ -246,7 +261,7 @@ namespace reflgen::generator::ifc_frontend
                     if (has_flag(method.traits, FunctionTraits::Deleted) || has_flag(method.traits, FunctionTraits::Immediate))
                         fail(method.identity.locus, "deleted or consteval method cannot be reflected: " + result.qualified_name + "::" + method_name);
                     method_model output{method_name, {}, position(method.identity.locus), uses(groups, lookup)};
-                    output.is_overloaded = method_counts[method_name] > 1;
+                    output.is_overloaded = method_counts[method_name] > 1 || imported_methods.contains(method_name);
                     if (output.is_overloaded)
                     {
                         try { output.pointer_type = semantic_.method_pointer(method.type); }
@@ -254,7 +269,7 @@ namespace reflgen::generator::ifc_frontend
                     }
                     if (method.chart.sort() == ChartSort::Unilevel)
                         for (const auto& parameter : reader_.sequence(reader_.get<UnilevelChart>(method.chart)))
-                            output.parameters.emplace_back(reader_.get(parameter.identity.name));
+                            output.parameters.push_back(semantic_.text(parameter.identity.name));
                     result.methods.push_back(std::move(output));
                 }
             }
@@ -286,8 +301,12 @@ namespace reflgen::generator::ifc_frontend
             if (!active.insert(base.declaration).second) fail(locus, "cyclic IFC inheritance graph");
             const auto found = selected_.find(base.declaration);
             // The scope may be an instantiated CRTP pattern not present among exported concrete types.
-            const auto short_name = semantic_.simple_name(base.declaration->identity.name);
-            const auto groups = attributes(base.declaration->identity.locus, short_name, true);
+            const auto identity = base.authoring_template ? base.authoring_template->identity : base.declaration->identity;
+            const auto short_name = semantic_.simple_name(identity.name);
+            const auto source_locus = index_like::null(identity.locus.line) ? locus : identity.locus;
+            if (index_like::null(identity.locus.line))
+                fail(locus, "base declaration has no authoring identity in this IFC: " + short_name);
+            const auto groups = attributes(source_locus, short_name, true);
             const bool reflected = found != selected_.end() ||
                 (!directive(groups, "ignore") && directive(groups, "reflect"));
             if (access != Access::Public)
@@ -311,7 +330,7 @@ namespace reflgen::generator::ifc_frontend
                 result.bases.push_back(std::move(reference));
             }
             else
-                bases(base.declaration->base, base.bindings, result, active, emitted, base.declaration->identity.locus);
+                bases(base.declaration->base, base.bindings, result, active, emitted, source_locus);
             active.erase(base.declaration);
         }
     };

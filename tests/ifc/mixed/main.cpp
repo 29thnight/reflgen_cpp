@@ -1,10 +1,11 @@
 #include <iostream>
 #include <string>
 #include "settings.h"
+// This header opens library dependencies before the installed test imports reflgen.json.
+#include "registration.h"
 #include "reflgen/json.h"
 import mixed.types;
 #include "reflgen_mixed_types.h"
-#include "registration.h"
 
 int main()
 {

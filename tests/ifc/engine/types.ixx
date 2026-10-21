@@ -14,6 +14,7 @@ export namespace engine_fixture
     {
         int entity_id = 17;
         void inherited_add(int amount) { entity_id += amount; }
+        int choose(int value) const noexcept { return entity_id + value; }
     };
 
     template<class Derived, class Base>
@@ -50,6 +51,8 @@ export namespace engine_fixture
 
         int apply(int value) & noexcept { return entity_id + value; }
         int apply(float value) const & noexcept { return entity_id + static_cast<int>(value) * 2; }
+        using component_base::choose;
+        int choose(float value) const noexcept { return entity_id + static_cast<int>(value) * 3; }
         int pick() & noexcept { return 1; }
         int pick() const & noexcept { return 2; }
         int pick() && noexcept { return 3; }
@@ -63,5 +66,13 @@ export namespace engine_fixture
       public:
         int visible = 22;
         int overloaded(float value) { return static_cast<int>(value) + visible; }
+    };
+
+    // Ignored implementation fields require no access grant, even for explicit reflection.
+    class [[reflgen::reflect]] explicitly_ignored_private
+    {
+        [[reflgen::ignore]] int ignored_ = 23;
+      public:
+        int visible = 24;
     };
 }

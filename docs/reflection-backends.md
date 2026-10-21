@@ -29,7 +29,7 @@ IFC는 타입·가시성 정보의 원천이다. 기존 사용자 어트리뷰�
 IFC 경로는 같은 primary IFC 안의 public 상속과 public 중첩 class·struct·enum을 처리한다.
 미반영 public 중간 클래스·CRTP를 지나 가장 가까운 반영 부모를 연결하므로, 부모의 필드·메서드는 기존
 `base<T>` 스키마를 통해 런타임 조회와 직렬화에 포함된다. 비반영 private/protected 보조 부모는 제외하며,
-접근할 수 없는 반영 부모와 virtual 반영 상속은 `RG0200`으로 거부한다.
+접근할 수 없는 반영 부모와 public virtual·pack-expanded 상속 경로는 `RG0200`으로 거부한다.
 
 기본 export 타입은 friend가 없으면 public 멤버만 반영한다. 전역 `::reflgen::access`를 friend로 선언하면
 private/protected 필드·메서드도 포함하며, `ignore`를 먼저 적용한다. 명시적 `reflect` 타입에 접근할 수 없는

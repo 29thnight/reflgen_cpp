@@ -27,12 +27,19 @@ namespace reflgen::generator::ifc_frontend
         DeclIndex index{};
         const ScopeDecl* declaration = nullptr;
         template_bindings bindings;
+        const TemplateDecl* authoring_template = nullptr;
     };
 
     class semantics
     {
       public:
         explicit semantics(Reader& reader) : reader_(reader) {}
+
+        std::string text(TextOffset index) const
+        {
+            const auto* value = reader_.get(index);
+            return value ? value : "";
+        }
 
         std::string simple_name(NameIndex index, unsigned depth = 0) const
         {
@@ -50,7 +57,7 @@ namespace reflgen::generator::ifc_frontend
             switch (index.sort())
             {
             case NameSort::Identifier:
-                return reader_.get(TextOffset(to_underlying(index.index())));
+                return text(TextOffset(to_underlying(index.index())));
             case NameSort::Template:
                 return name(reader_.get<TemplateName>(index).name, depth + 1);
             case NameSort::Specialization:
@@ -141,6 +148,29 @@ namespace reflgen::generator::ifc_frontend
                 return reader_.get<NamedDeclExpr>(expression_index).decl;
             // A class template specialization is not the non-template reflgen::access.
             return {};
+        }
+
+        bool reference_type(TypeIndex index, unsigned depth = 0) const
+        {
+            check_depth(depth);
+            if (index.sort() == TypeSort::LvalueReference || index.sort() == TypeSort::RvalueReference)
+                return true;
+            if (index.sort() == TypeSort::Qualified)
+                return reference_type(reader_.get<QualifiedType>(index).unqualified_type, depth + 1);
+            if (index.sort() == TypeSort::Designated)
+            {
+                auto declaration = reader_.get<DesignatedType>(index).decl;
+                while (declaration.sort() == DeclSort::Prolongation)
+                {
+                    check_depth(++depth);
+                    declaration = reader_.get<ProlongationDecl>(declaration).original_decl;
+                }
+                if (declaration.sort() == DeclSort::Alias)
+                    return reference_type(reader_.get<AliasDecl>(declaration).aliasee, depth + 1);
+                // A foreign reference belongs to a different Reader. Ordinary imported
+                // fields do not need spelling or declaration resolution here.
+            }
+            return false;
         }
 
         TypeIndex substitute(TypeIndex index, const template_bindings& bindings) const
@@ -238,7 +268,7 @@ namespace reflgen::generator::ifc_frontend
         {
             const auto short_name = [&] {
                 if constexpr (std::is_same_v<decltype(declaration.identity.name), TextOffset>)
-                    return std::string(reader_.get(declaration.identity.name));
+                    return text(declaration.identity.name);
                 else
                     return name(declaration.identity.name, depth + 1);
             }();
@@ -475,7 +505,11 @@ namespace reflgen::generator::ifc_frontend
                 bindings[{parameters[i].level, parameters[i].position}] =
                     substitute(reader_.get<TypeExpr>(args[i]).denotation, outer);
             }
-            return declaration_scope(value.entity.decl, bindings, depth + 1);
+            auto result = declaration_scope(value.entity.decl, bindings, depth + 1);
+            // MSVC's parameterized ScopeDecl has a mangled name and no source locus.
+            // The enclosing TemplateDecl retains its author-facing identity and attributes.
+            result.authoring_template = &value;
+            return result;
         }
     };
 }

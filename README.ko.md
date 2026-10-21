@@ -117,6 +117,9 @@ ctest --preset msvc-cpp20 -R reflgen_ifc
 처음 설정할 때 고정된 IFC SDK/GSL 소스를 받는다. 오프라인에서는 `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK`와
 `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL`에 해당 소스 디렉터리를 지정한다. 기본 헤더 생성 방식은 이 기능을 켜지 않는다.
 
+아래의 상속·friend·중첩 타입·오버로드·등록 의존성 확장은 이 리비전에서 빌드한 생성기가 필요하다.
+배포된 v1.1.0 바이너리에는 포함되어 있지 않다.
+
 **범위:** export된 class·struct와 enum을 기본으로 반영하며, public 중첩 타입도 포함한다. 메타데이터를 켜면
 `ignore`로 타입·멤버를 제외하고 `reflect("이름")`으로 스키마 이름을 지정할 수 있다.
 
@@ -133,11 +136,12 @@ friend는 라이브러리의 전역 선언을 가리켜야 한다. 예를 들어
 `#include "reflgen/core/hook.h"`를 사용하고 클래스 안에 `friend struct ::reflgen::access;`를 둔다.
 named module 안에서 같은 이름의 클래스를 새로 선언해도 라이브러리에 접근 권한을 주지 않는다.
 현재 단일 IFC reader는 다른 모듈의 IFC 참조를 해석하지 않으므로, 다른 named module에서만 가져온
-friend·부모 타입·메서드 시그니처 타입에도 이 제약이 적용된다.
+friend·부모 타입·오버로드 메서드의 시그니처 타입에도 이 제약이 적용된다.
 
 비export 타입은 등록하지 않는다. 반영하지 않는 private/protected 보조 부모는 제외하며, 접근할 수 없는
-반영 부모와 virtual 반영 상속은 불완전한 스키마를 만들지 않고 거부한다. public bit-field·참조 필드는
-여전히 `ignore`가 필요하다. 템플릿 타입 자체의 반영·멤버 템플릿, 연산자·변환 함수, static 데이터 필드,
+반영 부모와 public virtual·pack-expanded 상속 경로는 불완전한 스키마를 만들지 않고 거부한다.
+public bit-field·참조 필드는 여전히 `ignore`가 필요하다. 템플릿 타입 자체의 반영·멤버 템플릿,
+연산자·변환 함수, static 데이터 필드,
 partition·재export 타입 수집은 지원하지 않는다. 해석하지 못하는 부모·타입·시그니처는 `RG0200`으로 실패한다.
 런타임 호출의 기존 한정자 제약은 유지한다. `find_method(name)`은 첫 번째 일치 항목을 반환하므로
 오버로드를 구분할 때는 `methods()`의 각 서술자를 확인한다.

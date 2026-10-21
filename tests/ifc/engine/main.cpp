@@ -28,6 +28,7 @@ try
     static_assert(!reflgen::reflectable<engine_fixture::counted>);
     static_assert(reflgen::field_count<component>() == 7);
     static_assert(reflgen::field_count<engine_fixture::legacy_public_only>() == 1);
+    static_assert(reflgen::field_count<engine_fixture::explicitly_ignored_private>() == 1);
 
     reflgen::registry registry;
     reflgen::generated::register_engine(registry);
@@ -72,6 +73,8 @@ try
 
     unsigned called = 0;
     unsigned picks = 0;
+    unsigned inherited_choices = 0;
+    unsigned own_choices = 0;
     for (const auto& method : type->methods())
     {
         int answer = 0;
@@ -101,6 +104,27 @@ try
             require(answer == 106);
             ++called;
         }
+        if (method.name() == "choose")
+        {
+            require(method.is_const() && method.parameters().size() == 1);
+            if (method.parameters()[0].type() == reflgen::type_id_of<int>())
+            {
+                int value = 5;
+                void* arguments[] = {&value};
+                method.invoke(&original, arguments, &answer);
+                require(answer == 76);
+                ++inherited_choices;
+            }
+            else
+            {
+                require(method.parameters()[0].type() == reflgen::type_id_of<float>());
+                float value = 5.0f;
+                void* arguments[] = {&value};
+                method.invoke(&original, arguments, &answer);
+                require(answer == 86);
+                ++own_choices;
+            }
+        }
         if (method.name() == "pick")
         {
             method.invoke(&original, {}, &answer);
@@ -109,6 +133,7 @@ try
         }
     }
     require(called == 3 && picks == 2); // && methods are schema-only, never invoked on a void* lvalue.
+    require(inherited_choices == 1 && own_choices == 1);
     bool rvalue_called = false;
     reflgen::for_each_method<component>([&](const auto& method) {
         using pointer = typename std::remove_cvref_t<decltype(method)>::pointer_type;
@@ -127,6 +152,11 @@ try
     int result = 0;
     legacy->methods()[0].invoke(&legacy_object, arguments, &result);
     require(result == 25);
+    const auto* ignored = registry.find("engine_fixture::explicitly_ignored_private");
+    require(ignored && ignored->fields().size() == 1 && ignored->find_field("ignored_") == nullptr);
+    engine_fixture::explicitly_ignored_private ignored_object;
+    const auto* visible = ignored->find_field("visible");
+    require(visible != nullptr && *static_cast<int*>(visible->address(&ignored_object)) == 24);
     std::cout << "IFC_ENGINE_OK inheritance CRTP private nested overloads serializers " << text << '\n';
 }
 catch (const std::exception& error)

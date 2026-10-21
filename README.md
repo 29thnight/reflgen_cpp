@@ -107,6 +107,9 @@ Optional: configure with `-DREFLGEN_BUILD_IFC=ON` to build `reflgen-ifc` (MSVC w
 The provider and consumers remain C++20. Pinned Microsoft IFC SDK/GSL sources are fetched on first configure;
 offline builds can set `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK` and `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL`.
 
+The inheritance, friend, nested-type, overload and registration-dependency extensions below require a generator built
+from this revision; the released v1.1.0 binary does not include them.
+
 The frontend reads the primary module's compiler-produced IFC, without reparsing its source. Exported class/struct and
 enum types are reflected by default, including public nested types. With metadata enabled, `ignore` excludes a type/member
 and `reflect("name")` changes the schema name.
@@ -123,11 +126,11 @@ and `reflect("name")` changes the schema name.
 Declare the friend against the library's global entity, for example with `#include "reflgen/core/hook.h"` in the global
 module fragment, followed by `friend struct ::reflgen::access;` inside the class. A same-named class declared inside the
 named module does not grant access to the library. Imported IFC references are not resolved by this single-IFC reader;
-this also limits friends, bases and method signature types obtained only from another named module.
+this also limits friends, bases and overloaded method signature types obtained only from another named module.
 
 Non-exported types are not registered. Non-reflected private/protected helper bases are excluded; inaccessible reflected
-bases and virtual reflected inheritance are rejected rather than producing an incomplete schema. Public bit-fields and
-reference fields still require `ignore`. Standalone class templates, member templates, operators, conversion functions,
+bases and virtual or pack-expanded public base paths are rejected rather than producing an incomplete schema.
+Public bit-fields and reference fields still require `ignore`. Standalone class templates, member templates, operators, conversion functions,
 static data fields and partitions/reexports remain outside this backend. Unsupported base/type/signature forms fail with
 `RG0200`. Runtime invocation retains its existing qualifier restrictions; `find_method(name)` returns the first match,
 so use the entries in `methods()` when selecting between overloads.

@@ -114,7 +114,7 @@ function(reflgen_generate_ifc target)
             add_library(${target} STATIC)
             target_link_libraries(${target} PUBLIC reflgen::reflgen ${ARG_PROVIDER})
             reflgen_generate_standard(${target} MODULE "${ARG_MODULE}" OUTPUT_DIRECTORY "${ARG_OUTPUT_DIRECTORY}"
-                HEADERS ${ARG_REGISTRATION_HEADERS} IMPORTS "${ARG_IMPORT}" ${registration_imports} TYPES ${ARG_TYPES})
+                REGISTRATION_HEADERS ${ARG_REGISTRATION_HEADERS} IMPORTS "${ARG_IMPORT}" ${registration_imports} TYPES ${ARG_TYPES})
             target_compile_options(${target} PUBLIC ${registration_mappings})
             return()
         endif()
@@ -245,7 +245,8 @@ function(reflgen_generate target)
             set(no_registration NO_REGISTRATION)
         endif()
         reflgen_generate_standard(${target} MODULE "${ARG_MODULE}" OUTPUT_DIRECTORY "${ARG_OUTPUT_DIRECTORY}"
-            HEADERS ${ARG_HEADERS} ${ARG_REGISTRATION_HEADERS} TYPES ${ARG_TYPES} IMPORTS ${ARG_IMPORTS} ${no_registration})
+            HEADERS ${ARG_HEADERS} REGISTRATION_HEADERS ${ARG_REGISTRATION_HEADERS}
+            TYPES ${ARG_TYPES} IMPORTS ${ARG_IMPORTS} ${no_registration})
         return()
     endif()
     if(NOT ARG_HEADERS)
