@@ -26,6 +26,8 @@ try
     static_assert(reflgen::reflectable<component::settings>);
     static_assert(!reflgen::reflectable<engine_fixture::opaque_value>);
     static_assert(!reflgen::reflectable<engine_fixture::counted>);
+    static_assert(!reflgen::reflectable<engine_fixture::storage_root>);
+    static_assert(!reflgen::reflectable<engine_fixture::protected_state>);
     static_assert(reflgen::field_count<component>() == 7);
     static_assert(reflgen::field_count<engine_fixture::legacy_public_only>() == 1);
     static_assert(reflgen::field_count<engine_fixture::explicitly_ignored_private>() == 1);
@@ -39,6 +41,7 @@ try
     component original;
     require(type->bases()[0].cast(&original) == static_cast<component_base*>(&original));
     require(type->find_field("internal_count") == nullptr);
+    require(type->find_field("internal_storage") == nullptr && type->find_field("internal_state") == nullptr);
     const auto* secret = type->find_field("secret_");
     const auto* protected_field = type->find_field("protected_");
     const auto* external = type->find_field("external");
@@ -60,6 +63,7 @@ try
     require(text.find("\"external\":1013") != std::string::npos);
     require(text.find("\"secret\":99") != std::string::npos);
     require(text.find("internal_count") == std::string::npos);
+    require(text.find("internal_storage") == std::string::npos && text.find("internal_state") == std::string::npos);
     component loaded;
     reflgen::json::reader reader(text);
     type->deserialize(reader, &loaded);

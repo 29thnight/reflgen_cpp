@@ -30,6 +30,18 @@ reject(private_without_friend "export class [[reflgen::reflect]] bad { int value
 reject(wrong_friend "namespace unrelated { struct access; } export class [[reflgen::reflect]] bad { friend struct unrelated::access; int value = 1; };" "friend")
 reject(module_local_friend "export namespace reflgen { struct access {}; } export class [[reflgen::reflect]] bad { friend struct reflgen::access; int value = 1; };" "friend")
 reject(private_reflected_base "export struct base { int x; }; export class bad : private base { public: int y; };" "base")
+# Ignoring a helper does not make its reflected ancestors safe to omit through a non-public edge.
+foreach(access IN ITEMS private protected)
+    reject(${access}_ignored_intermediate
+        "export struct base { int x; };\nexport struct [[reflgen::ignore]] helper : public base {};\nexport struct bad : ${access} helper { int y; };"
+        "non-public reflected base")
+endforeach()
+reject(inaccessible_middle_edge
+    "export struct base { int x; };\nexport struct [[reflgen::ignore]] lower : public base {};\nexport struct [[reflgen::ignore]] upper : private lower {};\nexport struct bad : public upper { int y; };"
+    "non-public reflected base")
+reject(private_crtp_intermediate
+    "export struct base { int x; };\nexport template<class Derived, class Base> struct [[reflgen::ignore]] helper : public Base {};\nexport struct bad : private helper<bad, base> { int y; };"
+    "non-public reflected base")
 file(WRITE "${WORK}/foreign.ixx" "export module foreign.base;\nexport struct foreign_base { int value = 1; };\n")
 execute_process(COMMAND "${COMPILER}" /nologo /std:c++20 /EHsc /interface /c "${WORK}/foreign.ixx"
     /ifcOutput "${WORK}/foreign.ifc" "/Fo${WORK}/foreign.obj"

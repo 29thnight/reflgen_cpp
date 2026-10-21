@@ -276,13 +276,14 @@ namespace reflgen::generator::ifc_frontend
         }
 
         void bases(TypeIndex index, const template_bindings& bindings, class_model& result,
-                   std::set<const ScopeDecl*>& active, std::set<std::string>& emitted, SourceLocation locus)
+                   std::set<const ScopeDecl*>& active, std::set<std::string>& emitted, SourceLocation locus,
+                   bool public_path = true)
         {
             if (index_like::null(index)) return;
             if (index.sort() == TypeSort::Tuple)
             {
                 for (const auto item : reader_.sequence(reader_.get<TupleType>(index)))
-                    bases(item, bindings, result, active, emitted, locus);
+                    bases(item, bindings, result, active, emitted, locus, public_path);
                 return;
             }
             Access access = Access::Public;
@@ -294,6 +295,7 @@ namespace reflgen::generator::ifc_frontend
                 traits = base.traits;
                 index = base.type;
             }
+            const bool accessible = public_path && access == Access::Public;
             resolved_scope base;
             try { base = semantic_.scope(index, bindings); }
             catch (const std::exception& error) { fail(locus, error.what()); }
@@ -309,13 +311,10 @@ namespace reflgen::generator::ifc_frontend
             const auto groups = attributes(source_locus, short_name, true);
             const bool reflected = found != selected_.end() ||
                 (!directive(groups, "ignore") && directive(groups, "reflect"));
-            if (access != Access::Public)
-            {
-                if (reflected) fail(locus, "non-public reflected base cannot be serialized: " + result.qualified_name);
-                active.erase(base.declaration);
-                return;
-            }
-            if (has_flag(traits, BaseClassTraits::Shared) || has_flag(traits, BaseClassTraits::Expanded))
+            if (reflected && !accessible)
+                fail(locus, "non-public reflected base cannot be serialized: " + result.qualified_name);
+            if (accessible &&
+                (has_flag(traits, BaseClassTraits::Shared) || has_flag(traits, BaseClassTraits::Expanded)))
                 fail(locus, "virtual or pack-expanded reflected base path is unsupported: " + result.qualified_name);
             if (reflected)
             {
@@ -330,7 +329,8 @@ namespace reflgen::generator::ifc_frontend
                 result.bases.push_back(std::move(reference));
             }
             else
-                bases(base.declaration->base, base.bindings, result, active, emitted, source_locus);
+                // An ignored helper can still lead to a reflected ancestor through a non-public path.
+                bases(base.declaration->base, base.bindings, result, active, emitted, source_locus, accessible);
             active.erase(base.declaration);
         }
     };

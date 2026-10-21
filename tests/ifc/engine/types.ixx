@@ -24,12 +24,24 @@ export namespace engine_fixture
         [[reflgen::ignore]] Derived& derived() { return static_cast<Derived&>(*this); }
     };
 
-    struct [[reflgen::ignore]] counted
+    struct [[reflgen::ignore]] storage_root
+    {
+        int internal_storage = 2;
+    };
+
+    struct [[reflgen::ignore]] counted : public storage_root
     {
         int internal_count = 1;
     };
 
-    class [[reflgen::reflect]] component : private counted, public component_node<component, component_base>
+    struct [[reflgen::ignore]] protected_state
+    {
+        int internal_state = 3;
+    };
+
+    // Non-public helper-only paths stay valid; the public CRTP sibling still exposes its reflected base.
+    class [[reflgen::reflect]] component
+        : private counted, protected protected_state, public component_node<component, component_base>
     {
         friend struct ::reflgen::access;
         [[reflgen::serialized_name("secret")]] int secret_ = 9;
