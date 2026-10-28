@@ -712,6 +712,13 @@ namespace reflgen
             {
                 static_cast<void>(std::invoke(Function, self, method_argument<Args>(arguments[Is])...));
             }
+            else if constexpr (!complete_type<stored>)
+            {
+                // Reference-returning methods can be declared before their result
+                // type is defined. MSVC rejects is_assignable on that incomplete
+                // type; retain the method metadata without instantiating the trait.
+                result_not_assignable(name);
+            }
             else if constexpr (std::is_assignable_v<stored&, R>)
             {
                 *static_cast<stored*>(result) = std::invoke(Function, self, method_argument<Args>(arguments[Is])...);

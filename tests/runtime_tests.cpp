@@ -179,6 +179,21 @@ namespace runtime
                 reflgen::method<&odd_signatures::as_volatile>);
         }
     };
+
+    // A public getter may legally return a forward-declared reference. Do not
+    // complete this type: registration must retain its opaque result metadata.
+    struct opaque_result;
+    struct incomplete_return
+    {
+        int calls = 0;
+        opaque_result& read()
+        {
+            ++calls;
+            throw std::logic_error("opaque result provider");
+        }
+        static consteval auto reflect()
+        { return reflgen::schema<incomplete_return>(reflgen::method<&incomplete_return::read>); }
+    };
     // 힙 할당을 막은 타입 — 기본 생성자가 있어도 팩토리를 노출하지 않는다.
     struct managed_only
     {
@@ -478,5 +493,22 @@ namespace
         runtime::fixed_id target{0};
         check_throws<std::invalid_argument>([&] { type.find_method("identity")->invoke(&object, {}, &target); },
                                             "cannot be assigned");
+    });
+
+    const test incomplete_reference_result("runtime: forward-declared reference results remain opaque and reject storage before invocation", [] {
+        runtime::incomplete_return object;
+        const auto& type = reflgen::type_descriptor_of<runtime::incomplete_return>();
+        const auto* method = type.find_method("read");
+        require(method != nullptr);
+        check(method->return_type() == reflgen::type_id_of<runtime::opaque_result>());
+        check(method->result().shape() == reflgen::value_shape::unsupported);
+        check(!method->is_serialized_invocable());
+        int storage = 19;
+        check_throws<std::invalid_argument>([&] { method->invoke(&object, {}, &storage); }, "cannot be assigned");
+        check_equal(storage, 19);
+        check_equal(object.calls, 0);
+        // Discarding the reference does not need a definition of the result type.
+        check_throws<std::logic_error>([&] { method->invoke(&object, {}); }, "opaque result provider");
+        check_equal(object.calls, 1);
     });
 } // namespace
