@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <utility>
 #include <variant>
 #include <vector>
 #if defined(__cpp_lib_expected)
@@ -83,6 +84,51 @@ namespace runtime_values
         const leaf& get_item() const { return item; }
         static consteval auto reflect()
         { return reflgen::schema<owned_snapshot>(reflgen::field<&owned_snapshot::item>, reflgen::method<&owned_snapshot::get_item>); }
+    };
+    struct borrowing_destructor
+    {
+        inline static char last_character = '\0';
+        std::string_view value;
+        explicit borrowing_destructor(std::string_view text) : value(text) {}
+        borrowing_destructor(borrowing_destructor&& other) noexcept : value(std::exchange(other.value, {})) {}
+        ~borrowing_destructor() { if (!value.empty()) last_character = value.front(); }
+    };
+    struct lookup_methods
+    {
+        mutable int calls = 0;
+        leaf native{29, "native lookup"};
+        script_only entry{43, "state"};
+        const leaf& find(std::string_view name) const
+        { ++calls; if (name != "entry") throw std::out_of_range("entry"); return native; }
+        script_only* find_pointer(std::string_view name) const
+        { ++calls; if (name != "entry") return nullptr; return const_cast<script_only*>(&entry); }
+        const leaf& echo(const leaf& value) const { ++calls; return value; }
+        std::string_view text_view(std::string_view value) const { ++calls; return value; }
+        const char* text_pointer(const char* value) const { ++calls; return value; }
+        std::span<const int> numbers(std::span<const int> value) const { ++calls; return value; }
+        borrowing_destructor retained_destructor(std::string_view value) const
+        { ++calls; return borrowing_destructor(value); }
+        leaf& mutate(std::string_view) { ++calls; return native; }
+        const leaf& output(leaf& value) const { ++calls; return value; }
+        const leaf& moved(leaf&& value) const { ++calls; return value; }
+        const leaf& pointer_argument(leaf*) const { ++calls; return native; }
+        const leaf& callback_argument(void (*)()) const { ++calls; return native; }
+        const leaf& mutable_span(std::span<int>) const { ++calls; return native; }
+        leaf& no_argument() { ++calls; return native; }
+        const leaf& internal(std::string_view) const { ++calls; return native; }
+        static consteval auto reflect()
+        {
+            return reflgen::schema<lookup_methods>(
+                reflgen::method<&lookup_methods::find>, reflgen::method<&lookup_methods::find_pointer>,
+                reflgen::method<&lookup_methods::echo>, reflgen::method<&lookup_methods::text_view>,
+                reflgen::method<&lookup_methods::text_pointer>, reflgen::method<&lookup_methods::numbers>,
+                reflgen::method<&lookup_methods::retained_destructor>,
+                reflgen::method<&lookup_methods::mutate>, reflgen::method<&lookup_methods::output>,
+                reflgen::method<&lookup_methods::moved>, reflgen::method<&lookup_methods::pointer_argument>,
+                reflgen::method<&lookup_methods::callback_argument>, reflgen::method<&lookup_methods::mutable_span>,
+                reflgen::method<&lookup_methods::no_argument>,
+                reflgen::method<&lookup_methods::internal>.with(reflgen::script_internal{}));
+        }
     };
     struct root
     {
@@ -198,6 +244,18 @@ template<> struct reflgen::runtime_value_traits<const char*>
     static constexpr bool argument_safe = true;
     static void write(reflgen::writer& out, const char* const& value) { out.write_string(value ? value : ""); }
 };
+template<> struct reflgen::runtime_value_traits<runtime_values::script_only*>
+{
+    static constexpr auto shape = reflgen::value_shape::pointer;
+    using children = reflgen::type_list<runtime_values::script_only>;
+    static constexpr bool mutable_borrow = true;
+    static constexpr bool retained_borrow = true;
+    static constexpr bool deserializable = false;
+    static constexpr bool assignment_safe = false;
+    static constexpr bool argument_safe = false;
+    static const runtime_values::script_only* get(runtime_values::script_only* const& value) { return value; }
+    static runtime_values::script_only* get(runtime_values::script_only*& value) { return value; }
+};
 
 template<> struct reflgen::serializer<runtime_values::wrapped_string>
 {
@@ -263,6 +321,13 @@ namespace
         method.invoke_serialized(object, input, output);
         input.finish();
         return result;
+    }
+    reflgen::value_view borrow_with_arguments(const reflgen::method_info& method, void* object, std::string_view arguments)
+    {
+        reflgen::json::reader input(arguments);
+        auto view = method.borrow_result(object, input);
+        input.finish();
+        return view;
     }
 
     const test navigation("runtime values: records, sequences, maps and optional values preserve native identity", [] {
@@ -512,6 +577,99 @@ namespace
         snapshot = {};
         check_equal(text(nested.select_member("number")), std::string("73"));
         check(!nested.is_writable());
+    });
+
+    const test lookup_results("runtime values: const argument lookups expose readonly native results and preserve no-argument getters", [] {
+        runtime_values::lookup_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::lookup_methods>();
+        const auto& method = *type.find_method("find");
+        require(method.can_borrow_result());
+        require(method.can_borrow_result_with_arguments());
+        check(method.borrow_unavailable_reason().empty());
+        const auto found = borrow_with_arguments(method, &object, R"(["entry"])");
+        check(found.data() == &object.native);
+        check(!found.is_writable());
+        check_throws<std::invalid_argument>([&] { assign(found.select_member("number"), "7"); }, "readonly");
+        check_equal(object.native.number, 29);
+        reflgen::json::reader constant_input(R"(["entry"])");
+        check(method.borrow_result(static_cast<const void*>(&object), constant_input).data() == &object.native);
+        constant_input.finish();
+        check_throws<std::invalid_argument>([&] { method.borrow_result(&object); }, "borrowable");
+
+        auto pointer = borrow_with_arguments(*type.find_method("find_pointer"), &object, R"(["entry"])");
+        auto target = pointer.dereference();
+        pointer = {};
+        check(target.data() == &object.entry);
+        check(!target.is_writable());
+        check(!target.select_member("number").is_writable());
+        check_equal(text(target.select_member("number")), std::string("43"));
+
+        const auto& no_argument = *type.find_method("no_argument");
+        assign(no_argument.borrow_result(&object).select_member("number"), "31");
+        assign(borrow_with_arguments(no_argument, &object, "[]").select_member("number"), "37");
+        check_equal(object.native.number, 37);
+    });
+
+    const test lookup_arguments("runtime values: borrowed lookups reject invalid inputs and unsafe signatures before native execution", [] {
+        runtime_values::lookup_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::lookup_methods>();
+        const auto& method = *type.find_method("find");
+        for (const auto input : {"[]", R"(["entry","extra"])", "[{}]", "[null]", "{}", R"(["entry",])"})
+            check_throws([&] { borrow_with_arguments(method, &object, input); });
+        for (const auto name : {"mutate", "output", "moved", "pointer_argument", "callback_argument", "mutable_span", "internal"})
+        {
+            const auto& rejected = *type.find_method(name);
+            check(!rejected.can_borrow_result());
+            check(!rejected.can_borrow_result_with_arguments());
+            check(!rejected.borrow_unavailable_reason().empty());
+            check_throws<std::invalid_argument>([&] { borrow_with_arguments(rejected, &object, "[null]"); });
+        }
+        check_throws([&] { borrow_with_arguments(*type.find_method("no_argument"), &object, "[1]"); });
+        check_equal(object.calls, 0);
+    });
+
+    const test lookup_argument_lifetimes("runtime values: borrowed argument records, string views and spans retain their backing storage", [] {
+        runtime_values::lookup_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::lookup_methods>();
+        const std::string long_text(256, 'x');
+        const auto argument = "[\"" + long_text + "\"]";
+        auto view = borrow_with_arguments(*type.find_method("text_view"), &object, argument);
+        check_equal(text(view), "\"" + long_text + "\"");
+        auto pointer = borrow_with_arguments(*type.find_method("text_pointer"), &object, argument);
+        check_equal(text(pointer), "\"" + long_text + "\"");
+        auto record = borrow_with_arguments(*type.find_method("echo"), &object,
+            "[{\"number\":61,\"text\":\"" + long_text + "\"}]");
+        auto field = record.select_member("text");
+        record = {};
+        check_equal(text(field), "\"" + long_text + "\"");
+        check(!field.is_writable());
+        auto numbers = borrow_with_arguments(*type.find_method("numbers"), &object, "[[11,23,47]]");
+        auto element = numbers.select_index(2);
+        numbers = {};
+        check_equal(text(element), std::string("47"));
+        check(!element.is_writable());
+        auto destructor = borrow_with_arguments(*type.find_method("retained_destructor"), &object, argument);
+        runtime_values::borrowing_destructor::last_character = '\0';
+        destructor = {};
+        check_equal(runtime_values::borrowing_destructor::last_character, 'x');
+    });
+
+    const test lookup_parent_lifetime("runtime values: borrowed lookups retain both temporary arguments and their parent snapshot", [] {
+        auto owner = std::make_shared<runtime_values::lookup_methods>();
+        std::weak_ptr<runtime_values::lookup_methods> lifetime = owner;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::lookup_methods>();
+        auto parent = reflgen::value_view(type.value(), owner.get(), owner.get(), owner);
+        auto found = borrow_with_arguments(*type.find_method("find"), owner.get(), R"(["entry"])");
+        found.retain_parent(parent);
+        owner.reset();
+        parent = {};
+        check(!lifetime.expired());
+        auto number = found.select_member("number");
+        found = {};
+        check(!lifetime.expired());
+        check_equal(text(number), std::string("29"));
+        number = {};
+        check(lifetime.expired());
     });
 
     const test indexed_adapters("runtime values: explicit container adapters navigate mapped values without STL entry conventions", [] {

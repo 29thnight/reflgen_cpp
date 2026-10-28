@@ -27,9 +27,16 @@ namespace reflgen
     inline void value_view::retain_parent(const value_view& parent)
     {
         if (!parent.is_writable()) writable_ = nullptr;
-        if (!parent.storage_ || parent.storage_ == storage_) return;
-        if (!storage_) storage_ = parent.storage_;
-        else storage_ = std::make_shared<std::pair<std::shared_ptr<const void>, std::shared_ptr<const void>>>(storage_, parent.storage_);
+        retain_storage(parent.storage_);
+    }
+
+    inline void value_view::retain_storage(std::shared_ptr<const void> storage)
+    {
+        if (!storage || storage == storage_) return;
+        if (!storage_) storage_ = std::move(storage);
+        // Destroy a retained result before its backing inputs/parent: its destructor
+        // may still read a view into that auxiliary storage.
+        else storage_ = std::make_shared<std::pair<std::shared_ptr<const void>, std::shared_ptr<const void>>>(std::move(storage), storage_);
     }
 
     inline void value_descriptor::serialize(writer& out, const void* value) const
@@ -886,6 +893,21 @@ namespace reflgen
             const span_type& get() const noexcept { return *value; }
         };
 
+        template<class... Slots>
+        void read_runtime_arguments(reader& arguments, std::tuple<Slots...>& values)
+        {
+            static_cast<void>(arguments.begin_array());
+            std::apply([&](auto&... value) {
+                [[maybe_unused]] const auto read_one = [&](auto& item) {
+                    if (!arguments.next_element()) throw serialization_error("method argument array has too few elements");
+                    item.read(arguments);
+                };
+                (read_one(value), ...);
+            }, values);
+            if (arguments.next_element()) throw serialization_error("method argument array has too many elements");
+            arguments.end_array();
+        }
+
         template<class T, auto Function>
         consteval std::string_view serialized_method_reason()
         {
@@ -906,16 +928,7 @@ namespace reflgen
         {
             []<class... Args>(T& self, reader& arguments, writer& output, type_list<Args...>) {
                 std::tuple<runtime_argument_slot<std::remove_cvref_t<Args>>...> values{};
-                static_cast<void>(arguments.begin_array());
-                std::apply([&](auto&... value) {
-                    [[maybe_unused]] const auto read_one = [&](auto& item) {
-                        if (!arguments.next_element()) throw serialization_error("method argument array has too few elements");
-                        item.read(arguments);
-                    };
-                    (read_one(value), ...);
-                }, values);
-                if (arguments.next_element()) throw serialization_error("method argument array has too many elements");
-                arguments.end_array();
+                read_runtime_arguments(arguments, values);
                 using R = typename method_signature_of<Function>::result;
                 // Invoke before beginning the response. Native exceptions leave no partial envelope.
                 const auto finish = [&](auto&& write_result) {
@@ -940,25 +953,98 @@ namespace reflgen
             }(*static_cast<T*>(object), input, response, typename method_signature_of<Function>::arguments{});
         }
 
-        template<class T, auto Function>
-        value_view borrow_method_result(void* object, bool writable)
+        template<class A>
+        consteval bool borrowed_argument_safe()
         {
-            using R = typename method_signature_of<Function>::result;
+            using U = std::remove_cvref_t<A>;
+            if constexpr (std::is_rvalue_reference_v<A> ||
+                (std::is_lvalue_reference_v<A> && !std::is_const_v<std::remove_reference_t<A>>)) return false;
+            else if constexpr (std::is_pointer_v<U>)
+            {
+                // Only explicitly opted-in text pointers receive owned string backing.
+                // Serialized addresses, callbacks and other native pointers are never fabricated.
+                using element = std::remove_pointer_t<U>;
+                if constexpr (!std::is_const_v<element> || !character<std::remove_const_t<element>>) return false;
+                else return serialized_argument_safe<A>();
+            }
+            else if constexpr (runtime_span<U>)
+            {
+                if constexpr (!std::is_const_v<typename U::element_type>) return false;
+                else return serialized_argument_safe<A>();
+            }
+            else if constexpr (runtime_shape<U>() == value_shape::pointer) return false;
+            else return serialized_argument_safe<A>();
+        }
+
+        template<class T, auto Function>
+        consteval std::string_view borrow_method_reason()
+        {
+            using signature = method_signature_of<Function>;
+            using R = typename signature::result;
+            using U = std::remove_cvref_t<R>;
+            constexpr bool retainable = [] {
+                if constexpr (std::is_lvalue_reference_v<R>) return true;
+                else if constexpr (!complete_type<U> || std::is_void_v<U>) return false;
+                else return std::is_move_constructible_v<U>;
+            }();
+            if constexpr (!retainable) return "method has no retainable result";
+            else if constexpr (type_list_size<typename signature::arguments> == 0) return {};
+            else if constexpr (!signature::is_const) return "argument-bearing borrowed lookup requires a const method";
+            else return []<class... Args>(type_list<Args...>) -> std::string_view {
+                if constexpr (!(borrowed_argument_safe<Args>() && ...))
+                    return "borrowed lookup requires safe readonly value arguments";
+                else if constexpr (!(runtime_argument_materializable<std::remove_cvref_t<Args>>() && ...))
+                    return "method argument cannot be materialized without a native factory";
+                else if constexpr (!(runtime_argument_slot<std::remove_cvref_t<Args>>::readable && ...))
+                    return "method argument is not deserializable";
+                else return {};
+            }(typename signature::arguments{});
+        }
+
+        template<class R, class Invoke>
+        value_view retain_borrowed_result(Invoke&& call_result, bool writable)
+        {
             if constexpr (std::is_lvalue_reference_v<R>)
             {
-                auto& result = (static_cast<T*>(object)->*Function)();
+                auto& result = call_result();
                 return view_reference(result, writable);
             }
             else
             {
                 using U = std::remove_cvref_t<R>;
-                auto storage = std::make_shared<U>((static_cast<T*>(object)->*Function)());
+                auto storage = std::make_shared<U>(call_result());
                 auto* address = storage.get();
                 void* mutable_address = nullptr;
                 if constexpr (requires { runtime_value_traits<U>::retained_borrow; })
                     if (writable && runtime_value_traits<U>::retained_borrow && permits_mutable_borrow<U>()) mutable_address = address;
                 return value_view(value_descriptor_of<U>(), address, mutable_address, std::move(storage));
             }
+        }
+
+        template<class T, auto Function>
+        value_view borrow_method_result(void* object, bool writable)
+        {
+            using R = typename method_signature_of<Function>::result;
+            return retain_borrowed_result<R>([&]() -> decltype(auto) { return (static_cast<T*>(object)->*Function)(); }, writable);
+        }
+
+        template<class T, auto Function>
+        value_view borrow_method_result_with_arguments(void* object, bool writable, reader& input)
+        {
+            return []<class... Args>(T& self, bool allow_write, reader& arguments, type_list<Args...>) {
+                // Never move a materialized slot: views, spans and text pointers may refer into its
+                // backing storage. Both reference and value results can retain that input memory.
+                auto values = std::make_shared<std::tuple<runtime_argument_slot<std::remove_cvref_t<Args>>...>>();
+                read_runtime_arguments(arguments, *values);
+                using R = typename method_signature_of<Function>::result;
+                auto borrowed = [&]<std::size_t... I>(std::index_sequence<I...>) {
+                    return retain_borrowed_result<R>([&]() -> decltype(auto) {
+                        return (self.*Function)(method_argument<Args>(std::addressof(std::get<I>(*values).get()))...);
+                    }, allow_write && sizeof...(Args) == 0);
+                }(std::index_sequence_for<Args...>{});
+                borrowed.retain_storage(std::move(values));
+                return borrowed;
+            }(*static_cast<T*>(object), writable, input, typename method_signature_of<Function>::arguments{});
         }
     }
 

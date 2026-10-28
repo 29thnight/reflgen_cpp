@@ -200,9 +200,13 @@ namespace reflgen
             if (!serialized_) throw std::invalid_argument(std::string(serialized_reason_));
             serialized_(object, arguments, response);
         }
-        // Borrow only a no-argument lvalue-reference result. The caller owns the root lifetime and
-        // must invoke this again whenever resolving a path; parameter temporaries never escape.
-        bool can_borrow_result() const noexcept { return borrow_ != nullptr; }
+        // The caller owns the root lifetime and resolves the method again for each path operation.
+        // No-argument getters preserve existing reference/retained-wrapper access capabilities.
+        // Argument-bearing lookups require a const method and produce readonly views, since the
+        // result may alias the independently materialized inputs. Those inputs live with the view.
+        bool can_borrow_result() const noexcept { return borrow_ != nullptr || borrow_arguments_ != nullptr; }
+        bool can_borrow_result_with_arguments() const noexcept { return borrow_arguments_ != nullptr; }
+        std::string_view borrow_unavailable_reason() const noexcept { return borrow_reason_; }
         value_view borrow_result(void* object) const
         {
             if (!object || !borrow_) throw std::invalid_argument("method has no borrowable result");
@@ -212,6 +216,18 @@ namespace reflgen
         {
             if (!object || !borrow_ || !is_const_) throw std::invalid_argument("method has no const borrowable result");
             return borrow_(const_cast<void*>(object), false);
+        }
+        value_view borrow_result(void* object, reader& arguments) const
+        {
+            if (!object) throw std::invalid_argument("cannot borrow a method result from a null object");
+            if (!borrow_arguments_) throw std::invalid_argument(std::string(borrow_reason_));
+            return borrow_arguments_(object, true, arguments);
+        }
+        value_view borrow_result(const void* object, reader& arguments) const
+        {
+            if (!object || !is_const_) throw std::invalid_argument("method has no const borrowable result");
+            if (!borrow_arguments_) throw std::invalid_argument(std::string(borrow_reason_));
+            return borrow_arguments_(const_cast<void*>(object), false, arguments);
         }
 
         // object 는 이 서술자의 타입 객체다(부모의 메서드도 같다 — field_info::address 와 같은 규칙).
@@ -239,17 +255,20 @@ namespace reflgen
         using invoke_function = void (*)(void*, void* const*, void*, std::string_view);
         using serialized_function = void (*)(void*, reader&, writer&);
         using borrow_function = value_view (*)(void*, bool);
+        using borrow_arguments_function = value_view (*)(void*, bool, reader&);
 
         constexpr method_info(std::string_view name, std::string_view declaring_type_name, type_id declaring_type,
                               std::span<const parameter_info> parameters, type_id return_type,
                               std::string_view return_type_name, bool is_const, attribute_list attributes,
                               invoke_function invoke, value_child_info::getter result, parameter_passing return_passing,
                               serialized_function serialized, std::string_view serialized_reason,
-                              borrow_function borrow) noexcept
+                              borrow_function borrow, borrow_arguments_function borrow_arguments,
+                              std::string_view borrow_reason) noexcept
             : name_(name), declaring_type_name_(declaring_type_name), declaring_type_(declaring_type), parameters_(parameters),
               return_type_(return_type), return_type_name_(return_type_name), is_const_(is_const),
               attributes_(attributes), invoke_(invoke), result_(result), return_passing_(return_passing),
-              serialized_(serialized), serialized_reason_(serialized_reason), borrow_(borrow)
+              serialized_(serialized), serialized_reason_(serialized_reason), borrow_(borrow),
+              borrow_arguments_(borrow_arguments), borrow_reason_(borrow_reason)
         {
         }
 
@@ -267,6 +286,8 @@ namespace reflgen
         serialized_function serialized_;
         std::string_view serialized_reason_;
         borrow_function borrow_;
+        borrow_arguments_function borrow_arguments_;
+        std::string_view borrow_reason_;
     };
 
     class type_descriptor
@@ -823,6 +844,10 @@ namespace reflgen
         void invoke_serialized_method(void* object, reader& arguments, writer& response);
         template<class T, auto Function>
         value_view borrow_method_result(void* object, bool writable);
+        template<class T, auto Function>
+        consteval std::string_view borrow_method_reason();
+        template<class T, auto Function>
+        value_view borrow_method_result_with_arguments(void* object, bool writable, reader& arguments);
 
         template<class T, std::size_t I>
         constexpr method_info make_method_info() noexcept
@@ -838,14 +863,17 @@ namespace reflgen
             }();
             void (*serialized)(void*, reader&, writer&) = nullptr;
             if constexpr (reason.empty()) serialized = &invoke_serialized_method<T, descriptor_type::pointer>;
+            constexpr auto borrow_reason = [] {
+                if constexpr (internal) return std::string_view("method is marked reflgen::script_internal");
+                else return borrow_method_reason<T, descriptor_type::pointer>();
+            }();
             value_view (*borrow_result_thunk)(void*, bool) = nullptr;
-            if constexpr (!internal && type_list_size<typename signature::arguments> == 0)
+            value_view (*borrow_arguments_thunk)(void*, bool, reader&) = nullptr;
+            if constexpr (borrow_reason.empty())
             {
-                if constexpr (std::is_lvalue_reference_v<typename signature::result>)
+                borrow_arguments_thunk = &borrow_method_result_with_arguments<T, descriptor_type::pointer>;
+                if constexpr (type_list_size<typename signature::arguments> == 0)
                     borrow_result_thunk = &borrow_method_result<T, descriptor_type::pointer>;
-                else if constexpr (complete_type<result> && !std::is_void_v<result>)
-                    if constexpr (std::is_move_constructible_v<result>)
-                        borrow_result_thunk = &borrow_method_result<T, descriptor_type::pointer>;
             }
             constexpr auto passing = std::is_rvalue_reference_v<typename signature::result> ? parameter_passing::rvalue_reference :
                 std::is_lvalue_reference_v<typename signature::result> ?
@@ -857,7 +885,8 @@ namespace reflgen
                                            type_id_of<result>(), type_name_of<result>(), signature::is_const,
                                            attribute_list(runtime_method_attributes<T, I>),
                                            &invoke_method<T, descriptor_type::pointer>, &value_descriptor_of<result>,
-                                           passing, serialized, reason, borrow_result_thunk);
+                                           passing, serialized, reason, borrow_result_thunk,
+                                           borrow_arguments_thunk, borrow_reason);
         }
 
         // 런타임 표에 드는 메서드의 서술 순번 — 인자 칸으로 부를 수 없는 것(runtime_invocable)을 뺀다.

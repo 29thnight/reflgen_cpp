@@ -90,6 +90,8 @@ namespace reflgen
         bool is_writable() const noexcept { return writable_ != nullptr; }
         // Preserve both ownership chains when a getter returns a reference into an owned snapshot.
         void retain_parent(const value_view& parent);
+        // Keep auxiliary argument or result storage alive without changing access capabilities.
+        void retain_storage(std::shared_ptr<const void> storage);
         std::size_t size() const;
         value_view select_member(std::string_view name) const;
         value_view select_index(std::size_t index) const;

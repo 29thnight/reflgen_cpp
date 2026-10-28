@@ -155,12 +155,31 @@ serialized calls and result borrowing. Engine lifecycle, identity replacement,
 ownership transfer and serialization callbacks are typical uses. It does not
 affect ordinary C++ calls or authoring serialization.
 
-`can_borrow_result()` identifies no-argument getters whose result can be inspected
-as a view. Lvalue-reference returns preserve the referent. Movable value returns
-are retained in an owned, read-only snapshot. An owner wrapper can explicitly opt
-into `retained_borrow` so its pointee remains navigable and mutable according to
-the pointee's constness. A detached record return is never presented as a writable
-alias of the engine's original record.
+`can_borrow_result()` identifies getters whose result can be inspected as a view.
+For no-argument getters, lvalue-reference returns preserve the referent. Movable
+value returns are retained in an owned, read-only snapshot. An owner wrapper can
+explicitly opt into `retained_borrow` so its pointee remains navigable and mutable
+according to the pointee's constness. A detached record return is never presented
+as a writable alias of the engine's original record.
+
+`borrow_result(object, reader&)` accepts an argument array for a const lookup such
+as `FindStateByName(string_view) const`. Check
+`can_borrow_result_with_arguments()` and `borrow_unavailable_reason()` before
+offering this operation. The array is parsed and its arity checked before native
+execution. As with serialized invocation, the transport must validate the entire
+input document before supplying its argument reader. Mutable reference/output
+parameters, rvalue references, mutable spans, native-address inputs and callback
+inputs are excluded. Explicitly opted-in const character pointers use owned text
+backing; string views, const spans and independent value arguments are also
+supported.
+
+Argument storage remains alive until the returned view and all its children are
+released. Results from lookups with one or more arguments are always read-only,
+including after pointer dereference: the result may alias temporary input storage
+instead of persistent engine state. The core does not infer that a const method
+is pure or returns an owner-backed object, so the engine must still exclude
+stateful internal APIs. Passing an empty argument array to a no-argument getter
+preserves that getter's existing mutable/const behavior.
 
 When chaining a getter after an owned result, retain the parent view with
 `value_view::retain_parent` as well as the returned storage. A reference into a
