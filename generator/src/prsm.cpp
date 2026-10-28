@@ -246,6 +246,8 @@ namespace reflgen::generator
         for (const auto& alias : values)
         {
             const auto p = policy(alias.attributes, report);
+            if (p.contains("interop") && p.at("interop") == "fsharp")
+                continue;
             if (p.size() != 2 || !p.contains("interop") || p.at("interop") != "prsm" || !p.contains("value"))
             {
                 report.error("RG0301", alias.position,
@@ -321,7 +323,7 @@ namespace reflgen::generator
             if (type_policy.contains("owner") && (selected == type_policy.end() || selected->second != "prsm"))
                 report.error("RG0301", type.position, "owner requires an explicitly selected PrSM type");
             if (selected != type_policy.end() && selected->second != "prsm" && selected->second != "c" &&
-                selected->second != "csharp")
+                selected->second != "csharp" && selected->second != "fsharp")
                 report.error("RG0301", type.position, "unknown interop target");
             if (selected == type_policy.end() || selected->second != "prsm")
             {
@@ -390,7 +392,7 @@ namespace reflgen::generator
                 }
                 if (p.at("interop") != "prsm")
                 {
-                    if (p.at("interop") != "c" && p.at("interop") != "csharp")
+                    if (p.at("interop") != "c" && p.at("interop") != "csharp" && p.at("interop") != "fsharp")
                         report.error("RG0301", method.position, "unknown interop target");
                     continue;
                 }

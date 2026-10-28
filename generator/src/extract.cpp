@@ -146,6 +146,9 @@ namespace reflgen::generator
             case CXType_Enum:
                 result.kind = canonical.kind == CXType_Record ? "record" : "enum";
                 result.declaration = type_name_of(clang_getTypeDeclaration(canonical));
+                if (canonical.kind == CXType_Enum && clang_EnumDecl_isScoped(clang_getTypeDeclaration(canonical)))
+                    result.enum_underlying = std::make_shared<declaration_type>(
+                        describe_type(clang_getEnumDeclIntegerType(clang_getTypeDeclaration(canonical))));
                 break;
             case CXType_Pointer:
             case CXType_LValueReference:
@@ -197,7 +200,8 @@ namespace reflgen::generator
             return attribute.scope == library_scope &&
                    (attribute.name == "interop" || attribute.name == "lifetime" || attribute.name == "property_get" ||
                     attribute.name == "property_set" || attribute.name == "effect" || attribute.name == "owner" ||
-                    attribute.name == "receiver" || attribute.name == "value");
+                    attribute.name == "receiver" || attribute.name == "value" || attribute.name == "callback" ||
+                    attribute.name == "return_ownership" || attribute.name == "consume_ownership");
         }
 
         bool is_directive(const scanned_attribute& attribute)
@@ -484,7 +488,9 @@ namespace reflgen::generator
                        find_directive(groups, "property_get") != nullptr ||
                        find_directive(groups, "property_set") != nullptr ||
                        find_directive(groups, "effect") != nullptr || find_directive(groups, "owner") != nullptr ||
-                       find_directive(groups, "receiver") != nullptr || find_directive(groups, "value") != nullptr;
+                       find_directive(groups, "receiver") != nullptr || find_directive(groups, "value") != nullptr ||
+                       find_directive(groups, "callback") != nullptr || find_directive(groups, "return_ownership") != nullptr ||
+                       find_directive(groups, "consume_ownership") != nullptr;
             }
 
             void interop_error(CXCursor cursor, const std::string& message)

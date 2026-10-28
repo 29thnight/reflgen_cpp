@@ -79,6 +79,7 @@
     <_ReflgenModuleSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule).cpp</_ReflgenModuleSource>
     <_ReflgenInteropHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.h</_ReflgenInteropHeader>
     <_ReflgenInteropSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.cpp</_ReflgenInteropSource>
+    <_ReflgenInteropFSharp>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.fs</_ReflgenInteropFSharp>
     <_ReflgenInteropCSharp>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_interop.cs</_ReflgenInteropCSharp>
     <_ReflgenPrsmHeader>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_prsm.h</_ReflgenPrsmHeader>
     <_ReflgenPrsmSource>$(ReflgenOutputDirectory)reflgen_$(ReflgenModule)_prsm.cpp</_ReflgenPrsmSource>
@@ -263,7 +264,7 @@
     <ItemGroup>
       <_ReflgenRunOutput Include="$(_ReflgenStamp)" />
       <_ReflgenOptionalOutput Include="$(_ReflgenDeclarationsJson)" Condition="'$(_ReflgenDeclarationsJson)' != ''" />
-      <_ReflgenOptionalOutput Include="$(_ReflgenInteropHeader);$(_ReflgenInteropSource);$(_ReflgenInteropCSharp)" Condition="'$(ReflgenInterop)' == 'true'" />
+      <_ReflgenOptionalOutput Include="$(_ReflgenInteropHeader);$(_ReflgenInteropSource);$(_ReflgenInteropCSharp);$(_ReflgenInteropFSharp)" Condition="'$(ReflgenInterop)' == 'true'" />
       <_ReflgenOptionalOutput Include="$(_ReflgenPrsmHeader);$(_ReflgenPrsmSource);$(_ReflgenPrsmTable);$(ReflgenPrsmCatalog)" Condition="'$(ReflgenPrsm)' == 'true'" />
       <!-- 내용이 같으면 시각도 그대로다. 없을 때만 출력에 넣어 재생성하고, 있으면 stamp 로 가린다. -->
       <_ReflgenRunOutput Include="@(_ReflgenOptionalOutput)" Condition="!Exists('%(FullPath)')" />

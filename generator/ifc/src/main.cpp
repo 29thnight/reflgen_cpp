@@ -376,6 +376,46 @@ namespace
                          "overloaded method is unsupported: " + result.qualified_name + "::" + method);
         }
 
+        const ScopeDecl* crtp_reflected_base(TypeIndex index, const ScopeDecl& derived)
+        {
+            const auto* syntax = reader.get_if<SyntacticType>(index);
+            const auto* template_id = syntax ? reader.get_if<TemplateIdExpr>(syntax->expr) : nullptr;
+            const auto* named = template_id ? reader.get_if<NamedDeclExpr>(template_id->primary_template) : nullptr;
+            const auto* declaration = named ? reader.get_if<TemplateDecl>(named->decl) : nullptr;
+            const auto* arguments = template_id ? reader.get_if<TupleExpr>(template_id->arguments) : nullptr;
+            const auto* chart = declaration ? reader.get_if<UnilevelChart>(declaration->chart) : nullptr;
+            const auto* generic = declaration ? reader.get_if<ScopeDecl>(declaration->entity.decl) : nullptr;
+            if (!declaration || !arguments || !chart || !generic || declaration->home_scope != derived.home_scope ||
+                position(declaration->identity.locus).file != position(derived.identity.locus).file)
+                return nullptr;
+            // A specialization can select a different parent than the primary template. Do not guess.
+            for (const auto& specialization : reader.partition<PartialSpecializationDecl>())
+                if (index_like::null(specialization.specialization_form) ||
+                    reader.get(specialization.specialization_form).template_decl == named->decl)
+                    return nullptr;
+            for (const auto& specialization : reader.partition<SpecializationDecl>())
+                if (specialization.sort != SpecializationSort::Implicit &&
+                    (index_like::null(specialization.specialization_form) ||
+                     reader.get(specialization.specialization_form).template_decl == named->decl))
+                    return nullptr;
+            const auto* generic_base = reader.get_if<BaseType>(generic->base);
+            const auto* parameter_type = generic_base ? reader.get_if<DesignatedType>(generic_base->type) : nullptr;
+            const auto* parameter = parameter_type ? reader.get_if<ParameterDecl>(parameter_type->decl) : nullptr;
+            if (!generic_base || generic_base->access != Access::Public || generic_base->traits != BaseClassTraits::None ||
+                !parameter || parameter->position == 0)
+                return nullptr;
+            const auto params = reader.sequence(*chart);
+            const auto args = reader.sequence(*arguments);
+            if (args.size() != params.size() || parameter->position > args.size()) return nullptr;
+            const auto& expected = params[parameter->position - 1];
+            if (expected.identity.name != parameter->identity.name || expected.level != parameter->level ||
+                expected.position != parameter->position)
+                return nullptr;
+            const auto* actual = reader.get_if<TypeExpr>(args[parameter->position - 1]);
+            const auto* actual_type = actual ? reader.get_if<DesignatedType>(actual->denotation) : nullptr;
+            return actual_type ? reader.get_if<ScopeDecl>(actual_type->decl) : nullptr;
+        }
+
         void walk(ScopeIndex index, const std::string& prefix = {})
         {
             const auto* scope = reader.try_get(index);
@@ -427,9 +467,6 @@ namespace
                                 fail(type.identity.locus, "PrSM types must be exported complete definitions");
                             continue;
                         }
-                        if (!index_like::null(type.base))
-                            fail(type.identity.locus,
-                                 "inheritance is unsupported by the initial IFC backend: " + prefix + short_name);
                         class_model result;
                         result.name = short_name;
                         result.qualified_name = prefix + short_name;
@@ -446,6 +483,40 @@ namespace
                         }
                         if (ignored(groups) || (metadata && metadata->directive(groups, "attribute")))
                             continue;
+                        if (!index_like::null(type.base))
+                        {
+                            const auto* base = reader.get_if<BaseType>(type.base);
+                            const auto* designated = base ? reader.get_if<DesignatedType>(base->type) : nullptr;
+                            const auto* base_scope = designated ? reader.get_if<ScopeDecl>(designated->decl) : nullptr;
+                            if (base && !base_scope)
+                            {
+                                const auto* syntax = reader.get_if<SyntacticType>(base->type);
+                                const auto* id = syntax ? reader.get_if<TemplateIdExpr>(syntax->expr) : nullptr;
+                                const auto* named = id ? reader.get_if<NamedDeclExpr>(id->primary_template) : nullptr;
+                                const auto* reference = named ? reader.get_if<ReferenceDecl>(named->decl) : nullptr;
+                                if (reference)
+                                {
+                                    const auto owner = std::string(reader.get(reference->translation_unit.owner));
+                                    fail(type.identity.locus, "unsupported inheritance: imported base template cannot be verified" +
+                                                                  (owner.empty() ? std::string{} : " (module " + owner + ")") +
+                                                                  ": " + result.qualified_name);
+                                }
+                            }
+                            if (!base_scope && base) base_scope = crtp_reflected_base(base->type, type);
+                            if (prsm || !base || base->access != Access::Public ||
+                                base->traits != BaseClassTraits::None || !base_scope ||
+                                base_scope->home_scope != type.home_scope)
+                                fail(type.identity.locus, "unsupported inheritance: " + result.qualified_name);
+                            const std::string base_name = name(base_scope->identity.name);
+                            const std::string qualified_base = prefix + base_name;
+                            if (!identifier(base_name) ||
+                                std::ranges::none_of(model.classes, [&](const class_model& existing) {
+                                    return existing.qualified_name == qualified_base;
+                                }))
+                                fail(type.identity.locus, "base must be a previously reflected type in the same scope: " +
+                                                              result.qualified_name);
+                            result.bases.push_back({qualified_base, base_name});
+                        }
                         if (metadata)
                             if (const auto* reflect = metadata->directive(groups, "reflect");
                                 reflect && reflect->has_arguments)
@@ -474,7 +545,7 @@ namespace
 
 int main(int argc, char** argv)
 {
-    std::string input, module, registration, directory, metadata_path, prsm_adapter;
+    std::string input, module, registration, directory, metadata_path, prsm_adapter, interface_module;
     bool prsm = false;
     std::set<std::string> scopes{"reflgen"};
     std::vector<std::string> attribute_imports;
@@ -500,6 +571,8 @@ int main(int argc, char** argv)
                 registration = value;
             else if (option == "--output")
                 directory = value;
+            else if (option == "--module-interface")
+                interface_module = value;
             else if (option == "--metadata")
                 metadata_path = value;
             else if (option == "--prsm-adapter-header")
@@ -526,6 +599,20 @@ int main(int argc, char** argv)
                 "usage: reflgen-ifc --ifc FILE --import MODULE --module REGISTRATION --output DIR "
                 "[--metadata MSVC_PREPROCESSED_FILE] [--attribute-scope NAMESPACE] [--attribute-import MODULE] "
                 "[--prsm --prsm-adapter-header FILE]");
+        if (!interface_module.empty())
+        {
+            std::size_t begin = 0;
+            while (begin < interface_module.size())
+            {
+                const auto end = interface_module.find('.', begin);
+                const auto part = interface_module.substr(begin, end == std::string::npos ? end : end - begin);
+                if (!identifier(part)) throw std::runtime_error("invalid generated module name");
+                if (end == std::string::npos) break;
+                begin = end + 1;
+                if (begin == interface_module.size()) throw std::runtime_error("invalid generated module name");
+            }
+            if (prsm) throw std::runtime_error("PrSM module-interface output is unsupported");
+        }
         stage = "open";
         if (prsm && (metadata_path.empty() || prsm_adapter.empty()))
             throw std::runtime_error("--prsm requires --metadata and --prsm-adapter-header");
@@ -596,6 +683,35 @@ int main(int argc, char** argv)
         const auto output = std::filesystem::absolute(directory);
         std::filesystem::create_directories(output);
         const std::string stem = "reflgen_" + registration;
+        if (!interface_module.empty())
+        {
+            if (interface_module == module)
+                throw std::runtime_error("generated module must differ from the imported module");
+            const auto target = output / (interface_module + ".ixx");
+            std::error_code error;
+            if (std::filesystem::equivalent(input, target, error))
+                throw std::runtime_error("module output collides with its IFC input");
+            for (const auto& type : extract.model.classes)
+            {
+                error.clear();
+                if (!type.position.file.empty() && std::filesystem::equivalent(type.position.file, target, error))
+                    throw std::runtime_error("module output collides with a source file");
+            }
+            for (const auto& type : extract.model.enums)
+            {
+                error.clear();
+                if (!type.position.file.empty() && std::filesystem::equivalent(type.position.file, target, error))
+                    throw std::runtime_error("module output collides with a source file");
+            }
+            const auto text = emit_ifc_module_interface(extract.model, module, interface_module, registration,
+                                                        target.generic_string(), attribute_imports);
+            write_changed(target, text);
+            write_changed(output / (stem + ".attributes.tsv"),
+                          metadata ? metadata->catalog(scopes) : "reflgen-attributes\t1\n");
+            std::cout << "reflgen-ifc: " << module << ": " << extract.model.classes.size() << " class(es), "
+                      << extract.model.enums.size() << " enum(s)\n";
+            return 0;
+        }
         if (prsm)
         {
             std::vector<std::filesystem::path> inputs{input, metadata_path, prsm_adapter};

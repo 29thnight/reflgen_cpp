@@ -15,6 +15,10 @@ namespace reflgen::generator
     std::string emit_ifc_header(const header_model& model, const std::string& imported_module,
                                 const std::string& registration, const std::string& generated_path,
                                 const std::vector<std::string>& attribute_imports = {});
+    std::string emit_ifc_module_interface(const header_model& model, const std::string& imported_module,
+                                          const std::string& interface_module, const std::string& registration,
+                                          const std::string& generated_path,
+                                          const std::vector<std::string>& attribute_imports = {});
     std::string emit_header(const header_model& header, const std::string& generated_path);
 
     // attribute_headers: 사용자 이름공간의 attribute 타입을 정의한 header(절대 경로) — 생성 코드가 그 타입을 쓴다.

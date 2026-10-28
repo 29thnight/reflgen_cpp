@@ -19,6 +19,10 @@ export namespace game
         float x = 0;
         float y = 0;
     };
+    struct armored_point : point
+    {
+        int armor = 5;
+    };
     class player
     {
         int secret_ = 42;

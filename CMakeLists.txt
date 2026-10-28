@@ -307,8 +307,22 @@ if(REFLGEN_BUILD_TESTS)
         endif()
         add_test(NAME reflgen_interop_c_calls COMMAND reflgen_interop_c_consumer)
 
+        add_library(reflgen_fsharp_runtime SHARED tests/generated/interop_runtime/fsharp/native.cpp)
+        target_link_libraries(reflgen_fsharp_runtime PRIVATE reflgen::reflgen)
+        reflgen_configure_target(reflgen_fsharp_runtime)
+        reflgen_generate(reflgen_fsharp_runtime MODULE fsharp_runtime
+            HEADERS tests/generated/interop_runtime/fsharp/types.h INTEROP
+            INTEROP_LIBRARY reflgen_fsharp_runtime INTEROP_NAMESPACE Reflgen.Tests.Interop)
+
         find_program(REFLGEN_DOTNET dotnet)
         if(REFLGEN_DOTNET)
+            add_test(NAME reflgen_interop_fsharp_calls COMMAND "${CMAKE_COMMAND}"
+                "-DDOTNET=${REFLGEN_DOTNET}"
+                "-DPROJECT=${PROJECT_SOURCE_DIR}/tests/generated/interop_runtime/fsharp/InteropFSharp.fsproj"
+                "-DSOURCE=$<TARGET_GENEX_EVAL:reflgen_fsharp_runtime,$<TARGET_PROPERTY:reflgen_fsharp_runtime,REFLGEN_INTEROP_FSHARP>>"
+                "-DLIBRARY=$<TARGET_FILE:reflgen_fsharp_runtime>"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/interop_fsharp"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_interop_fsharp.cmake")
             add_test(NAME reflgen_interop_csharp_calls
                 COMMAND "${CMAKE_COMMAND}"
                     "-DDOTNET=${REFLGEN_DOTNET}"

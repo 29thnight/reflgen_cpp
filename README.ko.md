@@ -494,16 +494,16 @@ MSBuild 는 `ReflgenDeclarationsJson` 에 경로를 준다. 구성마다 나뉘�
 지운다. CLI 를 직접 쓰면 빌드 출력 디렉터리 밖의 안전한 경로에도 만들 수 있다. Visual Studio 의 native 최신 여부
 검사는 출력만 지웠을 때 MSBuild 를 건너뛸 수 있다. 그때는 `ReflgenGenerate` 를 직접 실행한다.
 
-### 선택 C ABI·C# 바인딩
+### 선택 C ABI·C#·F# 바인딩
 
-`--interop` 은 일반 출력 디렉터리에 `reflgen_<module>_interop.h`·`.cpp`·`.cs` 를 더 만든다.
-`--interop-library NAME` 은 C# 에서 불러올 native 라이브러리 이름(기본: 모듈 이름),
-`--interop-namespace NAME` 은 C# 이름공간(기본: `Reflgen.Generated`)이다.
+`--interop` 은 일반 출력 디렉터리에 `reflgen_<module>_interop.h`·`.cpp`·`.cs`·`.fs` 를 더 만든다.
+`--interop-library NAME` 은 관리 코드에서 불러올 native 라이브러리 이름(기본: 모듈 이름),
+`--interop-namespace NAME` 은 관리 코드 이름공간(기본: `Reflgen.Generated`)이다.
 
 CMake 는 `reflgen_generate()` 에 `INTEROP`·`INTEROP_LIBRARY NAME`·`INTEROP_NAMESPACE NAME` 을 받는다.
-`REFLGEN_INTEROP_CSHARP` target 속성으로 생성된 C# 경로를 얻는다. MSBuild·NuGet 은 `ReflgenInterop=true`·
+`REFLGEN_INTEROP_CSHARP`·`REFLGEN_INTEROP_FSHARP` target 속성으로 생성된 관리 코드 경로를 얻는다. MSBuild·NuGet 은 `ReflgenInterop=true`·
 `ReflgenInteropLibrary`·`ReflgenInteropNamespace` 를 쓴다. 생성된 C++ 구현은 `NO_REGISTRATION`·
-`ReflgenRegistration=false` 와 무관하게 컴파일하고, C# 파일은 C++ 컴파일러에 넘기지 않는다. JSON 선언 목록과
+`ReflgenRegistration=false` 와 무관하게 컴파일하고, 관리 코드 파일은 C++ 컴파일러에 넘기지 않는다. JSON 선언 목록과
 별개인 선택 기능이며 같은 출력 소유권·정리 검사를 따른다.
 명시적 선택 attribute·지원 경계 타입·수명 규칙은 [INTEROP.md](INTEROP.md)를 본다.
 

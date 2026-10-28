@@ -46,6 +46,7 @@ namespace reflgen::generator
         std::shared_ptr<declaration_type> pointee;
         std::shared_ptr<declaration_type> element_type;
         long long array_size = -1;
+        std::shared_ptr<declaration_type> enum_underlying;
     };
 
     struct parameter_model

@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.25)
+file(REMOVE_RECURSE "${WORK}")
+execute_process(COMMAND "${DOTNET}" build "${PROJECT}" --nologo -c Release --artifacts-path "${WORK}"
+    "-p:ReflgenInteropSource=${SOURCE}" "-p:ReflgenNativeLibrary=${LIBRARY}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE output)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "F# build failed: ${output}")
+endif()
+file(GLOB_RECURSE assemblies "${WORK}/bin/InteropFSharp.dll")
+list(LENGTH assemblies count)
+if(NOT count EQUAL 1)
+    message(FATAL_ERROR "Expected one F# test assembly: ${assemblies}")
+endif()
+execute_process(COMMAND "${DOTNET}" ${assemblies} RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE output)
+message(STATUS "${output}")
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "F# native calls failed: ${result}")
+endif()

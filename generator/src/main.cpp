@@ -595,7 +595,7 @@ namespace
         if (cli->interop && !report.has_errors())
         {
             interop = emit_interop(extracted.exports, extracted.target,
-                                   {options.module_name, cli->interop_library, cli->interop_namespace}, report);
+                                   {options.module_name, cli->interop_library, cli->interop_namespace}, report, extracted.values);
         }
         if (!report.has_errors())
         {
@@ -626,6 +626,7 @@ namespace
                 write_if_changed(base + "_interop.h", interop->c_header, report);
                 write_if_changed(base + "_interop.cpp", interop->cpp_source, report);
                 write_if_changed(base + "_interop.cs", interop->csharp_source, report, byte_order_mark::without);
+                write_if_changed(base + "_interop.fs", interop->fsharp_source, report, byte_order_mark::without);
             }
             if (!cli->declarations_json.empty())
             {

@@ -497,16 +497,16 @@ after verifying it is stale generated output. Clean removes owned optional outpu
 The standalone CLI can still write a safe path outside the build output directory. Visual Studio's native fast
 up-to-date check may skip MSBuild after an output-only deletion; invoke `ReflgenGenerate` explicitly in that case.
 
-### Optional C ABI and C# bindings
+### Optional C ABI, C# and F# bindings
 
-`--interop` adds `reflgen_<module>_interop.h`, `.cpp` and `.cs` under the normal output directory.
-`--interop-library NAME` sets the native library name used by C# (default: module name), and
+`--interop` adds `reflgen_<module>_interop.h`, `.cpp`, `.cs` and `.fs` under the normal output directory.
+`--interop-library NAME` sets the native library name used by managed bindings (default: module name), and
 `--interop-namespace NAME` sets its namespace (default: `Reflgen.Generated`).
 
 CMake accepts `INTEROP`, `INTEROP_LIBRARY NAME` and `INTEROP_NAMESPACE NAME` in `reflgen_generate()`.
-The `REFLGEN_INTEROP_CSHARP` target property exposes the generated C# path. MSBuild/NuGet use
+The `REFLGEN_INTEROP_CSHARP` and `REFLGEN_INTEROP_FSHARP` target properties expose the generated managed paths. MSBuild/NuGet use
 `ReflgenInterop=true`, `ReflgenInteropLibrary` and `ReflgenInteropNamespace`. The generated C++ implementation is
-compiled even with `NO_REGISTRATION` / `ReflgenRegistration=false`; the C# file is never passed to the C++ compiler.
+compiled even with `NO_REGISTRATION` / `ReflgenRegistration=false`; the managed files are never passed to the C++ compiler.
 Bindings are opt-in, independent of the JSON manifest, and use the same output ownership and cleanup checks.
 See [INTEROP.md](INTEROP.md) for explicit selection attributes, the supported boundary types and lifetime rules.
 

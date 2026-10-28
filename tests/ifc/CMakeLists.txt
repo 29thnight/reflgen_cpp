@@ -17,6 +17,73 @@ add_executable(reflgen_ifc_test main.cpp)
 target_link_libraries(reflgen_ifc_test PRIVATE reflgen_ifc_game)
 target_compile_options(reflgen_ifc_test PRIVATE /W4 /WX /permissive-)
 add_test(NAME reflgen_ifc_runtime COMMAND reflgen_ifc_test)
+
+# A separate module without unrelated opaque partial specializations exercises
+# the conservative CRTP path without silently accepting unknown specializations.
+set(crtp_ifc "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/crtp.ifc")
+set(crtp_object "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/crtp.obj")
+add_custom_command(OUTPUT "${crtp_ifc}" "${crtp_object}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+    COMMAND "${CMAKE_CXX_COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /W4 /WX /permissive-
+            "$<IF:$<CONFIG:Debug>,/MDd,/MD>" "/D$<IF:$<CONFIG:Debug>,_DEBUG,NDEBUG>"
+            /interface /c "${CMAKE_CURRENT_SOURCE_DIR}/crtp/types.ixx"
+            /ifcOutput "${crtp_ifc}" /Fo${crtp_object}
+    DEPENDS crtp/types.ixx VERBATIM)
+set_source_files_properties("${crtp_object}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+add_library(reflgen_ifc_crtp_types STATIC "${crtp_object}")
+set_target_properties(reflgen_ifc_crtp_types PROPERTIES LINKER_LANGUAGE CXX)
+reflgen_generate_ifc(reflgen_ifc_crtp PROVIDER reflgen_ifc_crtp_types IFC "${crtp_ifc}"
+    IMPORT reflgen.test.crtp MODULE ifc_crtp)
+add_executable(reflgen_ifc_crtp_test crtp/main.cpp)
+target_link_libraries(reflgen_ifc_crtp_test PRIVATE reflgen_ifc_crtp)
+target_compile_options(reflgen_ifc_crtp_test PRIVATE /W4 /WX /permissive-)
+add_test(NAME reflgen_ifc_crtp_runtime COMMAND reflgen_ifc_crtp_test)
+add_executable(reflgen_ifc_reference_probe crtp/inspect_reference.cpp)
+target_link_libraries(reflgen_ifc_reference_probe PRIVATE reflgen_ifc_reader)
+add_dependencies(reflgen_ifc_crtp_test reflgen_ifc_reference_probe)
+add_test(NAME reflgen_ifc_crtp_imported_rejected
+    COMMAND "${CMAKE_COMMAND}" "-DGENERATOR=$<TARGET_FILE:reflgen_ifc>" "-DCOMPILER=${CMAKE_CXX_COMPILER}"
+            "-DINSPECTOR=$<TARGET_FILE:reflgen_ifc_reference_probe>"
+            "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/crtp" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/crtp-imported/$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/crtp/check_imported.cmake")
+add_test(NAME reflgen_ifc_crtp_snapshot_receipt_experiment
+    COMMAND "${CMAKE_COMMAND}" "-DCOMPILER=${CMAKE_CXX_COMPILER}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/crtp"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/crtp-snapshot-receipt/$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/crtp/check_snapshot_receipt.cmake")
+
+set(crtp_adversary_ifc "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/crtp-adversary.ifc")
+set(crtp_adversary_object "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/crtp-adversary.obj")
+add_custom_command(OUTPUT "${crtp_adversary_ifc}" "${crtp_adversary_object}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+    COMMAND "${CMAKE_CXX_COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /W4 /WX /permissive-
+            "$<IF:$<CONFIG:Debug>,/MDd,/MD>" "/D$<IF:$<CONFIG:Debug>,_DEBUG,NDEBUG>"
+            /interface /c "${CMAKE_CURRENT_SOURCE_DIR}/crtp/adversary.ixx"
+            /ifcOutput "${crtp_adversary_ifc}" /Fo${crtp_adversary_object}
+    DEPENDS crtp/adversary.ixx VERBATIM)
+add_custom_target(reflgen_ifc_crtp_adversary DEPENDS "${crtp_adversary_ifc}" "${crtp_adversary_object}")
+add_dependencies(reflgen_ifc_crtp_test reflgen_ifc_crtp_adversary)
+add_test(NAME reflgen_ifc_crtp_adversary
+    COMMAND "${CMAKE_COMMAND}" "-DGENERATOR=$<TARGET_FILE:reflgen_ifc>" "-DIFC=${crtp_adversary_ifc}"
+            "-DIMPORT_NAME=reflgen.test.crtp_adversary" "-DINTERFACE_NAME=reflgen.test.crtp_adversary_reflection"
+            "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/crtp-adversary-output/$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/crtp/check_adversary.cmake")
+
+set(crtp_nonmatching_ifc "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/crtp-nonmatching.ifc")
+set(crtp_nonmatching_object "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/crtp-nonmatching.obj")
+add_custom_command(OUTPUT "${crtp_nonmatching_ifc}" "${crtp_nonmatching_object}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+    COMMAND "${CMAKE_CXX_COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /W4 /WX /permissive-
+            "$<IF:$<CONFIG:Debug>,/MDd,/MD>" "/D$<IF:$<CONFIG:Debug>,_DEBUG,NDEBUG>"
+            /interface /c "${CMAKE_CURRENT_SOURCE_DIR}/crtp/nonmatching.ixx"
+            /ifcOutput "${crtp_nonmatching_ifc}" /Fo${crtp_nonmatching_object}
+    DEPENDS crtp/nonmatching.ixx VERBATIM)
+add_custom_target(reflgen_ifc_crtp_nonmatching DEPENDS "${crtp_nonmatching_ifc}" "${crtp_nonmatching_object}")
+add_dependencies(reflgen_ifc_crtp_test reflgen_ifc_crtp_nonmatching)
+add_test(NAME reflgen_ifc_crtp_nonmatching_fails_closed
+    COMMAND "${CMAKE_COMMAND}" "-DGENERATOR=$<TARGET_FILE:reflgen_ifc>" "-DIFC=${crtp_nonmatching_ifc}"
+            "-DIMPORT_NAME=reflgen.test.crtp_nonmatching" "-DINTERFACE_NAME=reflgen.test.crtp_nonmatching_reflection"
+            "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/crtp-nonmatching-output/$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/crtp/check_adversary.cmake")
 add_test(NAME reflgen_ifc_generator
     COMMAND "${CMAKE_COMMAND}" "-DGENERATOR=$<TARGET_FILE:reflgen_ifc>" "-DIFC=${ifc}"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/generator-check/$<CONFIG>"

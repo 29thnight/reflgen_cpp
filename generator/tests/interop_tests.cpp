@@ -481,3 +481,67 @@ namespace
         check_equal(exports.front().methods.size(), std::size_t{1});
     });
 } // namespace
+
+namespace
+{
+    test fsharp_generation("interop F# declarations", [] {
+        auto model = example_class();
+        model.attributes[0] = annotation("interop", "fsharp");
+        model.methods[0].attributes[0] = annotation("interop", "fsharp");
+        diagnostics report;
+        const auto result = emit_interop({model}, linux_x64, example_options, report);
+        require(!report.has_errors(), "F# selection rejected");
+        contains(result.fsharp_source, "extern int32 reflgen_sample_game_counter_read(nativeint receiver, int32& result)");
+        contains(result.fsharp_source, "CallingConvention.Cdecl");
+        contains(result.fsharp_source, result.fingerprint);
+    });
+}
+
+namespace
+{
+    const test opaque_pointer("interop: borrowed opaque pointer parameter", [] {
+        auto model = example_class();
+        declaration_type pointer;
+        pointer.kind = "pointer";
+        pointer.spelling = pointer.canonical_spelling = "const void *";
+        pointer.pointee = std::make_shared<declaration_type>(primitive("void", "void", -1));
+        pointer.pointee->is_const = true;
+        model.methods[0].parameter_declarations.push_back({"data", pointer, model.position});
+        diagnostics report;
+        const auto output = emit_interop({model}, linux_x64, example_options, report);
+        require(!report.has_errors());
+        contains(output.c_header, "const void* argument_0");
+        contains(output.cpp_source, "static_cast<const void *>(argument_0)");
+        contains(output.csharp_source, "nint argument_0");
+    });
+}
+
+namespace
+{
+    const test fsharp_value_contract("interop: selected F# value layouts change fingerprint and reject invalid fields", [] {
+        value_model value;
+        value.alias = "game::PointLayout";
+        value.position = {"C:/src/counter.h", 3, 1};
+        value.target = primitive("game::point", "record", 8);
+        value.target.declaration = "game::point";
+        value.align_bytes = 4;
+        value.attributes = {annotation("interop", "fsharp"), annotation("value", "Point")};
+        value.fields.push_back({"x", primitive("int", "signed_integer", 4), 0, true, false});
+        value.fields.push_back({"y", primitive("int", "signed_integer", 4), 4, true, false});
+        diagnostics first_report;
+        const auto first = emit_interop({example_class()}, linux_x64, example_options, first_report, {value});
+        require(!first_report.has_errors());
+        contains(first.fsharp_source, "validatePointLayout");
+        contains(first.cpp_source, "offsetof(::game::point, y) == 4");
+        value.fields[1].offset_bytes = 0;
+        diagnostics second_report;
+        const auto second = emit_interop({example_class()}, linux_x64, example_options, second_report, {value});
+        require(!second_report.has_errors());
+        check(first.fingerprint != second.fingerprint, "field offset must affect fingerprint");
+        value.fields[1].is_bitfield = true;
+        diagnostics bad_report;
+        const auto bad = emit_interop({example_class()}, linux_x64, example_options, bad_report, {value});
+        check(bad_report.has_errors());
+        check(bad.fsharp_source.empty());
+    });
+}

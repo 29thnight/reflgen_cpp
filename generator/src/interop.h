@@ -19,6 +19,7 @@ namespace reflgen::generator
         std::string c_header;      // reflgen_<module>_interop.h
         std::string cpp_source;    // reflgen_<module>_interop.cpp
         std::string csharp_source; // reflgen_<module>_interop.cs; C# 대상으로 고른 타입이 없으면 안내 주석만 쓴다
+        std::string fsharp_source; // reflgen_<module>_interop.fs
         std::string fingerprint;   // 순서가 있는 ABI 계약의 FNV-1a 64-bit 값, 16자리 소문자 16진수
     };
 
@@ -27,5 +28,6 @@ namespace reflgen::generator
     // borrowed handle 은 살아 있는 정확한 C++ 객체의 주소다. 수명·스레드 안전성·잘못된 주소를 검증하지 않는다.
     // 오류가 하나라도 있으면 출력을 모두 비운다. 파일 쓰기·동적 라이브러리 빌드·로딩은 호출자의 책임이다.
     interop_output emit_interop(const std::vector<class_model>& exports, const target_model& target,
-                                const interop_options& options, diagnostics& report);
+                                const interop_options& options, diagnostics& report,
+                                const std::vector<value_model>& values = {});
 } // namespace reflgen::generator

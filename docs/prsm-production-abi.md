@@ -1,6 +1,6 @@
 # PrSM production binding ABI v1 — common IR and generated bridges
 
-This contract is distinct from borrowed-address `--interop` and from
+This contract is distinct from the C/C#/F# `--interop` contracts and from
 `prsm.mock-bindings` / `prsm.mock-call-descriptor.v1`. It is the starting contract
 for a production PrSM backend, not a claim of completed CreatorEngine integration.
 PrSM consumer implementation baseline: `503315cc755b4b91df2d90c869cfd34b2d7c75bd`.
