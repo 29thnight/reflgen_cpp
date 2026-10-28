@@ -7,11 +7,15 @@ if(NOT result EQUAL 0)
     message(FATAL_ERROR "module-interface generation failed: ${output}${error}")
 endif()
 set(runtime /MD)
+set(config_define /DNDEBUG)
 if(CONFIG STREQUAL "Debug")
     set(runtime /MDd)
+    set(config_define /D_DEBUG)
 endif()
+# Match the provider's configuration: MSVC records these macros in the IFC and
+# rejects importing it under a different NDEBUG/_DEBUG environment with /WX.
 execute_process(COMMAND "${COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /W4 /WX /permissive-
-    "${runtime}" "/I${INCLUDE}" /interface /c "${WORK}/${module}.ixx"
+    "${runtime}" "${config_define}" "/I${INCLUDE}" /interface /c "${WORK}/${module}.ixx"
     /reference "reflgen.test.crtp=${IFC}" /ifcOutput "${WORK}/reflection.ifc"
     "/Fo${WORK}/reflection.obj"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
@@ -35,7 +39,7 @@ int main()
 }
 ]=])
 execute_process(COMMAND "${COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /W4 /WX /permissive-
-    "${runtime}" "/I${INCLUDE}" /c "${WORK}/consumer.cpp"
+    "${runtime}" "${config_define}" "/I${INCLUDE}" /c "${WORK}/consumer.cpp"
     /reference "reflgen.test.crtp=${IFC}" /reference "${module}=${WORK}/reflection.ifc"
     "/Fo${WORK}/consumer.obj"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
@@ -81,14 +85,14 @@ foreach(kind empty ignored)
     file(WRITE "${source}" "export module ${native_module};\n${body}")
     set(provider "${collision_dir}/provider.ifc")
     execute_process(COMMAND "${COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /W4 /WX /wd5030
-        "${runtime}" /interface /c "${source}" /ifcOutput "${provider}" "/Fo${collision_dir}/provider.obj"
+        "${runtime}" "${config_define}" /interface /c "${source}" /ifcOutput "${provider}" "/Fo${collision_dir}/provider.obj"
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "cannot build ${kind} collision fixture: ${output}${error}")
     endif()
     set(metadata "${collision_dir}/provider.i")
     execute_process(COMMAND "${COMPILER}" /nologo /std:c++20 /EHsc /utf-8 /wd5030
-        "${runtime}" /P "${source}" "/Fi${metadata}"
+        "${runtime}" "${config_define}" /P "${source}" "/Fi${metadata}"
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "cannot preprocess ${kind} collision fixture: ${output}${error}")
