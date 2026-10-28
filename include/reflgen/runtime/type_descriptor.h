@@ -731,33 +731,57 @@ namespace reflgen
                                      std::make_index_sequence<type_list_size<typename signature::arguments>>{});
         }
 
-        // 부모 우선으로 모든 메서드 서술자를 한 튜플에 모은다.
+        // Count and index the original schemas without constructing a concatenated tuple.
+        // MSVC recursively initializes std::tuple copies and hits C1054 on real surfaces
+        // such as Scene's 142 methods, even when tuple_cat has only one input.
         template<class T>
-        consteval auto all_methods_of()
+        consteval std::size_t count_method_descriptors()
         {
             if constexpr (runtime_reflectable<T>)
             {
-                return []<class... Bases>(type_list<Bases...>) {
-                    return std::tuple_cat(all_methods_of<Bases>()..., runtime_schema_of<T>.methods);
+                constexpr auto own_method_count = std::tuple_size_v<std::remove_cvref_t<decltype(runtime_schema_of<T>.methods)>>;
+                return own_method_count + []<class... Bases>(type_list<Bases...>) {
+                    return (std::size_t{} + ... + count_method_descriptors<Bases>());
                 }(runtime_direct_bases_t<T>{});
             }
-            else
-            {
-                return std::tuple<>{};
-            }
+            else return 0;
         }
 
         template<class T>
-        inline constexpr auto runtime_method_descriptors = all_methods_of<T>();
+        inline constexpr std::size_t runtime_method_descriptor_count = count_method_descriptors<T>();
+
+        template<class T, std::size_t I>
+        consteval decltype(auto) runtime_method_descriptor();
+
+        template<std::size_t I, class First, class... Rest>
+        consteval decltype(auto) inherited_method_descriptor(type_list<First, Rest...>)
+        {
+            if constexpr (I < runtime_method_descriptor_count<First>)
+                return runtime_method_descriptor<First, I>();
+            else
+                return inherited_method_descriptor<I - runtime_method_descriptor_count<First>>(type_list<Rest...>{});
+        }
+
+        template<class T, std::size_t I>
+        consteval decltype(auto) runtime_method_descriptor()
+        {
+            constexpr auto own_method_count = std::tuple_size_v<std::remove_cvref_t<decltype(runtime_schema_of<T>.methods)>>;
+            constexpr auto inherited_method_count = runtime_method_descriptor_count<T> - own_method_count;
+            static_assert(I < runtime_method_descriptor_count<T>, "runtime method index is out of range");
+            if constexpr (I < inherited_method_count)
+                return inherited_method_descriptor<I>(runtime_direct_bases_t<T>{});
+            else
+                return std::get<I - inherited_method_count>(runtime_schema_of<T>.methods);
+        }
 
         template<class T, std::size_t I>
         inline constexpr auto runtime_method_attributes =
-            make_attribute_refs(std::get<I>(runtime_method_descriptors<T>).attributes);
+            make_attribute_refs(runtime_method_descriptor<T, I>().attributes);
 
         // 파라미터 표 — 이름은 레시피가 준 것(개수가 맞을 때)이고, 타입은 멤버 함수 타입에서 읽는다.
         // (중첩 템플릿 람다가 바깥 constexpr 참조를 읽으면 MSVC 19.51 이 내부 오류(C1001)를 낸다 — 함수 템플릿으로 편다.)
         template<class T, std::size_t I>
-        using method_descriptor_at = std::remove_cvref_t<decltype(std::get<I>(runtime_method_descriptors<T>))>;
+        using method_descriptor_at = std::remove_cvref_t<decltype(runtime_method_descriptor<T, I>())>;
 
         template<class T, std::size_t I>
         using method_arguments_at = typename method_signature_of<method_descriptor_at<T, I>::pointer>::arguments;
@@ -773,7 +797,7 @@ namespace reflgen
         consteval auto make_method_parameters(type_list<Args...>, std::index_sequence<Js...>)
         {
             return std::array<parameter_info, sizeof...(Args)>{runtime_factory::parameter(
-                parameter_name(std::get<I>(runtime_method_descriptors<T>).parameter_names, Js, sizeof...(Args)),
+                parameter_name(runtime_method_descriptor<T, I>().parameter_names, Js, sizeof...(Args)),
                 type_id_of<std::remove_cvref_t<Args>>(), type_name_of<std::remove_cvref_t<Args>>(),
                 &value_descriptor_of<std::remove_cvref_t<Args>>,
                 std::is_rvalue_reference_v<Args> ? parameter_passing::rvalue_reference :
@@ -796,7 +820,7 @@ namespace reflgen
         template<class T, std::size_t I>
         constexpr method_info make_method_info() noexcept
         {
-            constexpr const auto& descriptor = std::get<I>(runtime_method_descriptors<T>);
+            constexpr const auto& descriptor = runtime_method_descriptor<T, I>();
             using descriptor_type = std::remove_cvref_t<decltype(descriptor)>;
             using signature = method_signature_of<descriptor_type::pointer>;
             using result = std::remove_cvref_t<typename signature::result>;
@@ -830,10 +854,6 @@ namespace reflgen
         }
 
         // 런타임 표에 드는 메서드의 서술 순번 — 인자 칸으로 부를 수 없는 것(runtime_invocable)을 뺀다.
-        template<class T>
-        inline constexpr std::size_t runtime_method_descriptor_count =
-            std::tuple_size_v<std::remove_cvref_t<decltype(runtime_method_descriptors<T>)>>;
-
         template<class T>
         inline constexpr auto runtime_method_callable = []<std::size_t... Is>(std::index_sequence<Is...>) {
             return std::array<bool, sizeof...(Is)>{runtime_invocable<T, method_descriptor_at<T, Is>::pointer>()...};

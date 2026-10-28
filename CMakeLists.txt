@@ -79,6 +79,7 @@ if(REFLGEN_BUILD_TESTS)
         tests/schema_tests.cpp
         tests/runtime_tests.cpp
         tests/runtime_value_tests.cpp
+        tests/runtime_scaling_tests.cpp
         tests/scalar_tests.cpp
         tests/string_tests.cpp
         tests/container_tests.cpp
