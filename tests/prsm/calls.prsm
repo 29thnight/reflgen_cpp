@@ -1,0 +1,7 @@
+fn main():int {
+    val counter = demo::Owner()
+    val initial = counter.Count
+    counter.Count = 30
+    val sum = counter.Add(initial)
+    return sum + counter.Count
+}

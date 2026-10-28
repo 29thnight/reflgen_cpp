@@ -19,10 +19,18 @@ try
 {
     reflgen::registry registry;
     reflgen::generated::register_ifc_game(registry);
-    require(registry.size() == 2);
+    require(registry.size() == 3);
     reflgen::generated::register_ifc_game(registry);
-    require(registry.size() == 2);
+    require(registry.size() == 3);
     require(registry.find("not_exported") == nullptr);
+    const auto* derived = registry.find("game::armored_point");
+    require(derived && derived->bases().size() == 1 && derived->fields().size() == 3);
+    game::armored_point origin;
+    origin.x = 2.25f;
+    origin.armor = 17;
+    const auto inherited = reflgen::json::to_string(origin);
+    const auto restored = reflgen::json::from_string<game::armored_point>(inherited);
+    require(restored.x == origin.x && restored.armor == origin.armor);
     const auto* descriptor = registry.find("game::player");
     require(descriptor != nullptr);
     require(descriptor == &reflgen::type_descriptor_of<game::player>());

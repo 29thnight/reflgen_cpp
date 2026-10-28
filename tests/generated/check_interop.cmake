@@ -61,7 +61,7 @@ foreach(path IN LISTS reflection_files)
         message(FATAL_ERROR "enabling interop changed reflection output ${path}")
     endif()
 endforeach()
-foreach(extension h cpp cs)
+foreach(extension h cpp cs fs)
     if(NOT EXISTS "${base}_interop.${extension}")
         message(FATAL_ERROR "missing interop output ${base}_interop.${extension}")
     endif()
@@ -106,7 +106,7 @@ reject_text("${reflection}" "interop_tests::native_counter")
 expect_text("${reflection}" "interop_tests::reflection_only")
 
 # 성공 후 동일한 요청은 출력 byte 와 시각을 보존한다.
-set(outputs ${reflection_files} "${base}_interop.h" "${base}_interop.cpp" "${base}_interop.cs")
+set(outputs ${reflection_files} "${base}_interop.h" "${base}_interop.cpp" "${base}_interop.cs" "${base}_interop.fs")
 foreach(path IN LISTS outputs)
     file(SHA256 "${path}" hash)
     file(TIMESTAMP "${path}" stamp "%Y-%m-%dT%H:%M:%S" UTC)
@@ -238,12 +238,75 @@ expect_rejected(lvalue_method "    struct ${selected} sample { ${method} int rea
 expect_rejected(rvalue_method "    struct ${selected} sample { ${method} int read() &&; };")
 expect_rejected(reference_parameter "    struct ${selected} sample { ${method} int read(const int&); };")
 expect_rejected(reference_return "    struct ${selected} sample { ${method} int& read(); };")
-expect_rejected(string_parameter "    struct ${selected} sample { ${method} int read(const char* text); };")
+expect_rejected(pointer_to_pointer "    struct ${selected} sample { ${method} int read(const char** text); };")
 expect_rejected(string_return "    struct ${selected} sample { ${method} const char* read(); };")
 expect_rejected(record_parameter "    struct data { int value; }; struct ${selected} sample { ${method} int read(data); };")
 expect_rejected(record_return "    struct data { int value; }; struct ${selected} sample { ${method} data read(); };")
-expect_rejected(enum_parameter "    enum class mode { value }; struct ${selected} sample { ${method} int read(mode); };")
+expect_rejected(enum_parameter "    enum mode { value }; struct ${selected} sample { ${method} int read(mode); };")
 expect_rejected(enumerator_marker "    enum class mode { value ${method} };")
+expect_rejected(fsharp_unselected_record_value [=[
+    struct data { int x; };
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::interop("fsharp")]] data apply(data value);
+    };
+]=])
+expect_rejected(fsharp_value_bitfield [=[
+    struct data { unsigned x : 2; };
+    using Layout [[reflgen::interop("fsharp"), reflgen::value("Data")]] = data;
+]=])
+expect_rejected(fsharp_value_pointer [=[
+    struct data { int* p; };
+    using Layout [[reflgen::interop("fsharp"), reflgen::value("Data")]] = data;
+]=])
+expect_rejected(consume_invalid_index [=[
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::interop("fsharp"), reflgen::consume_ownership("1")]] int read(int a, int b);
+    };
+]=])
+expect_rejected(consume_borrowed_type [=[
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] data {};
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::interop("fsharp"), reflgen::consume_ownership("0")]] int read(data* a);
+    };
+]=])
+expect_rejected(consume_missing_parameter [=[
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::interop("fsharp"), reflgen::consume_ownership("0")]] int read();
+    };
+]=])
+expect_rejected(owned_return_without_selected_owner [=[
+    struct data {};
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::interop("fsharp"), reflgen::return_ownership("owned")]] data* create();
+    };
+]=])
+expect_rejected(owned_return_const_pointer [=[
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("owned")]] data {};
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::interop("fsharp"), reflgen::return_ownership("owned")]] const data* create();
+    };
+]=])
+expect_rejected(owned_return_without_interop [=[
+    struct data {};
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::return_ownership("owned")]] data* create();
+    };
+]=])
+expect_rejected(callback_wrong_signature [=[
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::interop("fsharp"), reflgen::callback("synchronous")]] int read(long (*callback)(long));
+    };
+]=])
+expect_rejected(callback_missing_selection [=[
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::callback("synchronous")]] int read(int (*callback)(int));
+    };
+]=])
+expect_rejected(callback_bad_lifetime [=[
+    struct [[reflgen::interop("fsharp"), reflgen::lifetime("borrowed")]] sample {
+        [[reflgen::interop("fsharp"), reflgen::callback("retained")]] int read(int (*callback)(int));
+    };
+]=])
 expect_rejected(callback_parameter "    struct ${selected} sample { ${method} void read(int (*callback)(int)); };")
 expect_rejected(field_marker "    struct sample { ${method} int value; };")
 expect_rejected(free_marker "    ${method} int read();")
@@ -251,6 +314,21 @@ expect_rejected(parameter_marker "    struct sample { int read(${method} int val
 expect_rejected(constructor_marker "    struct ${selected} sample { ${method} sample(); };")
 expect_rejected(destructor_marker "    struct ${selected} sample { ${method} ~sample(); };")
 expect_rejected(nested_class "    struct outer { struct ${selected} sample { ${method} int read(); }; };")
+
+# F# 출력도 다른 선택 출력과 충돌하면 이전 성공 산출물을 보존한다.
+execute_process(
+    COMMAND "${GENERATOR}" --module export_test --output "${output_dir}" --interop
+            --declarations-json "${base}_interop.fs" "${fixture}" -- --target=x86_64-unknown-linux-gnu
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE output)
+if(result EQUAL 0 OR NOT output MATCHES "RG0001:.*collides")
+    message(FATAL_ERROR "the F# interop output collision was not rejected:\n${output}")
+endif()
+foreach(path IN LISTS outputs)
+    file(SHA256 "${path}" hash)
+    if(NOT hash STREQUAL "${hash_${path}}")
+        message(FATAL_ERROR "the F# output collision changed previous output ${path}")
+    endif()
+endforeach()
 
 # 실패한 재생성은 이미 검토한 성공 산출물도 부분적으로 덮어쓰면 안 된다.
 file(WRITE "${fixture}" "struct [[reflgen::interop(\"csharp\")]] missing_lifetime {};\n")

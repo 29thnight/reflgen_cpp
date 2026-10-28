@@ -32,6 +32,8 @@ namespace reflgen::generator
         std::vector<attribute_info> attributes; // 편집기 자동완성용 attribute 카탈로그
         target_model target;
         std::vector<class_model> exports;
+        std::vector<value_model> values; // collect_interop 일 때 reflgen::value 별칭
+        std::vector<native_table_model> tables; // explicitly selected reflgen::table aliases
     };
 
     // 오류가 보고되면 결과를 쓰지 않는다.

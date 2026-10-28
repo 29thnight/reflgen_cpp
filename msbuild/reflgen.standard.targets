@@ -13,14 +13,14 @@
     <PropertyGroup>
       <_ReflgenProjectStandards>@(ClCompile->'%(LanguageStandard)')</_ReflgenProjectStandards>
       <_ReflgenWantsStandard Condition="'$(ReflgenReflectionBackend)' == 'Std' or ('$(ReflgenReflectionBackend)' == 'Auto' and '@(ReflgenReflectType)' != '' and ($(_ReflgenProjectStandards.Contains('stdcpplatest')) or $(_ReflgenProjectStandards.Contains('stdcpp26'))))">true</_ReflgenWantsStandard>
-      <_ReflgenWantsStandard Condition="'$(ReflgenReflectionBackend)' == 'Auto' and ('$(ReflgenInterop)' == 'true' or '$(ReflgenDeclarationsJson)' != '')">false</_ReflgenWantsStandard>
+      <_ReflgenWantsStandard Condition="'$(ReflgenReflectionBackend)' == 'Auto' and ('$(ReflgenInterop)' == 'true' or '$(ReflgenFSharpTable)' == 'true' or '$(ReflgenDeclarationsJson)' != '')">false</_ReflgenWantsStandard>
       <_ReflgenProbeArch Condition="'$(Platform)' == 'Win32'">x86</_ReflgenProbeArch>
       <_ReflgenProbeArch Condition="'$(_ReflgenProbeArch)' == ''">$(Platform)</_ReflgenProbeArch>
       <_ReflgenProbeCompiler>$(VCToolsInstallDir)bin\Hostx64\$(_ReflgenProbeArch)\cl.exe</_ReflgenProbeCompiler>
       <_ReflgenProbeCompiler Condition="'$(PlatformToolset)' == 'ClangCL'">$(CLToolPath)$(CLToolExe)</_ReflgenProbeCompiler>
     </PropertyGroup>
     <Error Condition="'$(ReflgenReflectionBackend)' != 'Auto' and '$(ReflgenReflectionBackend)' != 'Std' and '$(ReflgenReflectionBackend)' != 'Legacy'" Text="ReflgenReflectionBackend must be Auto, Std or Legacy." Code="RG0260" />
-    <Error Condition="'$(ReflgenReflectionBackend)' == 'Std' and ('$(ReflgenInterop)' == 'true' or '$(ReflgenDeclarationsJson)' != '')" Text="Declaration JSON and interop outputs require ReflgenReflectionBackend=Legacy." Code="RG0263" />
+    <Error Condition="'$(ReflgenReflectionBackend)' == 'Std' and ('$(ReflgenInterop)' == 'true' or '$(ReflgenFSharpTable)' == 'true' or '$(ReflgenDeclarationsJson)' != '')" Text="Declaration JSON, interop and F# table outputs require ReflgenReflectionBackend=Legacy." Code="RG0263" />
     <MakeDir Directories="$(ReflgenOutputDirectory)" Condition="'$(_ReflgenWantsStandard)' == 'true' and '$(DesignTimeBuild)' != 'true'" />
     <WriteLinesToFile File="$(_ReflgenStandardKey)" Lines="$(_ReflgenProbeCompiler);$(ReflgenIncludeDirectory);$(IncludePath);$(PlatformToolset);$(VCToolsVersion)"
                       Condition="'$(_ReflgenWantsStandard)' == 'true' and '$(DesignTimeBuild)' != 'true'" Overwrite="true" WriteOnlyWhenDifferent="true" />

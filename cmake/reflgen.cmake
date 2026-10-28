@@ -11,6 +11,8 @@
 #       [INTEROP]                          # 선택 C ABI·C# 바인딩을 만들고 C++ 구현을 컴파일
 #       [INTEROP_LIBRARY name]             # C# 에서 불러올 native 라이브러리 이름(기본: module)
 #       [INTEROP_NAMESPACE name]           # C# 이름공간(기본: Reflgen.Generated)
+#       [FSHARP_TABLE]                     # native 함수 포인터 테이블의 F# 바인딩과 C++ ABI 검사를 생성
+#       [FSHARP_NAMESPACE name]            # F# 이름공간(기본: Reflgen.Generated)
 #       [NO_REGISTRATION])                 # 등록 함수를 컴파일하지 않는다 — 서술만 쓴다(아래)
 #
 # NO_REGISTRATION: 등록 함수(reflgen_<module>.cpp)를 만들되 컴파일하지 않는다. 서술(schema_of·for_each_field)만 쓰고
@@ -30,8 +32,10 @@
 # REFLGEN_DECLARATIONS_JSON target 속성으로 풀린 경로를 얻는다($<CONFIG> 포함 가능). 출력 디렉터리 안에만
 # 둘 수 있고, 절대 경로에도 구성마다 나뉘도록 $<CONFIG> 를 넣는다. 기존 reflection 생성·주입은 그대로다.
 #
-# INTEROP: reflgen_<module>_interop.h/.cpp/.cs 를 만든다. C++ 구현은 NO_REGISTRATION 과 무관하게
-# 컴파일하고 C# 파일은 컴파일하지 않는다. REFLGEN_INTEROP_CSHARP target 속성으로 C# 경로를 얻는다.
+# INTEROP: reflgen_<module>_interop.h/.cpp/.cs/.fs 를 만든다. C++ 구현은 NO_REGISTRATION 과 무관하게
+# 컴파일한다. REFLGEN_INTEROP_CSHARP/REFLGEN_INTEROP_FSHARP target 속성으로 관리 코드 경로를 얻는다.
+# FSHARP_TABLE: reflgen_<module>_native.fs/.cpp/.json 을 만든다. C++ ABI 검사는 컴파일하고 F#·JSON은
+# REFLGEN_FSHARP_TABLE_SOURCE/REFLGEN_FSHARP_TABLE_MANIFEST 속성으로 소비한다. C# 어셈블리는 필요 없다.
 #
 # header 는 아무것도 include 하지 않는다 — attribute 만 단다. 생성물을 묶은 주입 header
 # (<OUTPUT_DIRECTORY>/<config>/reflgen_<module>.h)를 target 과 그것을 링크하는 target 의 모든 번역 단위에
@@ -220,19 +224,22 @@ function(reflgen_generate_ifc target)
 endfunction()
 
 function(reflgen_generate target)
-    cmake_parse_arguments(PARSE_ARGV 1 ARG "NO_REGISTRATION;INTEROP"
-                          "MODULE;OUTPUT_DIRECTORY;BACKEND;DECLARATIONS_JSON;INTEROP_LIBRARY;INTEROP_NAMESPACE"
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "NO_REGISTRATION;INTEROP;FSHARP_TABLE"
+                          "MODULE;OUTPUT_DIRECTORY;BACKEND;DECLARATIONS_JSON;INTEROP_LIBRARY;INTEROP_NAMESPACE;FSHARP_NAMESPACE"
                           "HEADERS;ATTRIBUTE_SCOPES;ATTRIBUTE_HEADERS;REGISTRATION_HEADERS;TYPES;IMPORTS")
-    foreach(argument IN ITEMS DECLARATIONS_JSON INTEROP_LIBRARY INTEROP_NAMESPACE)
+    foreach(argument IN ITEMS DECLARATIONS_JSON INTEROP_LIBRARY INTEROP_NAMESPACE FSHARP_NAMESPACE)
         if(argument IN_LIST ARG_KEYWORDS_MISSING_VALUES)
             message(FATAL_ERROR "reflgen_generate(${target}): ${argument} requires a value")
         endif()
     endforeach()
+    if(ARG_FSHARP_NAMESPACE AND NOT ARG_FSHARP_TABLE)
+        message(FATAL_ERROR "reflgen_generate(${target}): FSHARP_NAMESPACE requires FSHARP_TABLE")
+    endif()
     set(requested "${ARG_BACKEND}")
     # Declaration/interop outputs belong to the header generator, not std::meta registration.
-    if(ARG_INTEROP OR ARG_DECLARATIONS_JSON)
+    if(ARG_INTEROP OR ARG_DECLARATIONS_JSON OR ARG_FSHARP_TABLE)
         if(requested STREQUAL "STD")
-            message(FATAL_ERROR "reflgen_generate(${target}): INTEROP/DECLARATIONS_JSON require BACKEND LEGACY")
+            message(FATAL_ERROR "reflgen_generate(${target}): INTEROP/DECLARATIONS_JSON/FSHARP_TABLE require BACKEND LEGACY")
         elseif(NOT requested OR requested STREQUAL "AUTO")
             set(requested LEGACY)
         endif()
@@ -320,8 +327,9 @@ function(reflgen_generate target)
                                BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
         get_filename_component(interop_csharp "${output_directory}/reflgen_${module}_interop.cs" ABSOLUTE
                                BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-        list(APPEND outputs "${interop_header}" "${interop_source}" "${interop_csharp}")
-        list(APPEND optional_outputs "${interop_header}" "${interop_source}" "${interop_csharp}")
+        set(interop_fsharp "${output_directory}/reflgen_${module}_interop.fs")
+        list(APPEND outputs "${interop_header}" "${interop_source}" "${interop_csharp}" "${interop_fsharp}")
+        list(APPEND optional_outputs "${interop_header}" "${interop_source}" "${interop_csharp}" "${interop_fsharp}")
         list(APPEND interop_arguments --interop)
         if(ARG_INTEROP_LIBRARY)
             list(APPEND interop_arguments --interop-library "${ARG_INTEROP_LIBRARY}")
@@ -330,7 +338,42 @@ function(reflgen_generate target)
             list(APPEND interop_arguments --interop-namespace "${ARG_INTEROP_NAMESPACE}")
         endif()
         set_property(TARGET ${target} PROPERTY REFLGEN_INTEROP_CSHARP "${interop_csharp}")
-        set_source_files_properties("${interop_csharp}" PROPERTIES HEADER_FILE_ONLY TRUE)
+        set_property(TARGET ${target} PROPERTY REFLGEN_INTEROP_FSHARP "${interop_fsharp}")
+        set_source_files_properties("${interop_csharp}" "${interop_fsharp}" PROPERTIES HEADER_FILE_ONLY TRUE)
+    endif()
+
+    set(fsharp_table_arguments)
+    if(ARG_FSHARP_TABLE)
+        get_filename_component(fsharp_table_source "${output_directory}/reflgen_${module}_native.fs" ABSOLUTE
+                               BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+        get_filename_component(fsharp_table_cpp "${output_directory}/reflgen_${module}_native.cpp" ABSOLUTE
+                               BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+        get_filename_component(fsharp_table_manifest "${output_directory}/reflgen_${module}_native.json" ABSOLUTE
+                               BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+        list(APPEND outputs "${fsharp_table_source}" "${fsharp_table_cpp}" "${fsharp_table_manifest}")
+        list(APPEND optional_outputs "${fsharp_table_source}" "${fsharp_table_cpp}" "${fsharp_table_manifest}")
+        list(APPEND fsharp_table_arguments --fsharp-table)
+        if(ARG_FSHARP_NAMESPACE)
+            list(APPEND fsharp_table_arguments --fsharp-namespace "${ARG_FSHARP_NAMESPACE}")
+        endif()
+        set_property(TARGET ${target} PROPERTY REFLGEN_FSHARP_TABLE_SOURCE "${fsharp_table_source}")
+        set_property(TARGET ${target} PROPERTY REFLGEN_FSHARP_TABLE_MANIFEST "${fsharp_table_manifest}")
+        set_source_files_properties("${fsharp_table_source}" "${fsharp_table_manifest}" PROPERTIES HEADER_FILE_ONLY TRUE)
+        # Source properties attach to concrete paths, not the $<CONFIG> spelling used by target_sources.
+        # Apply them to each configuration so ABI proofs remain separate from consumer PCHs/unity batches.
+        set(fsharp_table_proofs "${fsharp_table_cpp}")
+        get_property(fsharp_table_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+        if(fsharp_table_multi_config)
+            foreach(configuration IN LISTS CMAKE_CONFIGURATION_TYPES)
+                string(REPLACE "$<CONFIG>" "${configuration}" proof "${fsharp_table_cpp}")
+                list(APPEND fsharp_table_proofs "${proof}")
+            endforeach()
+        else()
+            string(REPLACE "$<CONFIG>" "${CMAKE_BUILD_TYPE}" proof "${fsharp_table_cpp}")
+            list(APPEND fsharp_table_proofs "${proof}")
+        endif()
+        set_source_files_properties(${fsharp_table_proofs} PROPERTIES
+            SKIP_PRECOMPILE_HEADERS TRUE SKIP_UNITY_BUILD_INCLUSION TRUE)
     endif()
 
     # 컴파일에 쓰는 include 경로·정의·표준을 생성기의 파싱에도 그대로 준다. 목록은 generator
@@ -459,7 +502,7 @@ $<$<IN_LIST:cxx_std_26,${features}>:-std=c++26\n>")
             endforeach()
         endforeach()
         # Make 도 command 문자열만 바뀐 경우를 잡도록 옵션을 의존 파일에 남긴다.
-        string(SHA256 optional_options_hash "${declaration_arguments};${interop_arguments}")
+        string(SHA256 optional_options_hash "${declaration_arguments};${interop_arguments};${fsharp_table_arguments}")
         file(GENERATE OUTPUT "${ownership_template}" CONTENT
              "reflgen.optional.outputs.v1\n$<JOIN:${optional_outputs},\n>\n# options: ${optional_options_hash}\n")
         list(APPEND ownership_command COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -469,7 +512,7 @@ $<$<IN_LIST:cxx_std_26,${features}>:-std=c++26\n>")
         OUTPUT ${outputs}
         BYPRODUCTS ${ownership_file}
         COMMAND "${generator}" --module "${module}" --output "${output_directory}" --clang-args-file "${arguments_file}"
-                --depfile "${depfile}" ${declaration_arguments} ${interop_arguments} ${scope_arguments} ${headers}
+                --depfile "${depfile}" ${declaration_arguments} ${interop_arguments} ${fsharp_table_arguments} ${scope_arguments} ${headers}
         ${ownership_command}
         DEPENDS ${headers} "${arguments_file}" ${generator_dependency} ${ownership_template}
         DEPFILE "${depfile}"

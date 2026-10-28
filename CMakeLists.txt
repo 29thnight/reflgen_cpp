@@ -104,6 +104,25 @@ if(REFLGEN_BUILD_TESTS)
     reflgen_configure_target(reflgen_tests)
     add_test(NAME reflgen_tests COMMAND reflgen_tests)
 
+    # The common binding contract does not require either frontend or libclang.
+    if(TARGET reflgen_generator_core)
+        enable_language(C)
+        set(reflgen_binding_test_sources
+            generator/tests/binding_ir_tests.cpp
+            generator/tests/binding_abi_c.c
+            tests/harness.cpp)
+        if(MSVC)
+            list(APPEND reflgen_binding_test_sources tests/msvc_crt.cpp)
+        endif()
+        add_executable(reflgen_binding_contract_tests ${reflgen_binding_test_sources})
+        target_include_directories(reflgen_binding_contract_tests PRIVATE tests)
+        target_compile_definitions(reflgen_binding_contract_tests PRIVATE
+            REFLGEN_PRSM_VECTOR_FILE="${CMAKE_CURRENT_SOURCE_DIR}/generator/tests/fixtures/prsm-call-v1.tsv")
+        target_link_libraries(reflgen_binding_contract_tests PRIVATE reflgen_generator_core)
+        reflgen_configure_target(reflgen_binding_contract_tests)
+        add_test(NAME reflgen_binding_contract_tests COMMAND reflgen_binding_contract_tests)
+    endif()
+
     # 생성기 시험 — libclang 이 있어 생성기가 빌드될 때만.
     if(TARGET reflgen_cli)
         set(reflgen_harness_sources tests/harness.cpp)
@@ -116,11 +135,34 @@ if(REFLGEN_BUILD_TESTS)
             generator/tests/declarations_tests.cpp
             generator/tests/emit_tests.cpp
             generator/tests/interop_tests.cpp
+            generator/tests/fsharp_table_tests.cpp
             ${reflgen_harness_sources})
         target_include_directories(reflgen_generator_tests PRIVATE tests)
         target_link_libraries(reflgen_generator_tests PRIVATE reflgen_generator_core reflgen::reflgen)
         reflgen_configure_target(reflgen_generator_tests)
         add_test(NAME reflgen_generator_tests COMMAND reflgen_generator_tests)
+        if(WIN32)
+            find_program(REFLGEN_PRSM_POWERSHELL NAMES pwsh)
+            if(REFLGEN_PRSM_POWERSHELL)
+                set(reflgen_prsm_ifc_arguments)
+                if(TARGET reflgen_ifc)
+                    list(APPEND reflgen_prsm_ifc_arguments -IfcGenerator "$<TARGET_FILE:reflgen_ifc>")
+                endif()
+                add_test(NAME reflgen_prsm_bridge
+                    COMMAND "${REFLGEN_PRSM_POWERSHELL}" -NoProfile -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/prsm/check_bridge.ps1"
+                        -HeaderGenerator "$<TARGET_FILE:reflgen_cli>" -Compiler "${CMAKE_CXX_COMPILER}"
+                        -Work "${CMAKE_CURRENT_BINARY_DIR}/prsm-bridge/$<CONFIG>"
+                        -Configuration "$<CONFIG>" ${reflgen_prsm_ifc_arguments})
+                set(REFLGEN_PRSM_COMPILER "" CACHE FILEPATH "Built PrSM compiler for production binding end-to-end tests")
+                if(REFLGEN_PRSM_COMPILER)
+                    add_test(NAME reflgen_prsm_compiler
+                        COMMAND "${REFLGEN_PRSM_POWERSHELL}" -NoProfile -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/prsm/check_compiler.ps1"
+                            -HeaderGenerator "$<TARGET_FILE:reflgen_cli>" -PrsmCompiler "${REFLGEN_PRSM_COMPILER}"
+                            -Compiler "${CMAKE_CXX_COMPILER}" -Work "${CMAKE_CURRENT_BINARY_DIR}/prsm-compiler/$<CONFIG>"
+                            -Configuration "$<CONFIG>" ${reflgen_prsm_ifc_arguments})
+                endif()
+            endif()
+        endif()
 
         # end-to-end: attribute 만 단 header → 생성 → 컴파일 → 실행.
         # C 소스를 섞는다 — 강제 include 는 C++ 번역 단위에만 붙어야 한다.
@@ -242,6 +284,21 @@ if(REFLGEN_BUILD_TESTS)
                 "-DHEADER=${PROJECT_SOURCE_DIR}/tests/generated/interop_types.h"
                 "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/interop"
                 -P "${PROJECT_SOURCE_DIR}/tests/generated/check_interop.cmake")
+        add_test(NAME reflgen_generator_fsharp_table
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/fsharp_table_cli"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_fsharp_table.cmake")
+        add_test(NAME reflgen_fsharp_table_cmake
+            COMMAND "${CMAKE_COMMAND}"
+                "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                "-DSOURCE=${PROJECT_SOURCE_DIR}"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/fsharp_table_cmake"
+                "-DGENERATOR_NAME=${CMAKE_GENERATOR}"
+                "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
+                "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+                "-DCONFIG=$<CONFIG>"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_fsharp_table_cmake.cmake")
 
         # interop 출력을 실제로 쓴다 — 생성한 C++ wrapper 를 이 컴파일러로 공유 라이브러리에 넣고(/WX),
         # 생성한 C header 만 보는 C 소비자와 생성한 C# 선언이 그 라이브러리를 부른다.
@@ -266,8 +323,37 @@ if(REFLGEN_BUILD_TESTS)
         endif()
         add_test(NAME reflgen_interop_c_calls COMMAND reflgen_interop_c_consumer)
 
+        add_library(reflgen_fsharp_runtime SHARED tests/generated/interop_runtime/fsharp/native.cpp)
+        target_link_libraries(reflgen_fsharp_runtime PRIVATE reflgen::reflgen)
+        reflgen_configure_target(reflgen_fsharp_runtime)
+        reflgen_generate(reflgen_fsharp_runtime MODULE fsharp_runtime
+            HEADERS tests/generated/interop_runtime/fsharp/types.h INTEROP
+            INTEROP_LIBRARY reflgen_fsharp_runtime INTEROP_NAMESPACE Reflgen.Tests.Interop)
+
+        # The C++ table is the only ABI source; this consumer compiles no C# bridge.
+        add_library(reflgen_fsharp_table_runtime SHARED tests/generated/fsharp_table_runtime/native.cpp)
+        target_link_libraries(reflgen_fsharp_table_runtime PRIVATE reflgen::reflgen)
+        reflgen_configure_target(reflgen_fsharp_table_runtime)
+        reflgen_generate(reflgen_fsharp_table_runtime MODULE fsharp_table_runtime
+            HEADERS tests/generated/fsharp_table_runtime/types.h
+            FSHARP_TABLE FSHARP_NAMESPACE Reflgen.Tests.Native NO_REGISTRATION)
+
         find_program(REFLGEN_DOTNET dotnet)
         if(REFLGEN_DOTNET)
+            add_test(NAME reflgen_fsharp_table_calls COMMAND "${CMAKE_COMMAND}"
+                "-DDOTNET=${REFLGEN_DOTNET}"
+                "-DPROJECT=${PROJECT_SOURCE_DIR}/tests/generated/fsharp_table_runtime/FSharpTableRuntime.fsproj"
+                "-DSOURCE=$<TARGET_GENEX_EVAL:reflgen_fsharp_table_runtime,$<TARGET_PROPERTY:reflgen_fsharp_table_runtime,REFLGEN_FSHARP_TABLE_SOURCE>>"
+                "-DLIBRARY=$<TARGET_FILE:reflgen_fsharp_table_runtime>"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/fsharp_table_managed"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_fsharp_table_runtime.cmake")
+            add_test(NAME reflgen_interop_fsharp_calls COMMAND "${CMAKE_COMMAND}"
+                "-DDOTNET=${REFLGEN_DOTNET}"
+                "-DPROJECT=${PROJECT_SOURCE_DIR}/tests/generated/interop_runtime/fsharp/InteropFSharp.fsproj"
+                "-DSOURCE=$<TARGET_GENEX_EVAL:reflgen_fsharp_runtime,$<TARGET_PROPERTY:reflgen_fsharp_runtime,REFLGEN_INTEROP_FSHARP>>"
+                "-DLIBRARY=$<TARGET_FILE:reflgen_fsharp_runtime>"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/interop_fsharp"
+                -P "${PROJECT_SOURCE_DIR}/tests/generated/check_interop_fsharp.cmake")
             add_test(NAME reflgen_interop_csharp_calls
                 COMMAND "${CMAKE_COMMAND}"
                     "-DDOTNET=${REFLGEN_DOTNET}"
@@ -277,7 +363,7 @@ if(REFLGEN_BUILD_TESTS)
                     "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/reflgen/interop_csharp"
                     -P "${PROJECT_SOURCE_DIR}/tests/generated/check_interop_csharp.cmake")
         else()
-            message(STATUS "reflgen: dotnet was not found; the C# interop call test is skipped")
+            message(STATUS "reflgen: dotnet was not found; the C#/F# interop and F# native table call tests are skipped")
         endif()
 
         # 손으로 쓴 응답 파일 — UTF-8 BOM 과 따옴표 친 경로를 받아야 한다(메모장·PowerShell 이 BOM 을 붙인다).
@@ -315,6 +401,13 @@ if(REFLGEN_BUILD_TESTS)
         # 최신 상태를 지키는가(미리 컴파일된 header 를 쓰는 프로젝트).
         find_program(REFLGEN_MSBUILD_EXECUTABLE NAMES MSBuild msbuild)
         if(WIN32 AND REFLGEN_MSBUILD_EXECUTABLE)
+            add_test(NAME reflgen_fsharp_table_msbuild
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DMSBUILD=${REFLGEN_MSBUILD_EXECUTABLE}"
+                    "-DGENERATOR=$<TARGET_FILE:reflgen_cli>"
+                    "-DSOURCE=${PROJECT_SOURCE_DIR}"
+                    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/fsharp_table_msbuild"
+                    -P "${PROJECT_SOURCE_DIR}/tests/msbuild/check_fsharp_table.cmake")
             add_test(NAME reflgen_msbuild_integration
                 COMMAND "${CMAKE_COMMAND}"
                     "-DMSBUILD=${REFLGEN_MSBUILD_EXECUTABLE}"

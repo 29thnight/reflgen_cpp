@@ -2,6 +2,7 @@ file(MAKE_DIRECTORY "${WORK}")
 function(reject name declaration expected)
     set(source "${WORK}/${name}.ixx")
     set(ifc "${WORK}/${name}.ifc")
+    file(REMOVE "${WORK}/reflgen_${name}.h")
     file(WRITE "${source}" "export module rejected;\n${declaration}\n")
     execute_process(COMMAND "${COMPILER}" /nologo /std:c++20 /EHsc /wd5030 /interface /c "${source}" ${ARGN}
         /ifcOutput "${ifc}" "/Fo${WORK}/${name}.obj"

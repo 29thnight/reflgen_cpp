@@ -347,7 +347,7 @@ namespace reflgen
         template<template<class> class Predicate, class... Es, std::size_t... I>
         consteval auto pick(const entry_pack<std::index_sequence_for<Es...>, Es...>& entries, std::index_sequence<I...>)
         {
-            constexpr auto positions = picked_positions<Predicate, Es...>();
+            [[maybe_unused]] constexpr auto positions = picked_positions<Predicate, Es...>();
             return std::tuple<std::remove_cvref_t<decltype(entry_at<positions[I]>(entries))>...>{
                 entry_at<positions[I]>(entries)...};
         }

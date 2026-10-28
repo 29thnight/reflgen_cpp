@@ -1,0 +1,18 @@
+fn main():int {
+    val self = scene::Self()
+    val p = self.Position
+    self.Position = scene::Vector3(p.x + 1.0f, p.y, p.z * 2.0f)
+    val sum = self.Move(scene::Vector3(1.0f, 0.0f, 0.0f), 3.0f)
+    var result = 0
+    if (self.Shade == scene::Shade::dim) {
+        result = result + 100
+    }
+    self.Shade = scene::Shade::bright
+    if (self.Shade == scene::Shade::bright) {
+        result = result + 10
+    }
+    if (sum == 13.0f) {
+        result = result + 1
+    }
+    return result
+}

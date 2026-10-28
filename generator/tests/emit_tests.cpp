@@ -34,6 +34,16 @@ namespace
         return {"C:/src/player.h", {player}, {}};
     }
 
+    const test ifc_named_module("emit: IFC descriptions and registration share one named module interface", [] {
+        const std::string text = reflgen::generator::emit_ifc_module_interface(
+            player_header(false), "Game.Types", "Game.Reflection", "game", "C:/out/Game.Reflection.ixx", {});
+        check(text.find("export module Game.Reflection;") != std::string::npos, text);
+        check(text.find("import Game.Types;") != std::string::npos, text);
+        check(text.find("::reflgen::field<&T::hp>") != std::string::npos, text);
+        check(text.find("target.add<::game::player>();") != std::string::npos, text);
+        check(text.find("#include \"C:/src/player.h\"") == std::string::npos, text);
+    });
+
     // 가벼운 주입: 전방 선언으로 설 수 있으면 원본 header 를 include 하지 않는다(모든 번역 단위가 그것을 끌고
     // 다니지 않게). 서술은 T 에 의존하는 부분 특수화라 T 가 완전해지는 사용 자리에서 실체화된다.
     const test light_header("emit: a forward-declarable type does not include its source header", [] {

@@ -179,6 +179,21 @@ namespace runtime
                 reflgen::method<&odd_signatures::as_volatile>);
         }
     };
+    // 힙 할당을 막은 타입 — 기본 생성자가 있어도 팩토리를 노출하지 않는다.
+    struct managed_only
+    {
+        int value = 3;
+        static void* operator new(std::size_t) = delete;
+
+      protected:
+        static void operator delete(void*) noexcept {}
+
+      public:
+        static consteval auto reflect()
+        {
+            return reflgen::schema<managed_only>(reflgen::field<&managed_only::value>);
+        }
+    };
 } // namespace runtime
 
 namespace
@@ -288,6 +303,13 @@ namespace
         reflgen::json::reader field_in("2.0");
         type.fields()[2].deserialize(field_in, instance.get());
         check_equal(static_cast<runtime::circle*>(instance.get())->radius, 2.0);
+    });
+
+    const test managed_allocation("runtime: types that forbid heap allocation get no factory", [] {
+        const reflgen::type_descriptor& type = reflgen::type_descriptor_of<runtime::managed_only>();
+        check(!type.is_constructible());
+        check(type.is_serializable());
+        check_equal(type.fields()[0].name(), std::string_view("value"));
     });
 
     const test non_serializable_fields("runtime: non-serializable fields fail at run time only", [] {

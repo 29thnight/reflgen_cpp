@@ -1,0 +1,30 @@
+# Build only generated F# plus the F# consumer, then call the native function table.
+cmake_minimum_required(VERSION 3.25)
+foreach(name DOTNET PROJECT SOURCE LIBRARY WORK)
+    if(NOT DEFINED ${name})
+        message(FATAL_ERROR "check_fsharp_table_runtime: ${name} is not set")
+    endif()
+endforeach()
+file(READ "${SOURCE}" generated)
+if(generated MATCHES "DllImport|ScriptCore")
+    message(FATAL_ERROR "the table binding unexpectedly depends on a P/Invoke or C# bridge")
+endif()
+file(REMOVE_RECURSE "${WORK}")
+execute_process(
+    COMMAND "${DOTNET}" build "${PROJECT}" --nologo -c Release --artifacts-path "${WORK}"
+            "-p:ReflgenFSharpTableSource=${SOURCE}" "-p:ReflgenNativeLibrary=${LIBRARY}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "the generated F# native table bindings did not compile:\n${output}\n${error}")
+endif()
+file(GLOB_RECURSE assemblies "${WORK}/bin/FSharpTableRuntime.dll")
+list(LENGTH assemblies count)
+if(NOT count EQUAL 1)
+    message(FATAL_ERROR "expected one FSharpTableRuntime.dll under ${WORK}/bin: ${assemblies}")
+endif()
+execute_process(COMMAND "${DOTNET}" ${assemblies}
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+message(STATUS "${output}")
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "the F# native table calls failed (${result}):\n${error}")
+endif()

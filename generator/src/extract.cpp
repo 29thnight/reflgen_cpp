@@ -100,6 +100,7 @@ namespace reflgen::generator
             result.is_volatile = clang_isVolatileQualifiedType(canonical) != 0;
             // clang 의 음수 layout 오류 코드는 ABI 가 아니다. 모두 unknown(-1) 로 기록한다.
             result.size_bytes = std::max(-1LL, clang_Type_getSizeOf(canonical));
+            result.align_bytes = std::max(-1LL, clang_Type_getAlignOf(canonical));
             switch (canonical.kind)
             {
             case CXType_Void:
@@ -146,13 +147,15 @@ namespace reflgen::generator
             case CXType_Enum:
                 result.kind = canonical.kind == CXType_Record ? "record" : "enum";
                 result.declaration = type_name_of(clang_getTypeDeclaration(canonical));
+                if (canonical.kind == CXType_Enum && clang_EnumDecl_isScoped(clang_getTypeDeclaration(canonical)))
+                    result.enum_underlying = std::make_shared<declaration_type>(
+                        describe_type(clang_getEnumDeclIntegerType(clang_getTypeDeclaration(canonical))));
                 break;
             case CXType_Pointer:
             case CXType_LValueReference:
             case CXType_RValueReference:
-            case CXType_MemberPointer:
-            {
-                result.kind = canonical.kind == CXType_Pointer ? "pointer"
+            case CXType_MemberPointer: {
+                result.kind = canonical.kind == CXType_Pointer           ? "pointer"
                               : canonical.kind == CXType_LValueReference ? "lvalue_reference"
                               : canonical.kind == CXType_RValueReference ? "rvalue_reference"
                                                                          : "member_pointer";
@@ -167,8 +170,7 @@ namespace reflgen::generator
             case CXType_ConstantArray:
             case CXType_IncompleteArray:
             case CXType_VariableArray:
-            case CXType_DependentSizedArray:
-            {
+            case CXType_DependentSizedArray: {
                 result.kind = "array";
                 result.array_size = clang_getArraySize(canonical);
                 CXType element = clang_getArrayElementType(type);
@@ -183,6 +185,21 @@ namespace reflgen::generator
             case CXType_FunctionNoProto:
                 result.kind = "function";
                 result.size_bytes = -1;
+                result.function_has_prototype = canonical.kind == CXType_FunctionProto;
+                result.function_variadic = clang_isFunctionTypeVariadic(canonical) != 0;
+                result.function_calling_convention = calling_convention_of(canonical);
+                {
+                    const int specification = clang_getExceptionSpecificationType(canonical);
+                    result.function_exception_specification = specification == CXCursor_ExceptionSpecificationKind_None ? "none" :
+                        specification == CXCursor_ExceptionSpecificationKind_BasicNoexcept ||
+                        specification == CXCursor_ExceptionSpecificationKind_DynamicNone ? "noexcept" :
+                        "unsupported:" + std::to_string(specification);
+                }
+                result.function_result = std::make_shared<declaration_type>(describe_type(clang_getResultType(canonical)));
+                for (int i = 0; i < clang_getNumArgTypes(canonical); ++i)
+                {
+                    result.function_parameters.push_back(describe_type(clang_getArgType(canonical, static_cast<unsigned>(i))));
+                }
                 break;
             case CXType_NullPtr:
                 result.kind = "nullptr";
@@ -196,7 +213,11 @@ namespace reflgen::generator
         // 생성기가 해석하고 스키마에는 옮기지 않는 지시어.
         bool is_interop_directive(const scanned_attribute& attribute)
         {
-            return attribute.scope == library_scope && (attribute.name == "interop" || attribute.name == "lifetime");
+            return attribute.scope == library_scope &&
+                   (attribute.name == "interop" || attribute.name == "lifetime" || attribute.name == "property_get" ||
+                    attribute.name == "property_set" || attribute.name == "effect" || attribute.name == "owner" ||
+                    attribute.name == "receiver" || attribute.name == "value" || attribute.name == "callback" ||
+                    attribute.name == "return_ownership" || attribute.name == "consume_ownership" || attribute.name == "table");
         }
 
         bool is_directive(const scanned_attribute& attribute)
@@ -311,6 +332,10 @@ namespace reflgen::generator
             std::vector<header_model> take() { return std::move(models_); }
 
             std::vector<class_model> take_exports() { return std::move(exports_); }
+
+            std::vector<value_model> take_values() { return std::move(values_); }
+
+            std::vector<native_table_model> take_tables() { return std::move(tables_); }
 
           private:
             header_model* model_for(CXCursor cursor)
@@ -459,6 +484,18 @@ namespace reflgen::generator
                     {
                         visit_scope(cursor);
                     }
+                    else if (kind == CXCursor_TypeAliasDecl && collect_interop_ && model_for(cursor) != nullptr)
+                    {
+                        const std::vector<attribute_group> groups = function_groups(cursor);
+                        if (find_directive(groups, "value") != nullptr)
+                        {
+                            visit_value_alias(cursor, groups);
+                        }
+                        if (find_directive(groups, "table") != nullptr)
+                        {
+                            visit_table_alias(cursor, groups);
+                        }
+                    }
                     else if (clang_isCursorDefinition(cursor) && model_for(cursor) != nullptr)
                     {
                         visit_definition(cursor, kind);
@@ -469,7 +506,13 @@ namespace reflgen::generator
 
             static bool has_interop(const std::vector<attribute_group>& groups)
             {
-                return find_directive(groups, "interop") != nullptr || find_directive(groups, "lifetime") != nullptr;
+                return find_directive(groups, "interop") != nullptr || find_directive(groups, "lifetime") != nullptr ||
+                       find_directive(groups, "property_get") != nullptr ||
+                       find_directive(groups, "property_set") != nullptr ||
+                       find_directive(groups, "effect") != nullptr || find_directive(groups, "owner") != nullptr ||
+                       find_directive(groups, "receiver") != nullptr || find_directive(groups, "value") != nullptr ||
+                       find_directive(groups, "callback") != nullptr || find_directive(groups, "return_ownership") != nullptr ||
+                       find_directive(groups, "consume_ownership") != nullptr || find_directive(groups, "table") != nullptr;
             }
 
             void interop_error(CXCursor cursor, const std::string& message)
@@ -494,6 +537,13 @@ namespace reflgen::generator
                         : function_groups(cursor);
                 if (has_interop(groups))
                 {
+                    if (find_directive(groups, "table") != nullptr && kind != CXCursor_TypeAliasDecl)
+                    {
+                        const auto position = position_of(clang_getCursorLocation(cursor));
+                        note_declaration(cursor, position);
+                        report_.error("RG0400", position, "reflgen::table is supported only on a using type alias");
+                        return;
+                    }
                     if (kind == CXCursor_ClassDecl || kind == CXCursor_StructDecl)
                     {
                         if (!clang_isCursorDefinition(cursor))
@@ -501,17 +551,20 @@ namespace reflgen::generator
                             interop_error(cursor, "interop attributes must be on a class definition");
                         }
                     }
-                    else if (kind == CXCursor_CXXMethod &&
-                             (clang_getCursorKind(lexical_parent) == CXCursor_ClassDecl ||
-                              clang_getCursorKind(lexical_parent) == CXCursor_StructDecl))
+                    else if (kind == CXCursor_CXXMethod && (clang_getCursorKind(lexical_parent) == CXCursor_ClassDecl ||
+                                                            clang_getCursorKind(lexical_parent) == CXCursor_StructDecl))
                     {
                         // 메서드의 public/static/cv/type 조건은 emitter 가 진단한다.
                     }
+                    else if (kind == CXCursor_TypeAliasDecl &&
+                             (find_directive(groups, "value") != nullptr || find_directive(groups, "table") != nullptr))
+                    {
+                        // 값 타입 동의(using V [[reflgen::value(...)]] = T). 대상 조건은 emitter 가 진단한다.
+                    }
                     else
                     {
-                        interop_error(cursor,
-                                      "interop/lifetime attributes are supported only on class definitions and "
-                                      "ordinary in-class method declarations; this declaration is unsupported");
+                        interop_error(cursor, "interop/lifetime attributes are supported only on class definitions and "
+                                              "ordinary in-class method declarations; this declaration is unsupported");
                     }
                 }
                 // 매개변수 attribute 도 위치 오류다. 메서드 자체를 선택하지 않았더라도 놓치지 않는다.
@@ -535,9 +588,8 @@ namespace reflgen::generator
                 model.qualifiers_known = false;
                 const source_file& source = source_of(method);
                 const std::size_t name_offset = offset_of(clang_getCursorLocation(method));
-                const auto first = std::ranges::find_if(source.tokens, [&](const token& item) {
-                    return item.begin == name_offset;
-                });
+                const auto first =
+                    std::ranges::find_if(source.tokens, [&](const token& item) { return item.begin == name_offset; });
                 if (first == source.tokens.end() ||
                     (first->spelling != model.name &&
                      !(first->spelling == "operator" && model.name.starts_with("operator"))))
@@ -637,16 +689,17 @@ namespace reflgen::generator
                     }
                 }
                 const CXRefQualifierKind ref = clang_Type_getCXXRefQualifier(method_type);
-                model.ref_qualifier = ref == CXRefQualifier_LValue ? "lvalue"
-                                     : ref == CXRefQualifier_RValue ? "rvalue"
-                                                                    : "none";
+                model.ref_qualifier = ref == CXRefQualifier_LValue   ? "lvalue"
+                                      : ref == CXRefQualifier_RValue ? "rvalue"
+                                                                     : "none";
                 const int count = clang_Cursor_getNumArguments(method);
                 for (int i = 0; i < count; ++i)
                 {
                     const CXCursor parameter = clang_Cursor_getArgument(method, static_cast<unsigned>(i));
                     const std::string parameter_name = cursor_spelling(parameter);
                     model.parameters.push_back(parameter_name);
-                    model.parameter_declarations.push_back({parameter_name, describe_type(clang_getCursorType(parameter)),
+                    model.parameter_declarations.push_back({parameter_name,
+                                                            describe_type(clang_getCursorType(parameter)),
                                                             position_of(clang_getCursorLocation(parameter))});
                 }
                 return model;
@@ -724,8 +777,7 @@ namespace reflgen::generator
                 {
                     result.namespaces = *namespaces;
                 }
-                for (CXCursor owner = cursor; !clang_Cursor_isNull(owner);
-                     owner = clang_getCursorSemanticParent(owner))
+                for (CXCursor owner = cursor; !clang_Cursor_isNull(owner); owner = clang_getCursorSemanticParent(owner))
                 {
                     const CXCursorKind kind = clang_getCursorKind(owner);
                     if (kind == CXCursor_ClassTemplate || kind == CXCursor_ClassTemplatePartialSpecialization ||
@@ -742,6 +794,292 @@ namespace reflgen::generator
                     }
                 }
                 exports_.push_back(std::move(result));
+            }
+
+            // using V [[reflgen::interop("prsm"), reflgen::value("S")]] = T; — 값 타입 동의 하나.
+            // 대상의 배치(필드·오프셋)나 열거자는 여기서 사실로만 읽고, 허용 여부는 lower_prsm 이 정한다.
+            void visit_value_alias(CXCursor cursor, const std::vector<attribute_group>& groups)
+            {
+                const qualifier_lookup no_lookup = [](std::string_view) { return std::string(); };
+                std::vector<std::string> external;
+                value_model value;
+                value.alias = type_name_of(cursor);
+                value.position = position_of(clang_getCursorLocation(cursor));
+                value.attributes = uses_of(groups, source_of(cursor), no_lookup, external, true);
+                note_declaration(cursor, value.position);
+                const CXType target = clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor));
+                value.target = describe_type(target);
+                value.align_bytes = std::max(-1LL, clang_Type_getAlignOf(target));
+                const CXCursor declaration = clang_getTypeDeclaration(target);
+                if (target.kind == CXType_Record)
+                {
+                    visit_children(declaration, [&](CXCursor child, CXCursor) {
+                        if (clang_getCursorKind(child) == CXCursor_CXXBaseSpecifier)
+                        {
+                            value.has_bases = true;
+                        }
+                        else if (clang_getCursorKind(child) == CXCursor_FieldDecl)
+                        {
+                            value_field_model field;
+                            field.name = cursor_spelling(child);
+                            field.type = describe_type(clang_getCursorType(child));
+                            const long long bits = clang_Cursor_getOffsetOfField(child);
+                            field.offset_bytes = bits >= 0 && bits % 8 == 0 ? bits / 8 : -1;
+                            field.is_public = clang_getCXXAccessSpecifier(child) == CX_CXXPublic;
+                            field.is_bitfield = clang_Cursor_isBitField(child) != 0;
+                            value.fields.push_back(std::move(field));
+                        }
+                        return CXChildVisit_Continue;
+                    });
+                }
+                else if (target.kind == CXType_Enum)
+                {
+                    value.underlying = describe_type(clang_getEnumDeclIntegerType(declaration));
+                    const bool is_signed = value.underlying.kind == "signed_integer";
+                    visit_children(declaration, [&](CXCursor child, CXCursor) {
+                        if (clang_getCursorKind(child) == CXCursor_EnumConstantDecl)
+                        {
+                            value.cases.push_back(
+                                {cursor_spelling(child),
+                                 is_signed ? std::to_string(clang_getEnumConstantDeclValue(child))
+                                           : std::to_string(clang_getEnumConstantDeclUnsignedValue(child))});
+                        }
+                        return CXChildVisit_Continue;
+                    });
+                }
+                values_.push_back(std::move(value));
+            }
+
+            // A table selection owns the ABI description, without changing or annotating the native declarations.
+            // This pass is independent of reflection and the existing borrowed-object interop backend.
+            value_model native_value_of(CXType input)
+            {
+                const CXType type = clang_getCanonicalType(input);
+                const CXCursor declaration = clang_getTypeDeclaration(type);
+                value_model value;
+                value.target = describe_type(type);
+                value.alias = value.target.declaration;
+                value.align_bytes = std::max(-1LL, clang_Type_getAlignOf(type));
+                value.position = position_of(clang_getCursorLocation(declaration));
+                value.is_union = clang_getCursorKind(declaration) == CXCursor_UnionDecl;
+                if (type.kind == CXType_Record)
+                {
+                    visit_children(declaration, [&](CXCursor child, CXCursor) {
+                        const auto kind = clang_getCursorKind(child);
+                        if (kind == CXCursor_CXXBaseSpecifier) value.has_bases = true;
+                        if (kind == CXCursor_CXXMethod && clang_CXXMethod_isVirtual(child) != 0)
+                            value.has_virtual_members = true;
+                        if (kind == CXCursor_Destructor && clang_CXXMethod_isDefaulted(child) == 0)
+                            value.has_nontrivial_destructor = true;
+                        if (kind == CXCursor_FieldDecl)
+                        {
+                            value_field_model field;
+                            field.name = cursor_spelling(child);
+                            field.type = describe_type(clang_getCursorType(child));
+                            const long long bits = clang_Cursor_getOffsetOfField(child);
+                            field.offset_bytes = bits >= 0 && bits % 8 == 0 ? bits / 8 : -1;
+                            field.is_public = clang_getCXXAccessSpecifier(child) == CX_CXXPublic;
+                            field.is_bitfield = clang_Cursor_isBitField(child) != 0;
+                            value.fields.push_back(std::move(field));
+                        }
+                        return CXChildVisit_Continue;
+                    });
+                }
+                else if (type.kind == CXType_Enum)
+                {
+                    value.underlying = describe_type(clang_getEnumDeclIntegerType(declaration));
+                    const bool is_signed = value.underlying.kind == "signed_integer";
+                    visit_children(declaration, [&](CXCursor child, CXCursor) {
+                        if (clang_getCursorKind(child) == CXCursor_EnumConstantDecl)
+                            value.cases.push_back({cursor_spelling(child),
+                                is_signed ? std::to_string(clang_getEnumConstantDeclValue(child))
+                                          : std::to_string(clang_getEnumConstantDeclUnsignedValue(child))});
+                        return CXChildVisit_Continue;
+                    });
+                }
+                return value;
+            }
+
+            static std::string qualified_declaration_name(CXCursor cursor)
+            {
+                std::string name = cursor_spelling(cursor);
+                for (CXCursor parent = clang_getCursorSemanticParent(cursor);
+                     !clang_Cursor_isNull(parent) && clang_getCursorKind(parent) != CXCursor_TranslationUnit;
+                     parent = clang_getCursorSemanticParent(parent))
+                {
+                    const std::string part = cursor_spelling(parent);
+                    if (!part.empty()) name = part + "::" + name;
+                }
+                return name;
+            }
+
+            void visit_table_alias(CXCursor cursor, const std::vector<attribute_group>& groups)
+            {
+                native_table_model table;
+                table.alias = qualified_declaration_name(cursor);
+                table.position = position_of(clang_getCursorLocation(cursor));
+                note_declaration(cursor, table.position);
+                const auto fail = [&](const std::string& message) {
+                    report_.error("RG0400", table.position, message);
+                };
+                const scanned_attribute* selection = nullptr;
+                for (const auto& group : groups)
+                    for (const auto& attribute : group.attributes)
+                        if (attribute.scope == library_scope && attribute.name == "table")
+                        {
+                            if (selection) fail("duplicate reflgen::table selection");
+                            selection = &attribute;
+                        }
+                if (!selection) return;
+                const qualifier_lookup no_lookup = [](std::string_view) { return std::string(); };
+                std::vector<std::string> external;
+                const auto attributes = uses_of(groups, source_of(cursor), no_lookup, external, true);
+                const attribute_use* directive = nullptr;
+                for (const auto& attribute : attributes)
+                    if (attribute.scope == library_scope && attribute.name == "table") directive = &attribute;
+                if (!directive || !directive->has_arguments)
+                {
+                    fail("reflgen::table requires name, version-field, size-field and a named integral constant");
+                    return;
+                }
+                if (find_directive(groups, "value") != nullptr || find_directive(groups, "interop") != nullptr ||
+                    find_directive(groups, "lifetime") != nullptr)
+                {
+                    fail("reflgen::table is an independent ABI selection and cannot be combined with value, interop or lifetime");
+                    return;
+                }
+                std::vector<std::vector<std::string>> arguments(1);
+                for (const auto& token : directive->argument_tokens)
+                {
+                    if (token == ",") arguments.emplace_back();
+                    else arguments.back().push_back(token);
+                }
+                const auto literal = [](const std::vector<std::string>& tokens) -> std::string {
+                    if (tokens.size() != 1 || tokens[0].size() < 2 || tokens[0].front() != '"' ||
+                        tokens[0].back() != '"' || tokens[0].find('\\') != std::string::npos) return {};
+                    return tokens[0].substr(1, tokens[0].size() - 2);
+                };
+                if (arguments.size() != 4 || (table.managed_name = literal(arguments[0])).empty() ||
+                    (table.version_field = literal(arguments[1])).empty() ||
+                    (table.size_field = literal(arguments[2])).empty() || arguments[3].empty())
+                {
+                    fail("reflgen::table requires three ordinary string literals and a named integral constant");
+                    return;
+                }
+                std::string version_name;
+                bool expect_identifier = true;
+                for (const auto& token : arguments[3])
+                {
+                    if (expect_identifier && token == "::" && version_name.empty()) { version_name = "::"; continue; }
+                    if ((expect_identifier && !is_identifier(token)) || (!expect_identifier && token != "::"))
+                    {
+                        fail("the table version must name an integral constant, not a literal or expression");
+                        return;
+                    }
+                    version_name += token;
+                    expect_identifier = !expect_identifier;
+                }
+                if (expect_identifier)
+                {
+                    fail("the table version must be a complete qualified constant name");
+                    return;
+                }
+                std::vector<std::string> candidates;
+                if (version_name.starts_with("::")) candidates.push_back(version_name.substr(2));
+                else
+                {
+                    for (auto parent = clang_getCursorSemanticParent(cursor);
+                         !clang_Cursor_isNull(parent) && clang_getCursorKind(parent) != CXCursor_TranslationUnit;
+                         parent = clang_getCursorSemanticParent(parent))
+                    {
+                        if (clang_getCursorKind(parent) == CXCursor_Namespace || is_record(clang_getCursorKind(parent)))
+                            candidates.push_back(qualified_declaration_name(parent) + "::" + version_name);
+                    }
+                    candidates.push_back(version_name);
+                }
+                std::map<std::string, CXCursor> constants;
+                visit_children(clang_getTranslationUnitCursor(unit_), [&](CXCursor child, CXCursor) {
+                    const auto kind = clang_getCursorKind(child);
+                    if (kind == CXCursor_VarDecl || kind == CXCursor_EnumConstantDecl)
+                    {
+                        const auto name = qualified_declaration_name(child);
+                        if (std::find(candidates.begin(), candidates.end(), name) != candidates.end())
+                            constants.emplace(name, child);
+                    }
+                    return kind == CXCursor_Namespace || kind == CXCursor_LinkageSpec || is_record(kind)
+                               ? CXChildVisit_Recurse : CXChildVisit_Continue;
+                });
+                for (const auto& candidate : candidates)
+                {
+                    const auto found = constants.find(candidate);
+                    if (found == constants.end()) continue;
+                    const auto constant_type = describe_type(clang_getCursorType(found->second));
+                    const evaluation_handle evaluation(clang_Cursor_Evaluate(found->second));
+                    if ((!constant_type.is_const && clang_getCursorKind(found->second) != CXCursor_EnumConstantDecl) ||
+                        !evaluation || clang_EvalResult_getKind(evaluation.get()) != CXEval_Int)
+                    {
+                        fail("table version must be a compiler-evaluated integral constant");
+                        return;
+                    }
+                    if (clang_EvalResult_isUnsignedInt(evaluation.get()) != 0 &&
+                        clang_EvalResult_getAsUnsigned(evaluation.get()) > 2147483647ULL)
+                    {
+                        fail("table version must fit a nonnegative signed 32-bit integer");
+                        return;
+                    }
+                    table.version = clang_EvalResult_getAsLongLong(evaluation.get());
+                    table.version_expression = "::" + candidate;
+                    break;
+                }
+                if (table.version < 0 || table.version > 2147483647LL)
+                {
+                    fail("table version must name an accessible, nonnegative signed-32-bit integral constant");
+                    return;
+                }
+                const CXType target = clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor));
+                table.table = native_value_of(target);
+                std::set<std::string> seen;
+                seen.insert(table.table.target.declaration);
+                std::function<void(CXType, unsigned)> collect = [&](CXType input, unsigned depth) {
+                    if (depth > 64 || seen.size() > 2048)
+                    {
+                        report_.error("RG0402", table.position, "native table type graph exceeds the supported depth or type count");
+                        return;
+                    }
+                    const CXType type = clang_getCanonicalType(input);
+                    if (type.kind == CXType_Pointer) { collect(clang_getPointeeType(type), depth + 1); return; }
+                    if (type.kind == CXType_ConstantArray) { collect(clang_getArrayElementType(type), depth + 1); return; }
+                    if (type.kind == CXType_FunctionProto)
+                    {
+                        collect(clang_getResultType(type), depth + 1);
+                        for (int i = 0; i < clang_getNumArgTypes(type); ++i)
+                            collect(clang_getArgType(type, static_cast<unsigned>(i)), depth + 1);
+                        return;
+                    }
+                    if (type.kind != CXType_Record && type.kind != CXType_Enum) return;
+                    const auto name = type_name_of(clang_getTypeDeclaration(type));
+                    if (!seen.insert(name).second) return;
+                    auto value = native_value_of(type);
+                    // Opaque, private or polymorphic pointed-to C++ objects stay nativeint. Their internals
+                    // are not recursively exposed. A by-value use is rejected by the emitter.
+                    if (value.target.size_bytes <= 0 || value.is_union || value.has_bases || value.has_virtual_members ||
+                        value.has_nontrivial_destructor ||
+                        std::any_of(value.fields.begin(), value.fields.end(), [](const auto& f) { return !f.is_public; }))
+                        return;
+                    table.values.push_back(std::move(value));
+                    if (type.kind == CXType_Record)
+                        visit_children(clang_getTypeDeclaration(type), [&](CXCursor child, CXCursor) {
+                            if (clang_getCursorKind(child) == CXCursor_FieldDecl)
+                                collect(clang_getCursorType(child), depth + 1);
+                            return CXChildVisit_Continue;
+                        });
+                };
+                if (target.kind == CXType_Record)
+                    visit_children(clang_getTypeDeclaration(target), [&](CXCursor child, CXCursor) {
+                        if (clang_getCursorKind(child) == CXCursor_FieldDecl) collect(clang_getCursorType(child), 0);
+                        return CXChildVisit_Continue;
+                    });
+                tables_.push_back(std::move(table));
             }
 
             void visit_definition(CXCursor cursor, CXCursorKind kind)
@@ -1184,6 +1522,8 @@ namespace reflgen::generator
             std::vector<declaration_extent> extents_;
             bool collect_interop_ = false;
             std::vector<class_model> exports_;
+            std::vector<value_model> values_;
+            std::vector<native_table_model> tables_;
             std::vector<declaration_extent> macro_expansions_;
         };
 
@@ -1390,7 +1730,7 @@ namespace reflgen::generator
         };
         extract_result result{walker.take(), included_files(unit.get()),
                               collect_attribute_catalog(unit.get(), scopes, declares), target_of(unit.get()),
-                              walker.take_exports()};
+                              walker.take_exports(), walker.take_values(), walker.take_tables()};
         // 메모리에만 있는 주 파일은 디스크에 없다. 이 실행의 출력이 의존에 끼면 빌드 도구가 순환 의존으로 멈춘다.
         std::set<std::string> outputs = {main_path};
         for (const std::string& header : options.headers)

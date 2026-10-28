@@ -7,9 +7,12 @@
 백엔드 선택·혼합 프로젝트·버전 분기: [백엔드 가이드](docs/reflection-backends.md).
 컴파일러·런타임·실제 VS 검증: [검증 기록](docs/verification-2026-10-17.md).
 
-**1.1.0**에 named module, MSVC IFC 생성, 혼합 프로젝트 자동 경로와 선택적 C++26 백엔드를 추가했다.
-Windows 패키지에는 두 생성기·모듈 소스·MSBuild/CMake 배선이 포함된다.
-[릴리스 노트](docs/releases/1.1.0.md)와 [최종 실제 VS 검증](docs/verification-2026-10-17.md#final-live-vs-verification)을 참고한다.
+**1.2.0**에 네이티브 함수 포인터 표를 직접 소비하는 F# 바인딩을 추가했다. 값 형식 자동 생성,
+버전·배치·함수 서명 검사, 캐시된 typed delegate와 명시적 콜백 수명 관리를 제공한다.
+기존 개발 브랜치의 F# P/Invoke·PrSM production binding과 IFC 엔진 리플렉션 확장도 함께 포함한다.
+[1.2.0 릴리스 노트](docs/releases/1.2.0.md), [interop 안내](INTEROP.md),
+[CreatorEngine 현황과 적용 지침](docs/creatorengine-fsharp-abi.md)을 참고한다.
+Windows 패키지는 두 생성기·모듈 소스·MSBuild/CMake 연동을 포함한다.
 
 게시된 NuGet **1.1.0**과 릴리스 VSIX **1.1.0**을 함께 VS 2026 **18.11.0**에서 검증했다.
 nuget.org 복원, 헤더·모듈 혼합 프로젝트의 Debug/Release 실행, 저장 재생성, 표준/reflgen 자동완성,
@@ -117,8 +120,8 @@ ctest --preset msvc-cpp20 -R reflgen_ifc
 처음 설정할 때 고정된 IFC SDK/GSL 소스를 받는다. 오프라인에서는 `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK`와
 `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL`에 해당 소스 디렉터리를 지정한다. 기본 헤더 생성 방식은 이 기능을 켜지 않는다.
 
-아래의 상속·friend·중첩 타입·오버로드·등록 의존성 확장은 이 리비전에서 빌드한 생성기가 필요하다.
-배포된 v1.1.0 바이너리에는 포함되어 있지 않다.
+아래의 상속·friend·중첩 타입·오버로드·등록 의존성 확장은 1.2.0에 포함된다.
+도구와 헤더를 같은 판으로 맞춘다. 1.1.0 바이너리에는 이 확장이 없다.
 
 **범위:** export된 class·struct와 enum을 기본으로 반영하며, public 중첩 타입도 포함한다. 메타데이터를 켜면
 `ignore`로 타입·멤버를 제외하고 `reflect("이름")`으로 스키마 이름을 지정할 수 있다.
@@ -541,16 +544,16 @@ MSBuild 는 `ReflgenDeclarationsJson` 에 경로를 준다. 구성마다 나뉘�
 지운다. CLI 를 직접 쓰면 빌드 출력 디렉터리 밖의 안전한 경로에도 만들 수 있다. Visual Studio 의 native 최신 여부
 검사는 출력만 지웠을 때 MSBuild 를 건너뛸 수 있다. 그때는 `ReflgenGenerate` 를 직접 실행한다.
 
-### 선택 C ABI·C# 바인딩
+### 선택 C ABI·C#·F# 바인딩
 
-`--interop` 은 일반 출력 디렉터리에 `reflgen_<module>_interop.h`·`.cpp`·`.cs` 를 더 만든다.
-`--interop-library NAME` 은 C# 에서 불러올 native 라이브러리 이름(기본: 모듈 이름),
-`--interop-namespace NAME` 은 C# 이름공간(기본: `Reflgen.Generated`)이다.
+`--interop` 은 일반 출력 디렉터리에 `reflgen_<module>_interop.h`·`.cpp`·`.cs`·`.fs` 를 더 만든다.
+`--interop-library NAME` 은 관리 코드에서 불러올 native 라이브러리 이름(기본: 모듈 이름),
+`--interop-namespace NAME` 은 관리 코드 이름공간(기본: `Reflgen.Generated`)이다.
 
 CMake 는 `reflgen_generate()` 에 `INTEROP`·`INTEROP_LIBRARY NAME`·`INTEROP_NAMESPACE NAME` 을 받는다.
-`REFLGEN_INTEROP_CSHARP` target 속성으로 생성된 C# 경로를 얻는다. MSBuild·NuGet 은 `ReflgenInterop=true`·
+`REFLGEN_INTEROP_CSHARP`·`REFLGEN_INTEROP_FSHARP` target 속성으로 생성된 관리 코드 경로를 얻는다. MSBuild·NuGet 은 `ReflgenInterop=true`·
 `ReflgenInteropLibrary`·`ReflgenInteropNamespace` 를 쓴다. 생성된 C++ 구현은 `NO_REGISTRATION`·
-`ReflgenRegistration=false` 와 무관하게 컴파일하고, C# 파일은 C++ 컴파일러에 넘기지 않는다. JSON 선언 목록과
+`ReflgenRegistration=false` 와 무관하게 컴파일하고, 관리 코드 파일은 C++ 컴파일러에 넘기지 않는다. JSON 선언 목록과
 별개인 선택 기능이며 같은 출력 소유권·정리 검사를 따른다.
 명시적 선택 attribute·지원 경계 타입·수명 규칙은 [INTEROP.md](INTEROP.md)를 본다.
 

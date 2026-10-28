@@ -1,0 +1,55 @@
+#include <stdint.h>
+#include <cstring>
+#include <reflgen/prsm/validator.h>
+#include "reflgen_demo_prsm.h"
+@PROVIDER@
+#include "adapter.h"
+extern "C" int32_t prsm_entry(int64_t* result);
+static int validations = 0;
+static bool invalidate = false;
+extern "C" int32_t ce_prsm_validate_binding(const uint8_t* symbol, uint32_t length, const uint8_t* digest) noexcept
+{
+    ++validations;
+    if (!fixture::context) return REFLGEN_PRSM_BINDING_INVALID_CONTEXT;
+    if (!fixture::game_thread) return REFLGEN_PRSM_BINDING_WRONG_THREAD;
+    if (invalidate && validations == 2) ++fixture::live_handle;
+    uint32_t count = 0;
+    const auto* entries = ce_prsm_table_64656d6f(&count);
+    const reflgen::prsm::binding_table_view view{entries, count};
+    return reflgen::prsm::validate_binding(&view, 1, symbol, length, digest);
+}
+int main(int argc, char** argv)
+{
+    const int mode = argc > 1 ? argv[1][0] - '0' : 0;
+    demo::Counter counter;
+    fixture::object = &counter;
+    fixture::game_thread = true;
+    if (mode == 1) fixture::context = false;
+    if (mode == 2) invalidate = true;
+    if (mode == 3) counter.Set(-1);
+    if (mode == 5) fixture::game_thread = false;
+    int64_t value = 918;
+    const auto status = prsm_entry(&value);
+    if (mode == 0) {
+        if (status != 0 || value != 74 || counter.Get() != 37 || validations != 5 || fixture::owner_calls != 1) return 1;
+    } else {
+        // prsm_entry's standalone ABI writes its status tuple's value even on
+        // failure. Only successful results are consumed by the host.
+        if (status != 4) return 2;
+        if (counter.Get() != (mode == 3 ? 30 : 7)) return 3;
+        if (fixture::owner_calls != ((mode == 1 || mode == 5) ? 0 : 1)) return 4;
+        if ((mode == 2 || mode == 4) && validations != 2) return 5;
+    }
+    if (fixture::guards != 0) return 6;
+    uint32_t count = 0;
+    const auto* entries = ce_prsm_table_64656d6f(&count);
+    if (count != 6 || !entries || ce_prsm_table_64656d6f(nullptr)) return 7;
+    const reflgen::prsm::binding_table_view views[] = {{entries, count}, {entries, count}};
+    const auto* symbol = reinterpret_cast<const uint8_t*>(entries[0].symbol);
+    if (reflgen::prsm::validate_binding(views, 1, symbol, entries[0].symbol_length, entries[0].digest) != 0) return 8;
+    if (reflgen::prsm::validate_binding(views, 2, symbol, entries[0].symbol_length, entries[0].digest) != 5) return 9;
+    uint8_t wrong[32]; std::memcpy(wrong, entries[0].digest, 32); wrong[31] ^= 1;
+    if (reflgen::prsm::validate_binding(views, 1, symbol, entries[0].symbol_length, wrong) != 5) return 10;
+    if (reflgen::prsm::validate_binding(views, 1, nullptr, 0, wrong) != 1) return 11;
+    return 0;
+}

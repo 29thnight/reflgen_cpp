@@ -28,8 +28,13 @@ message(STATUS "reflgen: libclang = ${REFLGEN_LIBCLANG}")
 # libclang 없이 시험할 수 있는 부분 — attribute 읽기와 생성 코드 쓰기.
 add_library(reflgen_generator_core STATIC
     src/attribute_scan.cpp
+    src/binding_hash.cpp
+    src/binding_ir.cpp
+    src/prsm.cpp
+    src/prsm_catalog.cpp
     src/declarations.cpp
     src/interop.cpp
+    src/fsharp_table.cpp
     src/emit.cpp)
 target_include_directories(reflgen_generator_core PUBLIC src)
 # 생성 코드 형식(reflgen/core/version.h)을 라이브러리와 같은 곳에서 읽는다.

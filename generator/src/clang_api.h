@@ -51,6 +51,12 @@ namespace reflgen::generator
     };
     using translation_unit_handle = std::unique_ptr<CXTranslationUnitImpl, translation_unit_deleter>;
 
+    struct evaluation_deleter
+    {
+        void operator()(void* value) const noexcept { clang_EvalResult_dispose(value); }
+    };
+    using evaluation_handle = std::unique_ptr<void, evaluation_deleter>;
+
     // 위치가 가리키는 파일(없으면 nullptr).
     CXFile file_handle_of(CXSourceLocation location);
 

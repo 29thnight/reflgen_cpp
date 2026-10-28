@@ -7,9 +7,12 @@ Macro-free reflection for C++20, with a serialization library whose formats you 
 Backend selection, mixed projects and version guards: [backend guide](docs/reflection-backends.md).
 Compiler, runtime and live VS validation: [verification record](docs/verification-2026-10-17.md).
 
-Version **1.1.0** adds named modules, MSVC IFC generation, mixed-project routing and the optional C++26 backend.
-Windows packages include both generators, module sources and MSBuild/CMake wiring. See the
-[release notes](docs/releases/1.1.0.md) and [final live VS verification](docs/verification-2026-10-17.md#final-live-vs-verification).
+Version **1.2.0** adds direct F# bindings for native function-pointer tables: generated value types,
+version/layout/signature checks, cached typed delegates and explicit callback lifetime support. It also integrates
+the F# P/Invoke, PrSM production-binding and IFC engine-reflection extensions. See the
+[1.2.0 release notes](docs/releases/1.2.0.md), [interop guide](INTEROP.md), and
+[CreatorEngine ABI assessment and integration guide](docs/creatorengine-fsharp-abi.md).
+Windows packages include both generators, module sources and MSBuild/CMake integration.
 
 The published NuGet **1.1.0** package and released VSIX **1.1.0** were also verified together in
 VS 2026 **18.11.0**: nuget.org restore, mixed header/module Debug and Release execution,
@@ -107,8 +110,8 @@ Optional: configure with `-DREFLGEN_BUILD_IFC=ON` to build `reflgen-ifc` (MSVC w
 The provider and consumers remain C++20. Pinned Microsoft IFC SDK/GSL sources are fetched on first configure;
 offline builds can set `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_SDK` and `FETCHCONTENT_SOURCE_DIR_REFLGEN_IFC_GSL`.
 
-The inheritance, friend, nested-type, overload and registration-dependency extensions below require a generator built
-from this revision; the released v1.1.0 binary does not include them.
+The inheritance, friend, nested-type, overload and registration-dependency extensions below are included in 1.2.0.
+Use matching tools and headers; the 1.1.0 binary does not include these extensions.
 
 The frontend reads the primary module's compiler-produced IFC, without reparsing its source. Exported class/struct and
 enum types are reflected by default, including public nested types. With metadata enabled, `ignore` excludes a type/member
@@ -544,16 +547,16 @@ after verifying it is stale generated output. Clean removes owned optional outpu
 The standalone CLI can still write a safe path outside the build output directory. Visual Studio's native fast
 up-to-date check may skip MSBuild after an output-only deletion; invoke `ReflgenGenerate` explicitly in that case.
 
-### Optional C ABI and C# bindings
+### Optional C ABI, C# and F# bindings
 
-`--interop` adds `reflgen_<module>_interop.h`, `.cpp` and `.cs` under the normal output directory.
-`--interop-library NAME` sets the native library name used by C# (default: module name), and
+`--interop` adds `reflgen_<module>_interop.h`, `.cpp`, `.cs` and `.fs` under the normal output directory.
+`--interop-library NAME` sets the native library name used by managed bindings (default: module name), and
 `--interop-namespace NAME` sets its namespace (default: `Reflgen.Generated`).
 
 CMake accepts `INTEROP`, `INTEROP_LIBRARY NAME` and `INTEROP_NAMESPACE NAME` in `reflgen_generate()`.
-The `REFLGEN_INTEROP_CSHARP` target property exposes the generated C# path. MSBuild/NuGet use
+The `REFLGEN_INTEROP_CSHARP` and `REFLGEN_INTEROP_FSHARP` target properties expose the generated managed paths. MSBuild/NuGet use
 `ReflgenInterop=true`, `ReflgenInteropLibrary` and `ReflgenInteropNamespace`. The generated C++ implementation is
-compiled even with `NO_REGISTRATION` / `ReflgenRegistration=false`; the C# file is never passed to the C++ compiler.
+compiled even with `NO_REGISTRATION` / `ReflgenRegistration=false`; the managed files are never passed to the C++ compiler.
 Bindings are opt-in, independent of the JSON manifest, and use the same output ownership and cleanup checks.
 See [INTEROP.md](INTEROP.md) for explicit selection attributes, the supported boundary types and lifetime rules.
 

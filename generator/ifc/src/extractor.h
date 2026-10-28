@@ -24,6 +24,8 @@ namespace reflgen::generator::ifc_frontend
     {
       public:
         header_model model;
+        bool prsm = false;
+        std::vector<class_model> exports;
 
         extractor(Reader& reader, std::string path, module_metadata* metadata, std::set<std::string> scopes)
             : model{std::move(path), {}, {}}, reader_(reader), semantic_(reader), metadata_(metadata),
@@ -92,6 +94,201 @@ namespace reflgen::generator::ifc_frontend
             return metadata_ ? metadata_->uses(groups, scopes_, lookup) : std::vector<attribute_use>{};
         }
 
+        bool binding_groups(const std::vector<attribute_group>& groups)
+        {
+            if (!metadata_)
+                return false;
+            for (const auto name : {"interop", "lifetime", "property_get", "property_set", "effect", "owner", "receiver"})
+                if (metadata_->directive(groups, name))
+                    return true;
+            return false;
+        }
+
+        void reject_binding_location(DeclIndex index)
+        {
+            reader_.visit_with_index(index, [&](auto, const auto& declaration) {
+                if constexpr (requires {
+                                  declaration.identity.locus;
+                                  declaration.identity.name;
+                              })
+                {
+                    std::string spelling;
+                    if constexpr (std::is_same_v<decltype(declaration.identity.name), NameIndex>)
+                        spelling = semantic_.name(declaration.identity.name);
+                    else if constexpr (std::is_same_v<decltype(declaration.identity.name), TextOffset>)
+                        spelling = reader_.get(declaration.identity.name);
+                    if (binding_groups(attributes(declaration.identity.locus, spelling, true)))
+                        fail(declaration.identity.locus,
+                             "PrSM directives require a class and ordinary nonstatic method");
+                }
+            });
+        }
+
+        declaration_type scalar_type(TypeIndex index, unsigned depth = 0)
+        {
+            declaration_type result;
+            if (depth > 32 || index_like::null(index))
+                return result;
+            if (const auto* alias = reader_.get_if<DesignatedType>(index))
+            {
+                if (alias->decl.sort() == DeclSort::Alias)
+                    return scalar_type(reader_.get<AliasDecl>(alias->decl).aliasee, depth + 1);
+                return result;
+            }
+            if (const auto* qualified = reader_.get_if<QualifiedType>(index))
+            {
+                if ((to_underlying(qualified->qualifiers) & ~0x03) != 0)
+                    return result;
+                result = scalar_type(qualified->unqualified_type, depth + 1);
+                result.is_const = (to_underlying(qualified->qualifiers) & to_underlying(Qualifier::Const)) != 0;
+                result.is_volatile = (to_underlying(qualified->qualifiers) & to_underlying(Qualifier::Volatile)) != 0;
+                return result;
+            }
+            const auto* fundamental = reader_.get_if<FundamentalType>(index);
+            if (!fundamental)
+                return result;
+            const auto& f = *fundamental;
+            if (f.sign != TypeSign::Plain && f.sign != TypeSign::Signed && f.sign != TypeSign::Unsigned)
+                return result;
+            if (f.basis == TypeBasis::Void)
+            {
+                result.kind = "void";
+                result.canonical_spelling = "void";
+                result.size_bytes = 0;
+            }
+            else if (f.basis == TypeBasis::Bool)
+            {
+                result.kind = "bool";
+                result.canonical_spelling = "bool";
+                result.size_bytes = 1;
+            }
+            else if (f.basis == TypeBasis::Float && f.precision == TypePrecision::Default)
+            {
+                result.kind = "floating_point";
+                result.canonical_spelling = "float";
+                result.size_bytes = 4;
+            }
+            else if (f.basis == TypeBasis::Double && f.precision == TypePrecision::Default)
+            {
+                result.kind = "floating_point";
+                result.canonical_spelling = "double";
+                result.size_bytes = 8;
+            }
+            else if (f.basis == TypeBasis::Int || (f.basis == TypeBasis::Char && f.sign != TypeSign::Plain))
+            {
+                std::string name;
+                long long size = -1;
+                if (f.basis == TypeBasis::Char || f.precision == TypePrecision::Bit8)
+                {
+                    name = "char";
+                    size = 1;
+                }
+                else if (f.precision == TypePrecision::Short || f.precision == TypePrecision::Bit16)
+                {
+                    name = "short";
+                    size = 2;
+                }
+                else if (f.precision == TypePrecision::Default || f.precision == TypePrecision::Bit32)
+                {
+                    name = "int";
+                    size = 4;
+                }
+                else if (f.precision == TypePrecision::Long)
+                {
+                    name = "long";
+                    size = 4;
+                }
+                else if (f.precision == TypePrecision::Bit64)
+                {
+                    name = "long long";
+                    size = 8;
+                }
+                if (size > 0)
+                {
+                    result.kind = f.sign == TypeSign::Unsigned ? "unsigned_integer" : "signed_integer";
+                    result.canonical_spelling =
+                        f.sign == TypeSign::Unsigned ? "unsigned " + name : (size == 1 ? "signed char" : name);
+                    result.size_bytes = size;
+                }
+            }
+            result.spelling = result.canonical_spelling;
+            return result;
+        }
+
+        void prsm_members(const ScopeDecl& scope, class_model& owner)
+        {
+            const auto* body = reader_.try_get(scope.initializer);
+            if (!body)
+                return;
+            std::map<std::string, unsigned> counts;
+            for (const auto& entry : reader_.sequence(*body))
+                if (entry.index.sort() == DeclSort::Method)
+                    ++counts[semantic_.name(reader_.get<NonStaticMemberFunctionDecl>(entry.index).identity.name)];
+                else if (entry.index.sort() == DeclSort::Function)
+                    ++counts[semantic_.name(reader_.get<FunctionDecl>(entry.index).identity.name)];
+            for (const auto& entry : reader_.sequence(*body))
+            {
+                if (entry.index.sort() != DeclSort::Method)
+                {
+                    reject_binding_location(entry.index);
+                    continue;
+                }
+                const auto& method = reader_.get<NonStaticMemberFunctionDecl>(entry.index);
+                const auto member_name = semantic_.name(method.identity.name);
+                const auto groups = attributes(method.identity.locus, member_name, true);
+                if (!binding_groups(groups))
+                    continue;
+                if (!identifier(member_name))
+                    fail(method.identity.locus, "unsupported PrSM operator/conversion");
+                const auto* type = reader_.get_if<MethodType>(method.type);
+                if (!type)
+                    fail(method.identity.locus, "unknown PrSM IFC method type");
+                method_model result;
+                result.name = member_name;
+                result.owner = owner.qualified_name;
+                result.position = position(method.identity.locus);
+                result.access = method.access == Access::Public ? "public" : "private";
+                result.attributes = metadata_->uses(groups, scopes_, {}, true);
+                result.is_const = (to_underlying(type->traits) & to_underlying(FunctionTypeTraits::Const)) != 0;
+                result.qualifiers_known = (to_underlying(type->traits) & ~0x0f) == 0;
+                result.is_volatile = (to_underlying(type->traits) & to_underlying(FunctionTypeTraits::Volatile)) != 0;
+                result.ref_qualifier = (to_underlying(type->traits) & (to_underlying(FunctionTypeTraits::Lvalue) |
+                                                                       to_underlying(FunctionTypeTraits::Rvalue)))
+                                           ? "unsupported"
+                                           : "none";
+                result.calling_convention =
+                    type->convention == CallingConvention::Cdecl || type->convention == CallingConvention::This
+                        ? "c"
+                        : "unsupported";
+                result.exception_specification = type->eh_spec.sort == NoexceptSort::None   ? "none"
+                                                 : type->eh_spec.sort == NoexceptSort::True ? "basic_noexcept"
+                                                                                            : "unsupported";
+                result.is_deleted = (to_underlying(method.traits) & to_underlying(FunctionTraits::Deleted)) != 0;
+                result.is_consteval = (to_underlying(method.traits) & to_underlying(FunctionTraits::Immediate)) != 0;
+                result.declaration_specifiers_known =
+                    (to_underlying(method.traits) &
+                     ~(to_underlying(FunctionTraits::Inline) | to_underlying(FunctionTraits::Constexpr) |
+                       to_underlying(FunctionTraits::Virtual) | to_underlying(FunctionTraits::NoReturn) |
+                       to_underlying(FunctionTraits::PureVirtual) | to_underlying(FunctionTraits::Deleted) |
+                       to_underlying(FunctionTraits::Immediate) | to_underlying(FunctionTraits::Final) |
+                       to_underlying(FunctionTraits::Override))) == 0;
+                result.is_overloaded = counts[member_name] > 1;
+                result.return_type = scalar_type(type->target);
+                const auto parameter = [&](TypeIndex parameter_type) {
+                    result.parameter_declarations.push_back({{}, scalar_type(parameter_type), result.position});
+                };
+                if (!index_like::null(type->source))
+                {
+                    if (const auto* tuple = reader_.get_if<TupleType>(type->source))
+                        for (const auto item : reader_.sequence(*tuple))
+                            parameter(item);
+                    else if (scalar_type(type->source).kind != "void")
+                        parameter(type->source);
+                }
+                owner.methods.push_back(std::move(result));
+            }
+        }
+
         void collect(ScopeIndex index, const std::string& prefix, const std::vector<std::string>& namespaces,
                      bool nested)
         {
@@ -101,6 +298,7 @@ namespace reflgen::generator::ifc_frontend
             {
                 if (entry.index.sort() == DeclSort::Enumeration)
                 {
+                    if (prsm) reject_binding_location(entry.index);
                     const auto& type = reader_.get<EnumerationDecl>(entry.index);
                     if (has_flag(type.basic_spec, BasicSpecifiers::IsMemberOfGlobalModule) ||
                         (nested ? type.access != Access::Public : has_flag(type.basic_spec, BasicSpecifiers::NonExported)))
@@ -126,16 +324,38 @@ namespace reflgen::generator::ifc_frontend
                     if (!identifier(short_name)) continue;
                     if (fundamental->basis == TypeBasis::Namespace)
                     {
+                        if (prsm && binding_groups(attributes(type.identity.locus, short_name, true)))
+                            fail(type.identity.locus, "PrSM namespace directives are unsupported");
                         auto child_namespaces = namespaces;
                         child_namespaces.push_back(prefix + short_name);
                         collect(type.initializer, prefix + short_name + "::", child_namespaces, false);
                         continue;
                     }
                     if (fundamental->basis != TypeBasis::Struct && fundamental->basis != TypeBasis::Class) continue;
-                    if (nested ? type.access != Access::Public : has_flag(type.basic_spec, BasicSpecifiers::NonExported))
-                        continue;
-                    if (!reader_.try_get(type.initializer)) continue;
                     const auto groups = attributes(type.identity.locus, short_name, true);
+                    if ((nested ? type.access != Access::Public : has_flag(type.basic_spec, BasicSpecifiers::NonExported)) ||
+                        !reader_.try_get(type.initializer))
+                    {
+                        if (prsm && binding_groups(groups))
+                            fail(type.identity.locus, "PrSM types must be exported complete public definitions");
+                        continue;
+                    }
+                    if (prsm)
+                    {
+                        class_model selected;
+                        selected.name = short_name;
+                        selected.qualified_name = prefix + short_name;
+                        selected.schema_name = "\"" + selected.qualified_name + "\"";
+                        selected.position = position(type.identity.locus);
+                        selected.attributes = metadata_->uses(groups, scopes_, {}, true);
+                        prsm_members(type, selected);
+                        if (binding_groups(groups) || !selected.methods.empty())
+                        {
+                            if (nested || !index_like::null(type.base))
+                                fail(type.identity.locus, "PrSM IFC currently requires a nonnested class without inheritance");
+                            exports.push_back(std::move(selected));
+                        }
+                    }
                     if (!directive(groups, "ignore") && !directive(groups, "attribute"))
                     {
                         class_model result;
@@ -156,6 +376,10 @@ namespace reflgen::generator::ifc_frontend
                     // Public nested types remain nameable even when the enclosing schema is ignored.
                     collect(type.initializer, prefix + short_name + "::", namespaces, true);
                 }
+                // Ordinary class members were already validated by prsm_members;
+                // this traversal only discovers their public nested types.
+                else if (prsm && !nested)
+                    reject_binding_location(entry.index);
             }
         }
 

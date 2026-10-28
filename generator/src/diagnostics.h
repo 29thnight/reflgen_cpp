@@ -16,6 +16,9 @@
 //   RG0201  지원하지 않는 interop 선언·접근성
 //   RG0202  지원하지 않는 interop 타입·target ABI
 //   RG0203  생성된 interop 심벌 충돌
+//   RG0300  PrSM production binding IR 계약 오류
+//   RG0301  PrSM 노출 정책·선언 오류
+//   RG0302  PrSM 지원하지 않는 타입
 #include "model.h"
 #include <cstdio>
 #include <string>

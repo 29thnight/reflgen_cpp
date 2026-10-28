@@ -46,6 +46,15 @@ namespace reflgen::generator
         std::shared_ptr<declaration_type> pointee;
         std::shared_ptr<declaration_type> element_type;
         long long array_size = -1;
+        std::shared_ptr<declaration_type> enum_underlying;
+        // Native function-table ABI metadata. Existing interop/declaration formats do not consume these fields.
+        long long align_bytes = -1;
+        std::shared_ptr<declaration_type> function_result;
+        std::vector<declaration_type> function_parameters;
+        std::string function_calling_convention;
+        bool function_variadic = false;
+        bool function_has_prototype = false;
+        std::string function_exception_specification = "none";
     };
 
     struct parameter_model
@@ -144,6 +153,57 @@ namespace reflgen::generator
         std::string name;      // "range"
         std::string signature; // "range(T min_value, T max_value)" — 인자 없는 표지는 이름만
         std::string summary;   // 선언 앞 주석, 한 줄로
+    };
+
+    // 값 타입 별칭이 가리키는 레코드의 비정적 데이터 멤버 하나(선언 순서).
+    struct value_field_model
+    {
+        std::string name;
+        declaration_type type;
+        long long offset_bytes = -1; // 알 수 없으면 -1
+        bool is_public = false;
+        bool is_bitfield = false;
+    };
+
+    // 값 타입 별칭이 가리키는 열거형의 열거자 하나. 값은 10진 표기(부호 있으면 '-' 가능)다.
+    struct value_case_model
+    {
+        std::string name;
+        std::string value;
+    };
+
+    // PrSM 값 타입을 고르는 엔진 소유 별칭 선언 하나:
+    //   using Vector3 [[reflgen::interop("prsm"), reflgen::value("creator::Vector3")]] = math::vector3;
+    // 대상(서드파티일 수 있다)의 header 는 건드리지 않는다. 동의는 이 별칭이 한다.
+    struct value_model
+    {
+        std::string alias; // 별칭의 완전한 이름 — 진단용, ABI 정체성이 아니다
+        std::vector<attribute_use> attributes;
+        declaration_type target; // 대상의 정규 타입(kind 가 record 또는 enum)
+        long long align_bytes = -1;
+        bool has_bases = false;
+        std::vector<value_field_model> fields; // record
+        declaration_type underlying;           // enum 의 기반 정수 타입
+        std::vector<value_case_model> cases;   // enum
+        source_position position;
+        bool is_union = false;
+        bool has_virtual_members = false;
+        bool has_nontrivial_destructor = false;
+    };
+
+    // Explicit selection of an existing, host-injected native ABI table. Version is evaluated by libclang
+    // from a named integral constant; no managed language is made a second source of truth.
+    struct native_table_model
+    {
+        std::string alias;
+        std::string managed_name;
+        std::string version_field;
+        std::string size_field;
+        std::string version_expression;
+        long long version = -1;
+        value_model table;
+        std::vector<value_model> values;
+        source_position position;
     };
 
     // 입력 header 하나에서 나온 것들.

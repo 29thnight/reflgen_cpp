@@ -9,7 +9,7 @@ descriptions. No macros, no generated includes in your headers, nothing to regis
 Install `reflgen` into a `.vcxproj` (`packages.config`). Installing imports `build\native\reflgen.targets`, which runs
 the generator before compilation and adds the headers to the include path — there is nothing else to set.
 
-Requirements: Windows x64, Visual Studio 2026 (18.x), C++20 or later. Version 1.1.0 includes both generators
+Requirements: Windows x64, Visual Studio 2026 (18.x), C++20 or later. Version 1.2.0 includes both generators
 (`reflgen.exe` with its own `libclang.dll`, and `reflgen-ifc.exe`), public headers, named module sources and
 the mixed/standard MSBuild targets. Headers use libclang; MSVC module interfaces use IFC automatically.
 
@@ -18,7 +18,7 @@ and reference that provider from the consuming project. Keep library modules and
 and language mode. The C++26 standard backend requires an actual capability probe and an explicit class manifest;
 current MSVC falls back to legacy header/IFC generation under Auto.
 See the [backend guide](https://github.com/29thnight/reflgen_cpp/blob/main/docs/reflection-backends.md) and
-[release notes](https://github.com/29thnight/reflgen_cpp/blob/main/docs/releases/1.1.0.md).
+[release notes](https://github.com/29thnight/reflgen_cpp/blob/main/docs/releases/1.2.0.md).
 
 ## Use
 
@@ -84,3 +84,13 @@ namespace (default: `Reflgen.Generated`). The C++ implementation is compiled ind
   releases page
 
 License: MIT. The package includes libclang (Apache-2.0 WITH LLVM-exception).
+
+### Direct F# native-table bindings
+
+Set `ReflgenFSharpTable=true` and optionally `ReflgenFSharpNamespace` in the native
+project. Explicit `reflgen::table` aliases select the ABI surface. The generated
+native proof is compiled automatically; add `$(ReflgenFSharpTableSource)` to the F#
+project before its consumers. `$(ReflgenFSharpTableManifest)` identifies the JSON
+contract. The feature uses the Legacy header frontend.
+
+[CreatorEngine integration guide](https://github.com/29thnight/reflgen_cpp/blob/main/docs/creatorengine-fsharp-abi.md).

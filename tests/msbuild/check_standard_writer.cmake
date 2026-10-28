@@ -47,21 +47,23 @@ endif()
 message(STATUS "standard registration writer passed")
 
 # Optional header-generator outputs must not silently disappear on a capable compiler.
+foreach(option ReflgenInterop ReflgenFSharpTable)
 file(WRITE "${WORK}/request.proj" "<Project>
- <PropertyGroup><ReflgenInterop>true</ReflgenInterop></PropertyGroup>
+ <PropertyGroup><${option}>true</${option}></PropertyGroup>
  <ItemGroup><ClCompile Include=\"main.cpp\"><LanguageStandard>stdcpplatest</LanguageStandard></ClCompile><ReflgenReflectType Include=\"game::player\"/></ItemGroup>
  <Import Project=\"${SOURCE}/msbuild/reflgen.standard.targets\"/>
  <Target Name=\"Test\" DependsOnTargets=\"_ReflgenStandardRequest\">
-  <Error Condition=\"'$(_ReflgenWantsStandard)' != 'false'\" Text=\"Interop must keep the header generator\"/>
+  <Error Condition=\"'$(_ReflgenWantsStandard)' != 'false'\" Text=\"${option} must keep the header generator\"/>
  </Target>
 </Project>")
 execute_process(COMMAND "${MSBUILD}" "${WORK}/request.proj" /t:Test /nologo /nodeReuse:false
     OUTPUT_VARIABLE output ERROR_VARIABLE error RESULT_VARIABLE result)
 if(NOT result EQUAL 0)
-    message(FATAL_ERROR "interop AUTO request failed: ${output}\n${error}")
+    message(FATAL_ERROR "${option} AUTO request failed: ${output}\n${error}")
 endif()
 execute_process(COMMAND "${MSBUILD}" "${WORK}/request.proj" /t:Test /p:ReflgenReflectionBackend=Std /nologo /nodeReuse:false
     OUTPUT_VARIABLE output ERROR_VARIABLE error RESULT_VARIABLE result)
 if(result EQUAL 0 OR NOT "${output}${error}" MATCHES "RG0263")
-    message(FATAL_ERROR "forced STD must reject interop: ${output}\n${error}")
+    message(FATAL_ERROR "forced STD must reject ${option}: ${output}\n${error}")
 endif()
+endforeach()

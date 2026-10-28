@@ -16,6 +16,7 @@ set(expected
     "directive\treflgen\treflect\t"
     "directive\treflgen\tignore\t"
     "directive\treflgen\tattribute\t"
+    "directive\treflgen\ttable\ttable(\"ScriptApi\", \"version\", \"structSize\", ApiVersion)\t"
     "attribute\treflgen\trange\trange(T min_value, T max_value)\t"
     "attribute\treflgen\ttransient\ttransient\t"
     "attribute\treflgen\tcategory\tcategory(std::string_view text)\t"

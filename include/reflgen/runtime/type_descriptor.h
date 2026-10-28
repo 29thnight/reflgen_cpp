@@ -838,7 +838,11 @@ namespace reflgen
             {
                 rtti = &rtti_of<T>;
             }
-            if constexpr (std::is_default_constructible_v<T> && !std::is_abstract_v<T>)
+            // Default construction alone does not permit heap allocation.
+            // Managed engine types deliberately delete new and protect delete;
+            // retain their reflection/serialization without exposing a factory.
+            if constexpr (std::is_default_constructible_v<T> && !std::is_abstract_v<T>
+                && requires { new T(); delete static_cast<T*>(nullptr); })
             {
                 create = &create_instance<T>;
                 destroy = &destroy_instance<T>;

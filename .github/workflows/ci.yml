@@ -5,6 +5,9 @@
 # 로컬 검증 환경(VS 18, MSVC 19.5x)과 맞추려고 VS 2026 이미지를 고정한다.
 name: ci
 
+permissions:
+  contents: read
+
 on:
   push:
   pull_request:
@@ -15,6 +18,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prsm-abi-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify independent production ABI vectors
+        shell: pwsh
+        run: ./scripts/generate-prsm-abi-vectors.ps1
+      - name: Verify Rust consumer encoder and SHA-256
+        run: cargo test --locked --manifest-path generator/tests/prsm_abi_rust/Cargo.toml --target-dir build/prsm-abi-rust
+
   cpp:
     name: cpp (${{ matrix.preset }})
     runs-on: windows-2025-vs2026
@@ -24,7 +37,7 @@ jobs:
         preset: [msvc-cpp20, msvc-cpp23, clang-cl-cpp20, clang-cl-cpp23]
     steps:
       - uses: actions/checkout@v7
-      # 생성한 C# interop 선언을 컴파일·실행하는 시험(reflgen_interop_csharp_calls)이 쓴다.
+      # Compile and execute both generated C# and F# consumers against native libraries.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
@@ -51,11 +64,11 @@ jobs:
           $build = "build/ifc-${{ matrix.configuration }}"
           cmake -S . -B $build -G Ninja -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} -DREFLGEN_BUILD_IFC=ON -DREFLGEN_BUILD_TESTS=ON -DREFLGEN_BUILD_EXAMPLES=OFF
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build $build --target reflgen_cli reflgen_ifc_test reflgen_ifc_attributes_test reflgen_ifc_engine_test
+          cmake --build $build --target reflgen_cli reflgen_ifc_test reflgen_ifc_attributes_test reflgen_ifc_engine_test reflgen_ifc_crtp_test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $registered = (ctest --test-dir $build --show-only=json-v1 | ConvertFrom-Json).tests.name
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($name in 'runtime', 'generator', 'rejections', 'mixed', 'msbuild', 'attributes', 'metadata', 'engine', 'engine_msbuild') {
+          foreach ($name in 'runtime', 'generator', 'rejections', 'mixed', 'msbuild', 'attributes', 'metadata', 'engine', 'engine_msbuild', 'crtp_runtime', 'module_interface', 'crtp_imported_rejected', 'crtp_adversary', 'crtp_nonmatching_fails_closed') {
             if ($registered -notcontains "reflgen_ifc_$name") { throw "Required IFC test was not registered: $name" }
           }
           ctest --test-dir $build -R '^reflgen_ifc_' --output-on-failure --no-tests=error
@@ -69,6 +82,23 @@ jobs:
             build/ifc-${{ matrix.configuration }}/Testing/Temporary/
             build/ifc-${{ matrix.configuration }}/tests/ifc/
           if-no-files-found: ignore
+
+  prsm-ifc:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build both frontends and execute generated PrSM bridges
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+          cmake --preset msvc-cpp20 -DREFLGEN_BUILD_IFC=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset msvc-cpp20 --target reflgen_cli reflgen_ifc reflgen_binding_contract_tests reflgen_generator_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --preset msvc-cpp20 -R '^reflgen_(binding_contract_tests|generator_tests|prsm_bridge)$'
 
   vs-extension:
     runs-on: windows-2025-vs2026
@@ -136,3 +166,29 @@ jobs:
           & (Join-Path $installed 'tools\reflgen\reflgen.exe') --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  release-bundle:
+    name: Verified release bundle
+    needs: [cpp, ifc, prsm-abi-contract, prsm-ifc, vs-extension, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: reflgen-packages
+          path: build/release-bundle
+      - uses: actions/download-artifact@v7
+        with:
+          name: Reflgen.VisualStudio.vsix
+          path: build/release-bundle
+      - name: Verify package identity and prepare release notes and checksums
+        run: >-
+          python3 scripts/prepare-release.py
+          --artifacts build/release-bundle
+          --source .
+          --commit "${{ github.sha }}"
+          --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reflgen-release
+          path: build/release-bundle/*
+          if-no-files-found: error

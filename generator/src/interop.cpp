@@ -18,6 +18,7 @@ namespace reflgen::generator
             none,
             c,
             csharp,
+            fsharp,
         };
 
         struct annotation_policy
@@ -26,6 +27,13 @@ namespace reflgen::generator
             bool has_interop = false;
             bool has_lifetime = false;
             bool borrowed = false;
+            bool owned = false;
+            bool synchronous_callback = false;
+            bool has_callback = false;
+            bool owned_return = false;
+            bool has_return_ownership = false;
+            bool consume_first = false;
+            bool has_consume_ownership = false;
         };
 
         struct lowered_type
@@ -34,6 +42,12 @@ namespace reflgen::generator
             std::string c;
             std::string csharp;
             long long native_size = -1;
+            bool is_owned_argument = false;
+            bool is_owned_result = false;
+            bool is_record_value = false;
+            bool is_callback = false;
+            bool is_enum = false;
+            bool is_pointer = false;
             bool is_bool = false;
             bool is_signed = false;
             bool is_floating = false;
@@ -52,6 +66,7 @@ namespace reflgen::generator
         {
             const class_model* model = nullptr;
             std::string handle;
+            bool owned = false;
             std::vector<lowered_method> methods;
         };
 
@@ -179,8 +194,36 @@ namespace reflgen::generator
             for (const attribute_use& attribute : attributes)
             {
                 if (attribute.scope != "reflgen" ||
-                    (attribute.name != "interop" && attribute.name != "lifetime"))
+                    (attribute.name != "interop" && attribute.name != "lifetime" && attribute.name != "callback" &&
+                     attribute.name != "return_ownership" && attribute.name != "consume_ownership"))
                 {
+                    continue;
+                }
+                if (attribute.name == "consume_ownership")
+                {
+                    if (result.has_consume_ownership) report.error("RG0200", attribute.position, "duplicate consume ownership contract");
+                    result.has_consume_ownership = true;
+                    result.consume_first = annotation_argument(attribute, report) == "0";
+                    if (is_class || !result.consume_first)
+                        report.error("RG0200", attribute.position, "consume_ownership supports only method parameter zero");
+                    continue;
+                }
+                if (attribute.name == "return_ownership")
+                {
+                    if (result.has_return_ownership) report.error("RG0200", attribute.position, "duplicate return ownership contract");
+                    result.has_return_ownership = true;
+                    result.owned_return = annotation_argument(attribute, report) == "owned";
+                    if (is_class || !result.owned_return)
+                        report.error("RG0200", attribute.position, "return_ownership requires a method and the owned contract");
+                    continue;
+                }
+                if (attribute.name == "callback")
+                {
+                    if (result.has_callback) report.error("RG0200", attribute.position, "duplicate callback contract");
+                    result.has_callback = true;
+                    result.synchronous_callback = annotation_argument(attribute, report) == "synchronous";
+                    if (is_class || !result.synchronous_callback)
+                        report.error("RG0200", attribute.position, "callback requires a method and the synchronous contract");
                     continue;
                 }
                 const bool is_interop = attribute.name == "interop";
@@ -194,28 +237,30 @@ namespace reflgen::generator
                 const std::string argument = annotation_argument(attribute, report);
                 if (is_interop)
                 {
-                    if (argument == "c" || argument == "csharp")
+                    if (argument == "c" || argument == "csharp" || argument == "fsharp")
                     {
-                        result.target = argument == "c" ? interop_target::c : interop_target::csharp;
+                        result.target = argument == "c" ? interop_target::c :
+                                        argument == "csharp" ? interop_target::csharp : interop_target::fsharp;
                     }
                     else
                     {
                         report.error("RG0200", attribute.position,
-                                     "reflgen::interop supports only \"c\" or \"csharp\"");
+                                     "reflgen::interop supports only \"c\", \"csharp\" or \"fsharp\"");
                     }
                 }
                 else
                 {
                     result.borrowed = argument == "borrowed";
+                    result.owned = argument == "owned";
                     if (!is_class)
                     {
                         report.error("RG0200", attribute.position,
                                      "reflgen::lifetime is supported only on an interop class");
                     }
-                    if (!result.borrowed)
+                    if (!result.borrowed && !result.owned)
                     {
                         report.error("RG0200", attribute.position,
-                                     "reflgen::lifetime supports only \"borrowed\"; ownership is not inferred");
+                                     "reflgen::lifetime requires borrowed or owned; ownership is not inferred");
                     }
                 }
             }
@@ -240,6 +285,43 @@ namespace reflgen::generator
         {
             result.native = unqualified_primitive(type.canonical_spelling);
             result.native_size = type.size_bytes;
+            if (!type.is_volatile && type.kind == "enum" && type.enum_underlying &&
+                !type.declaration.empty())
+            {
+                lowered_type underlying;
+                if (!lower_type(*type.enum_underlying, false, position, underlying, report)) return false;
+                result.c = underlying.c;
+                result.csharp = underlying.csharp;
+                result.native = type.canonical_spelling;
+                result.native_size = type.size_bytes;
+                result.is_signed = underlying.is_signed;
+                result.is_enum = true;
+                return true;
+            }
+            // This exact canonical signature excludes variadics and non-C calling conventions.
+            if (!allow_void && !type.is_volatile && type.kind == "pointer" && type.pointee &&
+                type.pointee->kind == "function" && type.canonical_spelling == "int (*)(int)" &&
+                type.pointee->canonical_spelling == "int (int)")
+            {
+                result.native = type.canonical_spelling;
+                result.c = "callback_i32_i32";
+                result.csharp = "nint";
+                result.is_callback = true;
+                return true;
+            }
+            // Object pointers are borrowed addresses. Function, member and multi-level pointers remain rejected.
+            if (!allow_void && !type.is_volatile && type.kind == "pointer" && type.pointee &&
+                (type.pointee->kind == "void" || type.pointee->kind == "bool" ||
+                 type.pointee->kind == "signed_integer" || type.pointee->kind == "unsigned_integer" ||
+                 type.pointee->kind == "floating_point" || type.pointee->kind == "record" ||
+                 type.pointee->kind == "enum") && !type.pointee->is_volatile)
+            {
+                result.native = type.canonical_spelling;
+                result.c = type.pointee->is_const ? "const void*" : "void*";
+                result.csharp = "nint";
+                result.is_pointer = true;
+                return true;
+            }
             if (!type.is_volatile && type.kind == "void" && allow_void && result.native == "void")
             {
                 result.c = "void";
@@ -305,7 +387,12 @@ namespace reflgen::generator
             append_contract(contract, std::to_string(type.native_size));
             append_contract(contract, type.c);
             append_contract(contract, type.csharp);
-            append_contract(contract, type.is_bool ? "bool:nonzero-input:zero-or-one-output" : "numeric-value");
+            append_contract(contract, type.is_owned_argument ? "unique-owned-native-argument-v1" :
+                                      type.is_owned_result ? "unique-owned-native-result-v1" :
+                                      type.is_record_value ? "fsharp-record-value-bytes-v1" :
+                                      type.is_callback ? "cdecl-i32-i32-synchronous-same-thread" :
+                                      type.is_pointer ? "borrowed-object-pointer" :
+                                      type.is_bool ? "bool:nonzero-input:zero-or-one-output" : "numeric-value");
         }
 
         std::string fingerprint_of(std::string_view contract)
@@ -342,29 +429,45 @@ namespace reflgen::generator
                    "_API __attribute__((visibility(\"default\")))\n#endif\n#else\n#define " + macro + "_API\n#endif\n";
         }
 
-        std::string c_parameters(const lowered_class& owner, const lowered_method& method)
+        std::string c_parameters(const lowered_class& owner, const lowered_method& method, const std::string& macro)
         {
             std::string result = owner.handle + "* receiver";
             for (std::size_t i = 0; i < method.parameters.size(); ++i)
             {
-                result += ", " + method.parameters[i].c + " argument_" + std::to_string(i);
+                if (method.parameters[i].is_callback)
+                    result += ", int32_t (" + macro + "_CDECL *argument_" + std::to_string(i) + ")(int32_t)";
+                else
+                    result += ", " + method.parameters[i].c + " argument_" + std::to_string(i);
             }
             if (method.result.c != "void")
             {
-                result += ", " + method.result.c + "* result";
+                result += method.result.is_record_value ? ", void* result" : ", " + method.result.c + "* result";
             }
             return result;
         }
 
         void append_static_asserts(std::string& output, const lowered_type& type, std::set<std::string>& seen)
         {
-            if (type.c == "void" || !seen.insert(type.native).second)
+            if (type.is_callback)
+            {
+                if (seen.insert("callback_i32_i32").second)
+                    output += "static_assert(sizeof(int) == 4 && ::std::numeric_limits<int>::is_signed && ::std::numeric_limits<int>::digits == 31, \"reflgen callback requires a 32-bit int\");\n";
+                return;
+            }
+            if (type.c == "void" || type.is_pointer || type.is_record_value || !seen.insert(type.native).second)
             {
                 return;
             }
             output += "static_assert(sizeof(" + type.native + ") == " + std::to_string(type.native_size) +
                       ", \"reflgen interop: regenerate bindings for this target\");\n";
-            if (type.is_floating)
+            if (type.is_enum)
+            {
+                output += "static_assert(::std::is_enum_v<" + type.native + "> && sizeof(::std::underlying_type_t<" + type.native + ">) == " +
+                          std::to_string(type.native_size) + ", \"reflgen interop: enum representation changed\");\n";
+                output += "static_assert(::std::numeric_limits<::std::underlying_type_t<" + type.native + ">>::is_signed == " +
+                          (type.is_signed ? "true" : "false") + ", \"reflgen interop: enum signedness changed\");\n";
+            }
+            else if (type.is_floating)
             {
                 output += "static_assert(::std::numeric_limits<" + type.native +
                           ">::is_iec559 && ::std::numeric_limits<" + type.native +
@@ -387,14 +490,37 @@ namespace reflgen::generator
                           const std::string& prefix, const std::string& macro)
         {
             output += "extern \"C\" int32_t " + macro + "_CDECL " + method.symbol + "(" +
-                      c_parameters(owner, method) + ")\n{\n";
+                      c_parameters(owner, method, macro) + ")\n{\n";
             output += "    if (receiver == nullptr";
             if (method.result.c != "void")
             {
                 output += " || result == nullptr";
             }
+            for (std::size_t i = 0; i < method.parameters.size(); ++i)
+                if (method.parameters[i].is_callback || method.parameters[i].is_record_value || method.parameters[i].is_owned_argument)
+                {
+                    output += " || argument_" + std::to_string(i) + " == nullptr";
+                    if (method.parameters[i].is_owned_argument)
+                        output += " || *argument_" + std::to_string(i) + " == nullptr || reinterpret_cast<void*>(receiver) == *argument_" + std::to_string(i);
+                }
             output += ")\n    {\n        return " + prefix + "_status_invalid_argument;\n    }\n";
-            output += "    try\n    {\n        ";
+            output += "    try\n    {\n";
+            for (std::size_t i = 0; i < method.parameters.size(); ++i)
+                if (method.parameters[i].is_record_value)
+                {
+                    const auto n = std::to_string(i);
+                    output += "        ::std::array<::std::byte, sizeof(" + method.parameters[i].native + ")> bytes_" + n + "{};\n";
+                    output += "        ::std::memcpy(bytes_" + n + ".data(), argument_" + n + ", bytes_" + n + ".size());\n";
+                    output += "        const auto record_" + n + " = ::std::bit_cast<" + method.parameters[i].native + ">(bytes_" + n + ");\n";
+                }
+            for (std::size_t i = 0; i < method.parameters.size(); ++i)
+                if (method.parameters[i].is_owned_argument)
+                {
+                    const auto n = std::to_string(i);
+                    output += "        auto owned_" + n + " = static_cast<" + method.parameters[i].native + ">(*argument_" + n + ");\n";
+                    output += "        *argument_" + n + " = nullptr;\n";
+                }
+            output += "        ";
             if (method.result.c != "void")
             {
                 output += "const auto value = ";
@@ -409,14 +535,21 @@ namespace reflgen::generator
                 }
                 const lowered_type& parameter = method.parameters[i];
                 const std::string argument = "argument_" + std::to_string(i);
-                output += parameter.is_bool ? "(" + argument + " != 0)"
+                output += parameter.is_owned_argument ? "owned_" + std::to_string(i)
+                          : parameter.is_record_value ? "record_" + std::to_string(i)
+                          : parameter.is_callback ? "reinterpret_cast<" + parameter.native + ">(" + argument + ")"
+                          : parameter.is_pointer ? "static_cast<" + parameter.native + ">(" + argument + ")"
+                          : parameter.is_bool ? "(" + argument + " != 0)"
                                             : "static_cast<" + parameter.native + ">(" + argument + ")";
             }
             output += ");\n";
             if (method.result.c != "void")
             {
-                output += "        *result = static_cast<" + method.result.c + ">(" +
-                          (method.result.is_bool ? "value ? 1 : 0" : "value") + ");\n";
+                if (method.result.is_record_value)
+                    output += "        ::std::memcpy(result, &value, sizeof(value));\n";
+                else
+                    output += "        *result = static_cast<" + method.result.c + ">(" +
+                              (method.result.is_bool ? "value ? 1 : 0" : "value") + ");\n";
             }
             output += "        return " + prefix + "_status_ok;\n    }\n    catch (...)\n    {\n        return " +
                       prefix + "_status_exception;\n    }\n}\n\n";
@@ -424,7 +557,7 @@ namespace reflgen::generator
     } // namespace
 
     interop_output emit_interop(const std::vector<class_model>& exports, const target_model& target,
-                                const interop_options& options, diagnostics& report)
+                                const interop_options& options, diagnostics& report, const std::vector<value_model>& values)
     {
         const source_position option_position;
         if (!is_identifier(options.module_name))
@@ -483,8 +616,43 @@ namespace reflgen::generator
         reserve_symbol(prefix + "_status_invalid_argument", option_position);
         reserve_symbol(prefix + "_status_exception", option_position);
 
+        const auto owned_class_pointer = [&](const declaration_type& pointer) {
+            return pointer.kind == "pointer" && pointer.pointee && pointer.pointee->kind == "record" &&
+                !pointer.pointee->is_const && !pointer.pointee->is_volatile &&
+                std::any_of(exports.begin(), exports.end(), [&](const class_model& candidate) {
+                    if (candidate.qualified_name != pointer.pointee->declaration) return false;
+                    bool selected = false, owned = false;
+                    for (const auto& a : candidate.attributes)
+                        if (a.scope == "reflgen" && a.has_arguments)
+                        {
+                            if (a.name == "interop" && a.argument_tokens == std::vector<std::string>{"\"fsharp\""}) selected = true;
+                            if (a.name == "lifetime" && a.argument_tokens == std::vector<std::string>{"\"owned\""}) owned = true;
+                        }
+                    return selected && owned;
+                });
+        };
+        const auto lower_record_value = [&](const declaration_type& type, interop_target target_language,
+                                            bool result, lowered_type& lowered) {
+            if (type.kind != "record" || type.is_volatile || target_language != interop_target::fsharp)
+                return false;
+            const auto found = std::find_if(values.begin(), values.end(), [&](const value_model& value) {
+                return value.target.declaration == type.declaration &&
+                    std::any_of(value.attributes.begin(), value.attributes.end(), [](const attribute_use& a) {
+                        return a.scope == "reflgen" && a.name == "interop" && a.has_arguments &&
+                               a.argument_tokens == std::vector<std::string>{"\"fsharp\""};
+                    });
+            });
+            if (found == values.end()) return false;
+            lowered.native = type.canonical_spelling;
+            lowered.native_size = type.size_bytes;
+            lowered.c = result ? "void*" : "const void*";
+            lowered.csharp = "nint";
+            lowered.is_record_value = true;
+            return true;
+        };
         std::vector<lowered_class> classes;
         bool has_csharp = false;
+        bool has_fsharp = false;
         std::string contract;
         for (const std::string& part :
              std::vector<std::string>{"reflgen-primitive-interop-v1", options.module_name, library,
@@ -509,11 +677,10 @@ namespace reflgen::generator
             {
                 report.error("RG0200", model.position, "reflgen::lifetime requires reflgen::interop on the class");
             }
-            if (policy.has_interop && (!policy.has_lifetime || !policy.borrowed))
-            {
-                report.error("RG0200", model.position,
-                             "interop classes require explicit [[reflgen::lifetime(\"borrowed\")]]");
-            }
+            if (policy.has_interop && (!policy.has_lifetime || (!policy.borrowed && !policy.owned)))
+                report.error("RG0200", model.position, "interop classes require an explicit lifetime");
+            if (policy.owned && policy.target != interop_target::fsharp)
+                report.error("RG0200", model.position, "owned lifetime is supported only on F# interop classes");
             if (policy.has_interop && (model.nested || !is_qualified_name(model.qualified_name, "::")))
             {
                 report.error("RG0201", model.position,
@@ -527,16 +694,19 @@ namespace reflgen::generator
                 report.error("RG0201", model.position, "interop requires a normalized, includable source header path");
             }
             has_csharp = has_csharp || policy.target == interop_target::csharp;
+            has_fsharp = has_fsharp || policy.target == interop_target::fsharp;
             lowered_class owner;
             owner.model = &model;
+            owner.owned = policy.owned;
             owner.handle = prefix + "_" + symbol_component(model.qualified_name) + "_handle";
             if (policy.has_interop)
             {
                 reserve_symbol(owner.handle, model.position);
+                if (owner.owned) reserve_symbol(owner.handle + "_destroy", model.position);
                 append_contract(contract, "class");
                 append_contract(contract, model.qualified_name);
-                append_contract(contract, policy.target == interop_target::csharp ? "csharp" : "c");
-                append_contract(contract, "borrowed");
+                append_contract(contract, policy.target == interop_target::csharp ? "csharp" : policy.target == interop_target::fsharp ? "fsharp" : "c");
+                append_contract(contract, owner.owned ? "owned-unique-delete-exact-type-v1" : "borrowed");
             }
             for (const field_model& field : model.fields)
             {
@@ -561,6 +731,8 @@ namespace reflgen::generator
                 const annotation_policy method_policy = read_policy(method.attributes, false, report);
                 if (!method_policy.has_interop)
                 {
+                    if (method_policy.has_callback || method_policy.has_return_ownership || method_policy.has_consume_ownership)
+                        report.error("RG0200", method.position, "callback or return ownership contract requires a selected interop method");
                     continue;
                 }
                 if (!policy.has_interop)
@@ -570,6 +742,10 @@ namespace reflgen::generator
                 if (method_policy.target == interop_target::csharp && policy.target != interop_target::csharp)
                 {
                     report.error("RG0200", method.position, "a C# method requires a C# interop class target");
+                }
+                if (method_policy.target == interop_target::fsharp && policy.target != interop_target::fsharp)
+                {
+                    report.error("RG0200", method.position, "an F# method requires an F# interop class target");
                 }
                 if (method.access != "public" || method.is_static || method.is_deleted || method.is_consteval ||
                     !method.declaration_specifiers_known || !method.qualifiers_known || method.is_volatile ||
@@ -588,16 +764,55 @@ namespace reflgen::generator
                 lowered.target = method_policy.target;
                 lowered.symbol = prefix + "_" + symbol_component(model.qualified_name) + "_" + method.name;
                 reserve_symbol(lowered.symbol, method.position);
-                lower_type(method.return_type, true, method.position, lowered.result, report);
-                for (const parameter_model& parameter : method.parameter_declarations)
+                if (method_policy.owned_return)
                 {
+                    const auto& returned = method.return_type;
+                    const bool owned_type = owned_class_pointer(returned);
+                    if (method_policy.target != interop_target::fsharp || !owned_type)
+                        report.error("RG0202", method.position, "owned return requires a pointer to a selected F# owned class");
+                    else
+                    {
+                        lowered.result.native = returned.canonical_spelling;
+                        lowered.result.native_size = returned.size_bytes;
+                        lowered.result.c = "void*";
+                        lowered.result.csharp = "nint";
+                        lowered.result.is_pointer = true;
+                        lowered.result.is_owned_result = true;
+                    }
+                }
+                else if (!lower_record_value(method.return_type, method_policy.target, true, lowered.result))
+                    lower_type(method.return_type, true, method.position, lowered.result, report);
+                for (std::size_t parameter_index = 0; parameter_index < method.parameter_declarations.size(); ++parameter_index)
+                {
+                    const auto& parameter = method.parameter_declarations[parameter_index];
                     lowered_type type;
-                    lower_type(parameter.type, false, parameter.position, type, report);
+                    if (parameter_index == 0 && method_policy.consume_first)
+                    {
+                        if (method_policy.target != interop_target::fsharp || !owned_class_pointer(parameter.type))
+                            report.error("RG0202", parameter.position, "consumed parameter must be a pointer to a selected F# owned class");
+                        else
+                        {
+                            type.native = parameter.type.canonical_spelling;
+                            type.native_size = parameter.type.size_bytes;
+                            type.c = "void**";
+                            type.csharp = "nint";
+                            type.is_pointer = true;
+                            type.is_owned_argument = true;
+                        }
+                    }
+                    else if (!lower_record_value(parameter.type, method_policy.target, false, type))
+                        lower_type(parameter.type, false, parameter.position, type, report);
                     lowered.parameters.push_back(std::move(type));
                 }
+                if (method_policy.consume_first && method.parameter_declarations.empty())
+                    report.error("RG0202", method.position, "consumed parameter zero does not exist");
+                const auto callback_count = std::count_if(lowered.parameters.begin(), lowered.parameters.end(),
+                                                          [](const lowered_type& type) { return type.is_callback; });
+                if ((callback_count != 0) != method_policy.synchronous_callback || callback_count > 1)
+                    report.error("RG0200", method.position, "one callback requires explicit callback(\"synchronous\")");
                 append_contract(contract, "method");
                 append_contract(contract, lowered.symbol);
-                append_contract(contract, method_policy.target == interop_target::csharp ? "csharp" : "c");
+                append_contract(contract, method_policy.target == interop_target::csharp ? "csharp" : method_policy.target == interop_target::fsharp ? "fsharp" : "c");
                 append_contract(contract, method.signature);
                 append_contract(contract, method.is_const ? "const" : "mutable");
                 append_contract(contract, method.calling_convention);
@@ -615,7 +830,75 @@ namespace reflgen::generator
                 classes.push_back(std::move(owner));
             }
         }
-        if (has_csharp && !is_qualified_name(options.csharp_namespace, "."))
+        struct fsharp_value_layout
+        {
+            const value_model* model;
+            std::string name;
+            std::vector<lowered_type> fields;
+        };
+        std::vector<fsharp_value_layout> layouts;
+        std::set<std::string> layout_names;
+        std::vector<const value_model*> ordered_values;
+        for (const auto& value : values) ordered_values.push_back(&value);
+        std::sort(ordered_values.begin(), ordered_values.end(), [](const auto* a, const auto* b) {
+            return a->alias < b->alias;
+        });
+        for (const auto* value : ordered_values)
+        {
+            const attribute_use* selected = nullptr;
+            const attribute_use* value_name = nullptr;
+            for (const auto& a : value->attributes)
+                if (a.scope == "reflgen")
+                {
+                    if (a.name == "interop")
+                    {
+                        if (selected) report.error("RG0200", a.position, "duplicate value interop selection");
+                        selected = &a;
+                    }
+                    if (a.name == "value")
+                    {
+                        if (value_name) report.error("RG0200", a.position, "duplicate value name");
+                        value_name = &a;
+                    }
+                }
+            if (!selected || !selected->has_arguments || selected->argument_tokens != std::vector<std::string>{"\"fsharp\""})
+                continue;
+            has_fsharp = true;
+            fsharp_value_layout layout{value, value_name ? annotation_argument(*value_name, report) : std::string{}, {}};
+            if (!is_identifier(layout.name) || !layout_names.insert(layout.name).second ||
+                value->target.kind != "record" || !is_qualified_name(value->target.declaration, "::") ||
+                value->target.size_bytes <= 0 || value->align_bytes <= 0 || value->has_bases || value->fields.empty() ||
+                value->position.file.empty() || has_control_character(value->position.file) ||
+                value->position.file.find('\\') != std::string::npos || value->position.file.find('"') != std::string::npos)
+            {
+                report.error("RG0202", value->position, "F# value layout requires a uniquely named, complete record without bases and with public numeric fields");
+                continue;
+            }
+            append_contract(contract, "fsharp-value-layout-v1");
+            append_contract(contract, layout.name);
+            append_contract(contract, value->target.declaration);
+            append_contract(contract, std::to_string(value->target.size_bytes));
+            append_contract(contract, std::to_string(value->align_bytes));
+            for (const auto& field : value->fields)
+            {
+                lowered_type type;
+                if (!field.is_public || field.is_bitfield || field.offset_bytes < 0 ||
+                    !is_identifier(field.name) || field.type.is_const || field.type.is_volatile ||
+                    (field.type.kind != "signed_integer" && field.type.kind != "unsigned_integer" &&
+                     field.type.kind != "floating_point"))
+                {
+                    report.error("RG0202", value->position, "F# value layout requires public non-bit-field numeric fields");
+                    continue;
+                }
+                if (!lower_type(field.type, false, value->position, type, report)) continue;
+                append_contract(contract, field.name);
+                append_contract(contract, std::to_string(field.offset_bytes));
+                append_type_contract(contract, type);
+                layout.fields.push_back(std::move(type));
+            }
+            layouts.push_back(std::move(layout));
+        }
+        if ((has_csharp || has_fsharp) && !is_qualified_name(options.csharp_namespace, "."))
         {
             report.error("RG0200", option_position, "C# namespace must contain dot-separated ASCII identifiers");
         }
@@ -629,10 +912,10 @@ namespace reflgen::generator
         std::string& header = output.c_header;
         header = std::string(banner) + "\n#pragma once\n#include <stdint.h>\n\n";
         header += "// Target: " + target.triple + "; regenerate for another target.\n";
-        header += "// Handles borrow the exact address of a live object of the stated C++ type.\n";
+        header += "// Handles contain the exact address of a live object of the stated C++ type.\n";
         header += "// The caller owns its lifetime, alignment, thread safety and correct type.\n";
         header += "// Null is checked; dangling, wrong-type and arbitrary nonnull pointers are undefined behavior.\n";
-        header += "// No constructor, destruction, ownership transfer, RTTI lookup or stale-handle registry is provided.\n";
+        header += "// Owned classes provide an explicit destroy operation; no stale-handle registry is provided.\n";
         header += "// bool uses uint8_t: any nonzero input is true; output is 0 or 1.\n";
         header += "// Wrappers write results only after successful invocation. Exceptions become status_exception.\n";
         header += "// The fingerprint detects contract changes, not malicious code or invalid handles.\n\n";
@@ -644,12 +927,14 @@ namespace reflgen::generator
         header += "uint64_t " + macro + "_API " + macro + "_CDECL " + prefix + "_abi_fingerprint(void);\n\n";
         for (const lowered_class& owner : classes)
         {
-            header += "// Borrowed " + owner.model->qualified_name + "\n";
+            header += std::string(owner.owned ? "// Uniquely owned " : "// Borrowed ") + owner.model->qualified_name + "\n";
             header += "typedef struct " + owner.handle + " " + owner.handle + ";\n";
+            if (owner.owned)
+                header += "int32_t " + macro + "_API " + macro + "_CDECL " + owner.handle + "_destroy(" + owner.handle + "** receiver);\n";
             for (const lowered_method& method : owner.methods)
             {
                 header += "int32_t " + macro + "_API " + macro + "_CDECL " + method.symbol + "(" +
-                          c_parameters(owner, method) + ");\n";
+                          c_parameters(owner, method, macro) + ");\n";
             }
             header += '\n';
         }
@@ -667,7 +952,10 @@ namespace reflgen::generator
                 source += "#include " + string_literal(owner.model->position.file) + "\n";
             }
         }
-        source += "#include <climits>\n#include <limits>\n\n";
+        for (const auto& layout : layouts)
+            if (headers.insert(layout.model->position.file).second)
+                source += "#include " + string_literal(layout.model->position.file) + "\n";
+        source += "#include <array>\n#include <bit>\n#include <cstddef>\n#include <cstring>\n#include <climits>\n#include <limits>\n#include <type_traits>\n\n";
         if (supported_target && target.pointer_width != 0)
         {
             const std::string architecture_test = x86 ? "defined(__i386__) || defined(_M_IX86)"
@@ -705,11 +993,38 @@ namespace reflgen::generator
                 }
             }
         }
+        for (const auto& owner : classes)
+            if (owner.owned)
+                source += "static_assert(::std::is_nothrow_destructible_v<::" + owner.model->qualified_name + ">, \"owned interop requires a public nonthrowing destructor\");\n";
+        for (const auto& layout : layouts)
+        {
+            const auto& value = *layout.model;
+            const std::string type = "::" + value.target.declaration;
+            source += "static_assert(!::std::is_union_v<" + type + "> && ::std::is_standard_layout_v<" + type + "> && ::std::is_trivially_copyable_v<" + type + ">, \"reflgen value must be a non-union standard layout trivially copyable record\");\n";
+            source += "static_assert(sizeof(" + type + ") == " + std::to_string(value.target.size_bytes) +
+                      " && alignof(" + type + ") == " + std::to_string(value.align_bytes) +
+                      ", \"reflgen value layout changed\");\n";
+            for (std::size_t i = 0; i < value.fields.size(); ++i)
+            {
+                const auto& field = value.fields[i];
+                source += "static_assert(offsetof(" + type + ", " + field.name + ") == " +
+                          std::to_string(field.offset_bytes) + ", \"reflgen value field offset changed\");\n";
+                source += "static_assert(::std::is_same_v<decltype(" + type + "::" + field.name + "), " +
+                          layout.fields[i].native + ">, \"reflgen value field type changed\");\n";
+            }
+        }
         source += "\n// ABI contract fingerprint (FNV-1a 64-bit); this is not a cryptographic signature.\n";
         source += "extern \"C\" uint64_t " + macro + "_CDECL " + prefix +
                   "_abi_fingerprint(void)\n{\n    return 0x" + output.fingerprint + "ULL;\n}\n\n";
         for (const lowered_class& owner : classes)
         {
+            if (owner.owned)
+            {
+                source += "extern \"C\" int32_t " + macro + "_CDECL " + owner.handle + "_destroy(" + owner.handle + "** receiver)\n{\n";
+                source += "    if (receiver == nullptr || *receiver == nullptr) return " + prefix + "_status_invalid_argument;\n";
+                source += "    auto* object = reinterpret_cast<::" + owner.model->qualified_name + "*>(*receiver);\n";
+                source += "    *receiver = nullptr;\n    delete object;\n    return " + prefix + "_status_ok;\n}\n\n";
+            }
             for (const lowered_method& method : owner.methods)
             {
                 append_thunk(source, owner, method, prefix, macro);
@@ -765,6 +1080,181 @@ namespace reflgen::generator
                 }
             }
             managed += "    }\n}\n";
+        }
+        output.fsharp_source = std::string(banner) + "\n// No F# types were selected for this module.\n";
+        if (has_fsharp)
+        {
+            std::string& fs = output.fsharp_source;
+            fs = std::string(banner) + "\nnamespace ";
+            std::string ns = options.csharp_namespace;
+            std::size_t start = 0;
+            while (true)
+            {
+                const auto end = ns.find('.', start);
+                if (start != 0) fs += ".";
+                fs += "``" + ns.substr(start, end == std::string::npos ? end : end - start) + "``";
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+            fs += "\n\nopen System.Runtime.InteropServices\n\nmodule " + prefix + "_interop =\n";
+            fs += "    // Receivers must be live native objects; compare the fingerprint before use.\n";
+            fs += "    [<Literal>]\n    let LibraryName = " + string_literal(library) + "\n";
+            fs += "    [<Literal>]\n    let AbiFingerprint = 0x" + output.fingerprint + "UL\n";
+            fs += "    [<Literal>]\n    let StatusOk = 0\n    [<Literal>]\n    let StatusInvalidArgument = 1\n    [<Literal>]\n    let StatusException = 2\n\n";
+            fs += "    // The native function must not retain this address. Embedded NUL and invalid UTF-16 are rejected.\n";
+            fs += "    let withUtf8 (text: string) (invoke: nativeint -> 'T) : 'T =\n";
+            fs += "        if isNull text then nullArg \"text\"\n";
+            fs += "        if text.IndexOf('\\000') >= 0 then invalidArg \"text\" \"Embedded NUL is not supported\"\n";
+            fs += "        let bytes = System.Text.UTF8Encoding(false, true).GetBytes(text)\n";
+            fs += "        let size = System.Convert.ToInt32(int64 bytes.Length + 1L)\n";
+            fs += "        let address = Marshal.AllocCoTaskMem(size)\n";
+            fs += "        try\n            Marshal.Copy(bytes, 0, address, bytes.Length)\n";
+            fs += "            Marshal.WriteByte(address, bytes.Length, 0uy)\n            invoke address\n";
+            fs += "        finally Marshal.FreeCoTaskMem(address)\n\n";
+            for (const auto& layout : layouts)
+            {
+                const auto& value = *layout.model;
+                fs += "    // Check both layout and native allocation alignment before passing this record.\n";
+                fs += "    let validate" + layout.name + "Layout (t: System.Type) =\n";
+                fs += "        try\n            t.IsValueType && (t.IsLayoutSequential || t.IsExplicitLayout) && Marshal.SizeOf(t) = " + std::to_string(value.target.size_bytes) + " &&\n"
+                      "            t.GetFields(System.Reflection.BindingFlags.Instance ||| System.Reflection.BindingFlags.Public ||| System.Reflection.BindingFlags.NonPublic).Length = " + std::to_string(value.fields.size()) + " &&\n";
+                for (std::size_t i = 0; i < value.fields.size(); ++i)
+                {
+                    const auto& field = value.fields[i];
+                    const auto& type = layout.fields[i];
+                    const std::map<std::string, std::string> names = {{"sbyte", "System.SByte"}, {"byte", "System.Byte"},
+                        {"short", "System.Int16"}, {"ushort", "System.UInt16"}, {"int", "System.Int32"},
+                        {"uint", "System.UInt32"}, {"long", "System.Int64"}, {"ulong", "System.UInt64"},
+                        {"float", "System.Single"}, {"double", "System.Double"}};
+                    fs += "            (let f = t.GetField(" + string_literal(field.name) + ") in not (isNull f) && f.FieldType = typeof<" + names.at(type.csharp) + ">) &&\n";
+                    fs += "            Marshal.OffsetOf(t, " + string_literal(field.name) + ").ToInt64() = " + std::to_string(field.offset_bytes) + "L &&\n";
+                }
+                fs += "            true\n        with _ -> false\n";
+                fs += "    let is" + layout.name + "Aligned (address: nativeint) = address <> 0n && (address.ToInt64() % " +
+                      std::to_string(value.align_bytes) + "L = 0L)\n\n";
+            }
+            const bool has_callback = std::any_of(classes.begin(), classes.end(), [](const lowered_class& owner) {
+                return std::any_of(owner.methods.begin(), owner.methods.end(), [](const lowered_method& method) {
+                    return method.target == interop_target::fsharp && std::any_of(method.parameters.begin(), method.parameters.end(),
+                        [](const lowered_type& type) { return type.is_callback; });
+                });
+            });
+            if (has_callback)
+            {
+                fs += "    [<UnmanagedFunctionPointer(CallingConvention.Cdecl)>]\n";
+                fs += "    type SynchronousCallback = delegate of int32 -> int32\n\n";
+                fs += "    // The native function must invoke only on this thread and must not retain the callback.\n";
+                fs += "    let withSynchronousCallback (callback: int32 -> int32) (invoke: nativeint -> 'T) : 'T =\n";
+                fs += "        let mutable failure: exn option = None\n";
+                fs += "        let callbackThread = System.Environment.CurrentManagedThreadId\n";
+                fs += "        let thunk = SynchronousCallback(fun value ->\n";
+                fs += "            try\n                if System.Environment.CurrentManagedThreadId <> callbackThread then invalidOp \"callback on another thread\"\n";
+                fs += "                callback value\n            with e -> failure <- Some e; 0)\n";
+                fs += "        let address = Marshal.GetFunctionPointerForDelegate(thunk)\n";
+                fs += "        try\n            let result = invoke address\n            match failure with Some e -> raise e | None -> result\n";
+                fs += "        finally System.GC.KeepAlive(thunk)\n\n";
+            }
+            const auto import = [&](const std::string& symbol) {
+                fs += "    [<DllImport(LibraryName, EntryPoint = " + string_literal(symbol) +
+                      ", ExactSpelling = true, CallingConvention = CallingConvention.Cdecl)>]\n";
+            };
+            const auto fs_type = [](const lowered_type& type) -> std::string {
+                static const std::map<std::string, std::string> types = {
+                    {"sbyte", "int8"}, {"byte", "uint8"}, {"short", "int16"}, {"ushort", "uint16"},
+                    {"int", "int32"}, {"uint", "uint32"}, {"long", "int64"}, {"ulong", "uint64"},
+                    {"float", "float32"}, {"double", "float"}, {"nint", "nativeint"}};
+                return types.at(type.csharp);
+            };
+            import(prefix + "_abi_fingerprint");
+            fs += "    extern uint64 " + prefix + "_abi_fingerprint()\n";
+            for (const auto& owner : classes)
+            {
+                if (owner.owned)
+                {
+                    fs += "\n";
+                    import(owner.handle + "_destroy");
+                    fs += "    extern int32 " + owner.handle + "_destroy(nativeint& receiver)\n";
+                }
+                for (const auto& method : owner.methods)
+                {
+                    if (method.target != interop_target::fsharp) continue;
+                    fs += "\n";
+                    import(method.symbol);
+                    fs += "    extern int32 " + method.symbol + "(nativeint receiver";
+                    for (std::size_t i = 0; i < method.parameters.size(); ++i)
+                        fs += ", " + fs_type(method.parameters[i]) + (method.parameters[i].is_owned_argument ? "& argument_" : " argument_") + std::to_string(i);
+                    if (method.result.c != "void")
+                        fs += ", " + fs_type(method.result) + (method.result.is_record_value ? " result" : "& result");
+                    fs += ")\n";
+                }
+            }
+            for (const auto& owner : classes)
+            {
+                if (!owner.owned) continue;
+                const std::string type_name = "Owned_" + symbol_component(owner.model->qualified_name);
+                fs += "\n    // Takes exactly one unique ownership reference from a compatible native factory.\n";
+                fs += "    type " + type_name + " private (address: nativeint) as this =\n";
+                fs += "        inherit SafeHandle(System.IntPtr.Zero, true)\n";
+                fs += "        let gate = obj()\n";
+                fs += "        let mutable active = false\n";
+                fs += "        do this.SetHandle(address)\n";
+                fs += "        member internal _.Gate = gate\n";
+                fs += "        member internal _.Active with get() = active and set(value) = active <- value\n";
+                fs += "        override this.IsInvalid = this.handle = 0n\n";
+                fs += "        override this.ReleaseHandle() =\n";
+                fs += "            let mutable address = this.handle\n";
+                fs += "            try " + owner.handle + "_destroy(&address) = StatusOk with _ -> false\n";
+                fs += "        static member TakeOwnership(address: nativeint) =\n";
+                fs += "            if address = 0n then invalidArg \"address\" \"null owned address\"\n";
+                fs += "            if " + prefix + "_abi_fingerprint() <> AbiFingerprint then invalidOp \"ABI fingerprint mismatch\"\n";
+                fs += "            new " + type_name + "(address)\n\n";
+                fs += "    let with" + type_name + " (owner: " + type_name + ") (invoke: nativeint -> 'T) =\n";
+                fs += "        if isNull (box owner) then nullArg \"owner\"\n";
+                fs += "        lock owner.Gate (fun () ->\n";
+                fs += "            if owner.Active then invalidOp \"reentrant owned handle access\"\n";
+                fs += "            owner.Active <- true\n";
+                fs += "            let mutable acquired = false\n";
+                fs += "            try\n                owner.DangerousAddRef(&acquired)\n                invoke (owner.DangerousGetHandle())\n";
+                fs += "            finally\n                if acquired then owner.DangerousRelease()\n                owner.Active <- false)\n\n";
+                fs += "    // The callback must pass this slot directly to the matching consuming ABI; never modify it.\n";
+                fs += "    let transfer" + type_name + " (owner: " + type_name + ") (invoke: nativeint ref -> 'T) =\n";
+                fs += "        if isNull (box owner) then nullArg \"owner\"\n";
+                fs += "        lock owner.Gate (fun () ->\n";
+                fs += "            if owner.Active then invalidOp \"reentrant owned handle access\"\n";
+                fs += "            owner.Active <- true\n";
+                fs += "            let mutable acquired = false\n";
+                fs += "            try\n                owner.DangerousAddRef(&acquired)\n";
+                fs += "                let original = owner.DangerousGetHandle()\n                let slot = ref original\n";
+                fs += "                try\n                    let result = invoke slot\n";
+                fs += "                    if slot.Value <> 0n && slot.Value <> original then invalidOp \"consuming ABI changed the ownership slot unexpectedly\"\n";
+                fs += "                    result\n                finally\n                    if slot.Value = 0n then owner.SetHandleAsInvalid()\n";
+                fs += "            finally\n                if acquired then owner.DangerousRelease()\n                owner.Active <- false)\n";
+            }
+            // A method-specific helper binds the consuming slot to its selected owned type and ABI entry.
+            for (const auto& receiver : classes)
+                for (const auto& method : receiver.methods)
+                {
+                    if (method.target != interop_target::fsharp || method.parameters.empty() ||
+                        !method.parameters.front().is_owned_argument)
+                        continue;
+                    const auto& pointee = method.model->parameter_declarations.front().type.pointee;
+                    const std::string owned_type = "Owned_" + symbol_component(pointee->declaration);
+                    fs += "\n    // Returns status and a value only when the native method has a scalar result.\n";
+                    fs += "    let transfer_" + method.symbol + " (receiver: nativeint) (owner: " + owned_type + ")";
+                    for (std::size_t i = 1; i < method.parameters.size(); ++i)
+                        fs += " (argument_" + std::to_string(i) + ": " + fs_type(method.parameters[i]) + ")";
+                    if (method.result.is_record_value) fs += " (resultAddress: nativeint)";
+                    fs += " =\n        transfer" + owned_type + " owner (fun slot ->\n";
+                    if (method.result.c != "void" && !method.result.is_record_value)
+                        fs += "            let mutable result = Unchecked.defaultof<" + fs_type(method.result) + ">\n";
+                    fs += "            let status = " + method.symbol + "(receiver, &slot.contents";
+                    for (std::size_t i = 1; i < method.parameters.size(); ++i)
+                        fs += ", argument_" + std::to_string(i);
+                    if (method.result.c != "void")
+                        fs += method.result.is_record_value ? ", resultAddress" : ", &result";
+                    fs += ")\n            ";
+                    fs += method.result.c != "void" && !method.result.is_record_value ? "status, result)\n" : "status)\n";
+                }
         }
         return output;
     }

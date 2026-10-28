@@ -480,9 +480,19 @@ namespace reflgen::generator::ifc_frontend
         {
             check_depth(depth);
             if (index.sort() == DeclSort::Reference)
-                throw std::runtime_error("template base belongs to another IFC; imported base resolution is not supported");
+            {
+                const auto& reference = reader_.get<ReferenceDecl>(index);
+                const std::string owner = reader_.get(reference.translation_unit.owner);
+                throw std::runtime_error("unsupported inheritance: imported base template cannot be verified" +
+                    (owner.empty() ? std::string{} : " (module " + owner + ")"));
+            }
             if (index.sort() != DeclSort::Template)
                 throw std::runtime_error("unsupported IFC template base declaration");
+            // The parameterized primary alone does not prove which partial specialization
+            // the compiler instantiated. Do not silently publish its potentially wrong base.
+            for (const auto& specialization : reader_.partition<PartialSpecializationDecl>())
+                if (reader_.get(specialization.specialization_form).template_decl == index)
+                    throw std::runtime_error("unsupported inheritance: IFC template base has partial specializations");
             const auto& value = reader_.get<TemplateDecl>(index);
             if (value.chart.sort() != ChartSort::Unilevel)
                 throw std::runtime_error("multilevel IFC template base parameters are unsupported");
