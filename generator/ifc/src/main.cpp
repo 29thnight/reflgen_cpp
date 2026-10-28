@@ -228,7 +228,9 @@ int main(int argc, char** argv)
         std::vector<std::filesystem::path> inputs{input, metadata_path, prsm_adapter};
         if (!index_like::null(file.header()->src_path)) inputs.emplace_back(file.get(file.header()->src_path));
         for (const auto& source_file : reader.partition<SourceFileName>())
-            inputs.emplace_back(reader.get(source_file.name));
+            // MSVC includes a sentinel source-file entry with a null TextOffset. The SDK maps
+            // that value to nullptr, which is not a valid filesystem::path constructor argument.
+            if (!index_like::null(source_file.name)) inputs.emplace_back(reader.get(source_file.name));
         for (const auto& source : registration_headers) inputs.emplace_back(source);
         for (const auto& type : extract.model.classes)
         {
