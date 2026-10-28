@@ -807,14 +807,14 @@ namespace reflgen
             }();
             void (*serialized)(void*, reader&, writer&) = nullptr;
             if constexpr (reason.empty()) serialized = &invoke_serialized_method<T, descriptor_type::pointer>;
-            value_view (*borrow)(void*, bool) = nullptr;
+            value_view (*borrow_result_thunk)(void*, bool) = nullptr;
             if constexpr (!internal && type_list_size<typename signature::arguments> == 0)
             {
                 if constexpr (std::is_lvalue_reference_v<typename signature::result>)
-                    borrow = &borrow_method_result<T, descriptor_type::pointer>;
+                    borrow_result_thunk = &borrow_method_result<T, descriptor_type::pointer>;
                 else if constexpr (complete_type<result> && !std::is_void_v<result>)
                     if constexpr (std::is_move_constructible_v<result>)
-                        borrow = &borrow_method_result<T, descriptor_type::pointer>;
+                        borrow_result_thunk = &borrow_method_result<T, descriptor_type::pointer>;
             }
             constexpr auto passing = std::is_rvalue_reference_v<typename signature::result> ? parameter_passing::rvalue_reference :
                 std::is_lvalue_reference_v<typename signature::result> ?
@@ -826,7 +826,7 @@ namespace reflgen
                                            type_id_of<result>(), type_name_of<result>(), signature::is_const,
                                            attribute_list(runtime_method_attributes<T, I>),
                                            &invoke_method<T, descriptor_type::pointer>, &value_descriptor_of<result>,
-                                           passing, serialized, reason, borrow);
+                                           passing, serialized, reason, borrow_result_thunk);
         }
 
         // 런타임 표에 드는 메서드의 서술 순번 — 인자 칸으로 부를 수 없는 것(runtime_invocable)을 뺀다.

@@ -12,7 +12,7 @@
 #include <tuple>
 #include <type_traits>
 #include <variant>
-#if __has_include(<expected>)
+#if (__cplusplus > 202002L || (defined(_MSVC_LANG) && _MSVC_LANG > 202002L)) && __has_include(<expected>)
 #include <expected>
 #endif
 

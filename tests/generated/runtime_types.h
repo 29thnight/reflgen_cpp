@@ -54,7 +54,7 @@ namespace runtime_generated
         int read() const { return value; }
         payload inspect() const { return {}; }
       private:
-        int saved_private = 5;
+        [[maybe_unused]] int saved_private = 5;
     };
 
     struct [[reflgen::runtime]] imported_base
