@@ -79,6 +79,10 @@ namespace
         check_equal(normalized("ns::m<int, float>"), std::string("ns::m<int,float>"));
         check_equal(normalized("unsigned __int64"), std::string("unsigned long long"));
         check_equal(normalized("__int64"), std::string("long long"));
+        check_equal(normalized("long long int"), std::string("long long"));
+        check_equal(normalized("long long unsigned int"), std::string("unsigned long long"));
+        check_equal(normalized("ns::pair<long long int, long long unsigned int>"),
+                    std::string("ns::pair<long long,unsigned long long>"));
         check_equal(normalized("enum ns::color"), std::string("ns::color"));
         check_equal(normalized("const char *"), std::string("const char*"));
         // 식별자 일부로 들어 있는 키워드는 지우지 않는다.

@@ -127,7 +127,9 @@ namespace reflgen::generator
             }
             for (const field_model& field : model.fields)
             {
-                std::string text = "::reflgen::field<&T::" + field.name + ">.named(\"" + field.name + "\")";
+                std::string text = field.accessor
+                    ? "::reflgen::accessor_field<T, [](auto& object) noexcept -> decltype(auto) { return (object." + field.name + "); }>.named(\"" + field.name + "\")"
+                    : "::reflgen::field<&T::" + field.name + ">.named(\"" + field.name + "\")";
                 if (!field.attributes.empty())
                 {
                     text += ".with(" + joined(field.attributes) + ")";
@@ -209,7 +211,7 @@ namespace reflgen::generator
             out.line();
             out.line("template<class T>");
             out.line(only_for("T", model.qualified_name));
-            out.line("struct reflgen::reflection<T>");
+            out.line(model.runtime_only ? "struct reflgen::runtime_schema<T>" : "struct reflgen::reflection<T>");
             out.line("{");
             // 서술을 쓰는 자리에서 T 가 불완전하면 원인과 고칠 곳을 말한다 — 그렇지 않으면 &T::member 가 원본 header 의
             // 필드 줄(#line)을 가리키는 "정의되지 않은 형식" 오류가 긴 실체화 사슬 끝에 나온다.
@@ -253,6 +255,10 @@ namespace reflgen::generator
         {
             for (const class_model& model : header.classes)
             {
+                if (!model.required_header_reason.empty())
+                {
+                    return model.required_header_reason;
+                }
                 if (model.nested)
                 {
                     return "'" + model.qualified_name + "' is declared inside a class";

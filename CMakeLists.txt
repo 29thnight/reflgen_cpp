@@ -78,6 +78,7 @@ if(REFLGEN_BUILD_TESTS)
         tests/enum_tests.cpp
         tests/schema_tests.cpp
         tests/runtime_tests.cpp
+        tests/runtime_value_tests.cpp
         tests/scalar_tests.cpp
         tests/string_tests.cpp
         tests/container_tests.cpp
@@ -169,6 +170,7 @@ if(REFLGEN_BUILD_TESTS)
         enable_language(C)
         add_executable(reflgen_generated_tests
             tests/generated/generated_tests.cpp
+            tests/generated/runtime_generated_tests.cpp
             tests/generated/light_tests.cpp
             tests/generated/c_unit.c
             ${reflgen_harness_sources})
@@ -177,7 +179,7 @@ if(REFLGEN_BUILD_TESTS)
         reflgen_configure_target(reflgen_generated_tests)
         reflgen_generate(reflgen_generated_tests
             MODULE generated_tests
-            HEADERS tests/generated/game_types.h tests/generated/fallback_types.h
+            HEADERS tests/generated/game_types.h tests/generated/fallback_types.h tests/generated/runtime_types.h
             ATTRIBUTE_SCOPES generated_tests
             ATTRIBUTE_HEADERS tests/generated/test_attributes.h
             REGISTRATION_HEADERS tests/generated/registration_serializers.h)

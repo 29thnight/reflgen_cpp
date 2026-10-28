@@ -196,6 +196,12 @@ namespace reflgen::generator
              "클래스·열거형을 반영 대상으로, 메서드를 스키마에 넣을 것으로 표시한다. 클래스에 준 인자는 등록 키·다형 "
              "태그가 된다."},
             {"directive", std::string(library_scope), "ignore", "ignore", "이 멤버를 반영에서 뺀다."},
+            {"directive", std::string(library_scope), "public_methods", "public_methods",
+             "반영 클래스의 public 인스턴스 메서드와 오버로드를 자동으로 포함한다. ignore 멤버는 제외한다."},
+            {"directive", std::string(library_scope), "public_fields", "public_fields",
+             "생성할 필드를 public 데이터 멤버로 한정한다. 기존 직렬화 스키마에는 명시적으로만 적용한다."},
+            {"directive", std::string(library_scope), "runtime", "runtime\nruntime(\"schema.name\")",
+             "직렬화 스키마를 바꾸지 않고 public 필드·메서드를 런타임 접근용 스키마로 생성한다."},
             {"directive", std::string(library_scope), "attribute", "attribute",
              "이 타입을 편집기 자동완성의 attribute 로 내보낸다. 이름공간에 하나라도 있으면 표시한 타입만 내보낸다."},
             {"directive", std::string(library_scope), "interop",

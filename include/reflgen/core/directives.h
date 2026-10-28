@@ -24,6 +24,18 @@ namespace reflgen
         constexpr explicit reflect(std::string_view schema_name) noexcept : name(schema_name) {}
     };
 
+    // Generate a separate runtime schema; ordinary serialization remains opt-in
+    // through reflect/reflection<T>. Runtime records select public members.
+    struct runtime
+    {
+        static_string name;
+        constexpr runtime() noexcept = default;
+        constexpr explicit runtime(std::string_view schema_name) noexcept : name(schema_name) {}
+    };
+
+    struct public_fields {};
+    struct public_methods {};
+
     // 이 멤버를 반영에서 뺀다.
     struct ignore
     {
@@ -36,5 +48,6 @@ namespace reflgen
 
     template<class T>
     inline constexpr bool is_directive_v =
-        std::is_same_v<T, reflect> || std::is_same_v<T, ignore> || std::is_same_v<T, attribute>;
+        std::is_same_v<T, reflect> || std::is_same_v<T, ignore> || std::is_same_v<T, attribute> ||
+        std::is_same_v<T, runtime> || std::is_same_v<T, public_fields> || std::is_same_v<T, public_methods>;
 } // namespace reflgen

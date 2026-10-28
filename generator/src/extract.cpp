@@ -224,6 +224,7 @@ namespace reflgen::generator
         {
             return attribute.scope == library_scope &&
                    (attribute.name == "reflect" || attribute.name == "ignore" || attribute.name == "attribute" ||
+                    attribute.name == "public_methods" || attribute.name == "public_fields" || attribute.name == "runtime" ||
                     is_interop_directive(attribute));
         }
 
@@ -279,6 +280,7 @@ namespace reflgen::generator
             const qualifier_lookup& lookup;
             std::map<std::string, int> method_counts;
             std::string first_hidden_member; // friend 가 필요한지 가리려고 첫 비공개 멤버를 기억한다
+            bool public_methods = false;
         };
 
         class extractor
@@ -668,7 +670,6 @@ namespace reflgen::generator
                 model.is_deleted = clang_CXXMethod_isDeleted(method) != 0;
                 model.is_variadic = clang_isFunctionTypeVariadic(method_type) != 0;
                 read_method_qualifiers(method, model);
-                if (interop)
                 {
                     const file_offset begin = expansion_of(clang_getRangeStart(clang_getCursorExtent(method)));
                     const file_offset name = expansion_of(clang_getCursorLocation(method));
@@ -680,7 +681,7 @@ namespace reflgen::generator
                             model.is_consteval = true;
                         }
                     }
-                    for (const declaration_extent& macro : macro_expansions_)
+                    if (interop) for (const declaration_extent& macro : macro_expansions_)
                     {
                         if (macro.file == begin.file && macro.begin <= name.offset && macro.end > begin.offset)
                         {
@@ -1141,6 +1142,9 @@ namespace reflgen::generator
 
                 const std::vector<attribute_group> class_groups = groups_before_name(cursor);
                 const scanned_attribute* reflect = find_directive(class_groups, "reflect");
+                const scanned_attribute* runtime = find_directive(class_groups, "runtime");
+                const bool runtime_only = reflect == nullptr && runtime != nullptr;
+                if (runtime_only) reflect = runtime;
                 if (reflect == nullptr)
                 {
                     return;
@@ -1158,12 +1162,14 @@ namespace reflgen::generator
                 note_declaration(cursor, position);
 
                 class_model result;
+                result.runtime_only = runtime_only;
+                result.public_fields = runtime_only || find_directive(class_groups, "public_fields") != nullptr;
                 result.qualified_name = type_name_of(cursor);
                 result.name = cursor_spelling(cursor);
                 result.class_key = clang_getCursorKind(cursor) == CXCursor_ClassDecl ? "class" : "struct";
                 result.namespaces = *namespaces;
                 result.position = position;
-                result.bases = reflected_ancestors(clang_getCursorType(cursor));
+                result.bases = reflected_ancestors(clang_getCursorType(cursor), 0, runtime_only);
 
                 // 클래스 attribute 는 클래스 이름 앞에 있어 자기 멤버를 볼 수 없다 — 감싸는 클래스만 찾는다.
                 const std::vector<class_scope> outer_scopes = enclosing_class_scopes(cursor);
@@ -1190,7 +1196,8 @@ namespace reflgen::generator
                 member_scopes.front().qualifier = "T::";
                 member_scopes.insert(member_scopes.end(), outer_scopes.begin(), outer_scopes.end());
                 const qualifier_lookup member_lookup = lookup_in(member_scopes);
-                member_context context{result, member_lookup, count_functions(cursor), {}};
+                member_context context{result, member_lookup, count_functions(cursor), {},
+                                       runtime_only || find_directive(class_groups, "public_methods") != nullptr};
                 visit_members(cursor, context);
 
                 if (!context.first_hidden_member.empty() && !befriends_access(cursor))
@@ -1213,6 +1220,12 @@ namespace reflgen::generator
                         kind == CXCursor_FunctionTemplate)
                     {
                         ++counts[cursor_spelling(child)];
+                    }
+                    else if (kind == CXCursor_UsingDeclaration)
+                    {
+                        // A local method can join an inherited overload set even when it is the
+                        // only declaration with this name in the current class body.
+                        counts[cursor_spelling(child)] += 2;
                     }
                     return CXChildVisit_Continue;
                 });
@@ -1254,6 +1267,7 @@ namespace reflgen::generator
 
             void add_field(CXCursor field, member_context& context)
             {
+                if (context.result.public_fields && clang_getCXXAccessSpecifier(field) != CX_CXXPublic) return;
                 const std::vector<attribute_group> groups = field_groups(field);
                 if (find_directive(groups, "ignore") != nullptr)
                 {
@@ -1266,9 +1280,10 @@ namespace reflgen::generator
                     report_.warning("RG0004", position, "anonymous members cannot be reflected; skipped");
                     return;
                 }
-                const CXTypeKind kind = clang_getCursorType(field).kind;
+                const CXTypeKind kind = clang_getCanonicalType(clang_getCursorType(field)).kind;
+                const bool reference_member = kind == CXType_LValueReference || kind == CXType_RValueReference;
                 const std::string_view problem = clang_Cursor_isBitField(field) ? "bit-field"
-                                                 : kind == CXType_LValueReference || kind == CXType_RValueReference
+                                                 : reference_member && !context.result.runtime_only
                                                      ? "reference member"
                                                      : "";
                 if (!problem.empty())
@@ -1291,13 +1306,16 @@ namespace reflgen::generator
                 model.type = describe_type(clang_getCursorType(field));
                 model.owner = context.result.qualified_name;
                 model.access = access_of(field);
+                model.accessor = reference_member;
                 context.result.fields.push_back(std::move(model));
             }
 
             void add_method(CXCursor method, member_context& context)
             {
                 const std::vector<attribute_group> groups = function_groups(method);
-                if (find_directive(groups, "reflect") == nullptr)
+                const bool explicit_reflect = find_directive(groups, "reflect") != nullptr;
+                if (find_directive(groups, "ignore") != nullptr ||
+                    (!explicit_reflect && !(context.public_methods && clang_getCXXAccessSpecifier(method) == CX_CXXPublic)))
                 {
                     return;
                 }
@@ -1309,7 +1327,12 @@ namespace reflgen::generator
                                     "static member function '" + name + "' cannot be reflected; skipped");
                     return;
                 }
-                if (context.method_counts.at(name) > 1)
+                if (clang_CXXMethod_isDeleted(method))
+                {
+                    report_.warning("RG0004", position, "deleted member function '" + name + "' cannot be reflected; skipped");
+                    return;
+                }
+                if (context.method_counts.at(name) > 1 && !context.public_methods)
                 {
                     report_.error("RG0006", position,
                                   "'" + name + "' is overloaded; overloaded member functions cannot be reflected yet");
@@ -1320,7 +1343,44 @@ namespace reflgen::generator
                     context.first_hidden_member = name;
                 }
 
-                context.result.methods.push_back(method_of(method, groups, context.result, context.lookup, false));
+                auto model = method_of(method, groups, context.result, context.lookup, false);
+                if (model.is_consteval)
+                {
+                    report_.warning("RG0004", position,
+                                    "consteval member function '" + name + "' has no runtime address; skipped");
+                    return;
+                }
+                if (context.public_methods && context.method_counts.at(name) > 1)
+                {
+                    model.is_overloaded = true;
+                    const auto spelling = [](const declaration_type& type) {
+                        return type.canonical_spelling.empty() ? type.spelling : type.canonical_spelling;
+                    };
+                    std::string parameters;
+                    for (const auto& parameter : model.parameter_declarations)
+                    {
+                        if (!parameters.empty()) parameters += ", ";
+                        parameters += spelling(parameter.type);
+                    }
+                    if (model.is_variadic) parameters += parameters.empty() ? "..." : ", ...";
+                    std::string convention;
+                    if (model.calling_convention == "stdcall") convention = "__stdcall ";
+                    else if (model.calling_convention == "fastcall") convention = "__fastcall ";
+                    else if (model.calling_convention == "vectorcall") convention = "__vectorcall ";
+                    // Alias the complete return type-id. Inserting a raw function-pointer or
+                    // array-reference declarator before (T::*) would produce invalid C++.
+                    model.pointer_type = "::std::type_identity_t<" + spelling(model.return_type) + "> (" +
+                                         convention + "T::*)(" + parameters + ")";
+                    if (model.is_const) model.pointer_type += " const";
+                    if (model.is_volatile) model.pointer_type += " volatile";
+                    if (model.ref_qualifier == "lvalue") model.pointer_type += " &";
+                    if (model.ref_qualifier == "rvalue") model.pointer_type += " &&";
+                    if (model.exception_specification == "basic_noexcept" || model.exception_specification == "nothrow")
+                        model.pointer_type += " noexcept";
+                    context.result.required_header_reason = "public method overloads of '" + context.result.qualified_name +
+                                                            "' require their original signature declarations";
+                }
+                context.result.methods.push_back(std::move(model));
             }
 
             void visit_enum(CXCursor cursor)
@@ -1416,9 +1476,9 @@ namespace reflgen::generator
 
             // 반영된 클래스인가 — [[reflgen::reflect]] 를 달았거나 reflgen 스키마를 돌려주는 static reflect() 레시피가
             // 있다. 다른 라이브러리의 reflect()(흔한 이름이다)는 라이브러리처럼 레시피로 치지 않는다.
-            bool is_reflected(CXCursor record)
+            bool is_reflected(CXCursor record, bool include_runtime)
             {
-                if (declares(record, "reflect"))
+                if (declares(record, "reflect") || (include_runtime && declares(record, "runtime")))
                 {
                     return true;
                 }
@@ -1467,7 +1527,7 @@ namespace reflgen::generator
                 return reference;
             }
 
-            std::vector<type_reference> reflected_ancestors(CXType type, int depth = 0)
+            std::vector<type_reference> reflected_ancestors(CXType type, int depth = 0, bool include_runtime = false)
             {
                 std::vector<type_reference> result;
                 if (depth > 32)
@@ -1479,7 +1539,8 @@ namespace reflgen::generator
                     extractor* self;
                     std::vector<type_reference>* result;
                     int depth;
-                } state{this, &result, depth};
+                    bool include_runtime;
+                } state{this, &result, depth, include_runtime};
                 clang_visitCXXBaseClasses(
                     type,
                     [](CXCursor base, CXClientData data) -> CXVisitorResult {
@@ -1495,13 +1556,13 @@ namespace reflgen::generator
                         {
                             return CXVisit_Continue;
                         }
-                        if (state.self->is_reflected(declaration))
+                        if (state.self->is_reflected(declaration, state.include_runtime))
                         {
                             add_unique(*state.result, reference_to(declaration, base_type));
                         }
                         else
                         {
-                            for (type_reference& ancestor : state.self->reflected_ancestors(base_type, state.depth + 1))
+                            for (type_reference& ancestor : state.self->reflected_ancestors(base_type, state.depth + 1, state.include_runtime))
                             {
                                 add_unique(*state.result, std::move(ancestor));
                             }

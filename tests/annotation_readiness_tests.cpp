@@ -60,6 +60,9 @@ namespace
 
     const test directives("directives: are types but not attributes", [] {
         static_assert(reflgen::is_directive_v<reflgen::reflect>);
+        static_assert(reflgen::is_directive_v<reflgen::runtime>);
+        static_assert(reflgen::is_directive_v<reflgen::public_fields>);
+        static_assert(reflgen::is_directive_v<reflgen::public_methods>);
         static_assert(reflgen::is_directive_v<reflgen::ignore>);
         static_assert(reflgen::is_directive_v<reflgen::attribute>);
         static_assert(!reflgen::is_directive_v<reflgen::transient>);

@@ -290,7 +290,8 @@ namespace reflgen::generator
                                              a.name == "property_set" || a.name == "effect" || a.name == "owner" ||
                                              a.name == "receiver");
                 if ((!interop && binding_directive) || !scopes.contains(a.scope) ||
-                    (a.scope == "reflgen" && (a.name == "reflect" || a.name == "ignore" || a.name == "attribute")))
+                    (a.scope == "reflgen" && (a.name == "reflect" || a.name == "ignore" || a.name == "attribute" ||
+                                             a.name == "public_methods" || a.name == "public_fields" || a.name == "runtime")))
                     continue;
                 const auto index = std::lower_bound(tokens_.begin(), tokens_.end(), a.begin,
                                                     [](const auto& t, auto offset) { return t.begin < offset; });

@@ -368,6 +368,10 @@ namespace reflgen::generator::ifc_frontend
                         result.namespaces = namespaces;
                         result.nested = nested;
                         const auto* reflect = directive(groups, "reflect");
+                        const auto* runtime = directive(groups, "runtime");
+                        result.runtime_only = reflect == nullptr && runtime != nullptr;
+                        result.public_fields = result.runtime_only || directive(groups, "public_fields") != nullptr;
+                        if (result.runtime_only) reflect = runtime;
                         if (reflect && reflect->has_arguments) result.schema_name = metadata_->arguments(*reflect);
                         selected_[&type] = model.classes.size();
                         records_.push_back({&type, model.classes.size(), reflect != nullptr});
@@ -449,6 +453,7 @@ namespace reflgen::generator::ifc_frontend
                 if (entry.index.sort() == DeclSort::Field)
                 {
                     const auto& field = reader_.get<FieldDecl>(entry.index);
+                    if (result.public_fields && field.access != Access::Public) continue;
                     if (field.access != Access::Public && !friend_access && !explicit_reflect) continue;
                     const std::string field_name = semantic_.text(field.identity.name);
                     const auto groups = attributes(field.identity.locus, field_name);
@@ -458,14 +463,16 @@ namespace reflgen::generator::ifc_frontend
                     bool is_reference;
                     try { is_reference = semantic_.reference_type(field.type); }
                     catch (const std::exception& error) { fail(field.identity.locus, error.what()); }
-                    if (is_reference)
+                    if (is_reference && !result.runtime_only)
                         fail(field.identity.locus, "reference field is unsupported: " + result.qualified_name);
                     if (!identifier(field_name)) fail(field.identity.locus, "anonymous field is unsupported: " + result.qualified_name);
                     result.fields.push_back({field_name, position(field.identity.locus), uses(groups, lookup)});
+                    result.fields.back().accessor = is_reference;
                 }
                 else if (entry.index.sort() == DeclSort::Bitfield)
                 {
                     const auto& bit = reader_.get<BitfieldDecl>(entry.index);
+                    if (result.public_fields && bit.access != Access::Public) continue;
                     if (bit.access != Access::Public && !friend_access && !explicit_reflect) continue;
                     const auto groups = attributes(bit.identity.locus, semantic_.text(bit.identity.name));
                     if (!directive(groups, "ignore") &&
@@ -475,6 +482,7 @@ namespace reflgen::generator::ifc_frontend
                 else if (entry.index.sort() == DeclSort::Method)
                 {
                     const auto& method = reader_.get<NonStaticMemberFunctionDecl>(entry.index);
+                    if (result.runtime_only && method.access != Access::Public) continue;
                     if (method.access != Access::Public && !friend_access && !explicit_reflect) continue;
                     const std::string method_name = semantic_.name(method.identity.name);
                     if (!identifier(method_name)) continue;
@@ -533,8 +541,10 @@ namespace reflgen::generator::ifc_frontend
             if (index_like::null(identity.locus.line))
                 fail(locus, "base declaration has no authoring identity in this IFC: " + short_name);
             const auto groups = attributes(source_locus, short_name, true);
-            const bool reflected = found != selected_.end() ||
-                (!directive(groups, "ignore") && directive(groups, "reflect"));
+            const bool reflected = (found != selected_.end() &&
+                                    (result.runtime_only || !model.classes[found->second].runtime_only)) ||
+                (!directive(groups, "ignore") && (directive(groups, "reflect") ||
+                                                 (result.runtime_only && directive(groups, "runtime"))));
             if (reflected && !accessible)
                 fail(locus, "non-public reflected base cannot be serialized: " + result.qualified_name);
             if (accessible &&

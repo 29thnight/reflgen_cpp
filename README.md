@@ -482,9 +482,9 @@ namespace editor
 |---|---|
 | RG0001 | Input or option error (a missing header, the same header twice, …) |
 | RG0002 | A private member is reflected but `friend struct reflgen::access;` is missing |
-| RG0004 | A member that cannot be reflected (bit-field, reference, anonymous union, static member, constructor or destructor) |
+| RG0004 | A member that cannot be reflected (bit-field, legacy reference field, anonymous union, static/deleted/consteval member, constructor or destructor) |
 | RG0005 | An unsupported declaration (class or member function template, union, anonymous namespace) |
-| RG0006 | An overloaded method |
+| RG0006 | An overloaded method without the public_methods/runtime opt-in |
 | RG0007 | Generated file name collision (two headers with the same name) |
 | RG0100 | A compile error reported by clang — inside a reflected declaration, or parsing stopped |
 | RG0101 | (note) A clang error skipped because it is outside reflected declarations |
@@ -794,6 +794,14 @@ reader: peek, read_*, begin_array → while(next_element) … → end_array,
 
 ## Runtime descriptors and the registry
 
+For native scripting, [runtime value graphs](docs/runtime-value-bindings.md) add
+recursive type discovery from descriptors, member/container navigation, serialized
+method invocation and retained getter results. `[[reflgen::runtime]]` emits a
+separate runtime schema without changing authoring serialization;
+`[[reflgen::reflect, reflgen::public_methods]]` adds public instance methods and
+typed overloads to an existing reflected type. Engine ownership, threading and
+property-change notifications remain the host's responsibility.
+
 ```cpp
 const reflgen::type_descriptor& type = reflgen::type_descriptor_of<player>();
 for (const reflgen::field_info& field : type.fields())   // inherited fields included, bases first
@@ -957,8 +965,10 @@ Not yet available: a codemod that rewrites the notation (a VS extension command)
 - Raw pointers and `weak_ptr` are not serialized (it cannot be known whether they own or refer). To write them as
   IDs or handles, specialize `reflgen::serializer<T*>`.
 - `default_registry()` is one per module (DLL).
-- The header generator does not handle class templates, member function templates, overloaded methods, enumerator
-  attributes or unions (it reports them with diagnostics). The IFC backend supports typed method overloads and public
+- The header generator does not handle class templates, member function templates, enumerator
+  attributes or unions (it reports them with diagnostics). Public method overloads are supported with the explicit
+  `public_methods` or `runtime` directive; legacy marked-method selection still diagnoses ambiguous overloads.
+  The IFC backend supports typed method overloads and public
   CRTP ancestry within its supported type forms; see its separate restrictions above. Unnamed parameters keep an empty name.
 - Reflecting private members requires `friend struct reflgen::access;` (the VS extension inserts it on save). The
   C++20 way of getting constant pointers to private members without a friend (injecting a friend function through

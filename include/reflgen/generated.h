@@ -8,6 +8,7 @@
 #include "reflgen/core/hook.h"
 #include "reflgen/core/schema.h"
 #include "reflgen/core/version.h"
+#include "reflgen/runtime/schema.h"
 #include <array>
 #include <concepts>
 

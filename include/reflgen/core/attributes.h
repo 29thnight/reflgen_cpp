@@ -84,6 +84,11 @@ namespace reflgen
     {
     };
 
+    // Keep native lifecycle/ownership operations in metadata while denying script invocation.
+    struct script_internal
+    {
+    };
+
     // 런타임 속성 한 항목 — 타입 식별자와 정본 값의 주소. 값은 schema_of<T> 안(정적
     // 저장소)에 있으므로 주소는 프로그램 수명 동안 유효하다.
     class attribute_ref

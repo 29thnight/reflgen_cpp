@@ -102,6 +102,10 @@ namespace reflgen
         using value_type = typename detail::member_pointer_traits<pointer_type>::value_type;
 
         static constexpr pointer_type pointer = Member;
+        static constexpr bool is_indirect = false;
+
+        template<class Object>
+        static constexpr decltype(auto) get(Object&& object) noexcept { return std::forward<Object>(object).*Member; }
 
         std::string_view name = member_name_of<Member>();
         std::tuple<Attrs...> attributes;
@@ -136,6 +140,42 @@ namespace reflgen
 
     template<auto Member>
     inline constexpr field_descriptor<Member> field{};
+
+    // Runtime-only reference data members have no C++ pointer-to-member. Getter must return
+    // existing native storage (never a temporary), and must not throw. Generated getters are
+    // captureless member-access lambdas; root constness is enforced by the runtime value view.
+    template<class Owner, auto Getter, class... Attrs>
+    struct accessor_field_descriptor
+    {
+        using owner_type = Owner;
+        using reference_type = std::invoke_result_t<decltype(Getter), Owner&>;
+        static_assert(std::is_lvalue_reference_v<reference_type>, "accessor_field getter must return an lvalue reference");
+        using value_type = std::remove_reference_t<reference_type>;
+        static constexpr bool is_indirect = true;
+        std::string_view name;
+        std::tuple<Attrs...> attributes;
+
+        template<class Object>
+        static constexpr decltype(auto) get(Object&& object) noexcept { return Getter(std::forward<Object>(object)); }
+        consteval accessor_field_descriptor named(std::string_view new_name) const { return {new_name, attributes}; }
+        template<class... More>
+        consteval accessor_field_descriptor<Owner, Getter, Attrs..., More...> with(More... more) const
+        {
+            detail::reject_directives<More...>();
+            return {name, std::tuple_cat(attributes, std::tuple<More...>{more...})};
+        }
+        template<class A>
+        static constexpr bool has_attribute() noexcept { return (std::is_same_v<A, Attrs> || ...); }
+        template<class A>
+        constexpr const A& attribute() const noexcept
+        {
+            static_assert(has_attribute<A>(), "the accessor field does not carry this attribute");
+            return std::get<detail::first_index_of<A, Attrs...>()>(attributes);
+        }
+    };
+
+    template<class Owner, auto Getter>
+    inline constexpr accessor_field_descriptor<Owner, Getter> accessor_field{};
 
     template<auto Function, std::size_t ParameterCount = 0, class... Attrs>
     struct method_descriptor
@@ -257,6 +297,9 @@ namespace reflgen
         struct is_field_descriptor<field_descriptor<Member, Attrs...>> : std::true_type
         {
         };
+
+        template<class Owner, auto Getter, class... Attrs>
+        struct is_field_descriptor<accessor_field_descriptor<Owner, Getter, Attrs...>> : std::true_type {};
 
         template<class E>
         struct is_method_descriptor : std::false_type

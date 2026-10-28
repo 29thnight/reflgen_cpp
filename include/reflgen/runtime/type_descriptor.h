@@ -11,6 +11,7 @@
 #include "reflgen/core/attributes.h"
 #include "reflgen/core/schema.h"
 #include "reflgen/runtime/enum_descriptor.h"
+#include "reflgen/runtime/value_descriptor.h"
 #include "reflgen/serial/detail/object.h"
 #include "reflgen/serial/detail/traits.h"
 #include "reflgen/serial/error.h"
@@ -44,8 +45,11 @@ namespace reflgen
         std::string_view key() const noexcept { return key_; }
         type_id type() const noexcept { return type_; }
         std::string_view type_name() const noexcept { return type_name_; }
+        const value_descriptor& value() const noexcept { return value_(); }
+        bool is_read_only() const noexcept { return read_only_; }
         // 이 필드를 선언한 클래스(상속 필드면 부모).
         std::string_view declaring_type_name() const noexcept { return declaring_type_name_; }
+        type_id declaring_type() const noexcept { return declaring_type_; }
         // 값 타입에 서술이 있으면 그 서술자.
         const type_descriptor* reflected_type() const noexcept
         {
@@ -88,12 +92,13 @@ namespace reflgen
         using read_function = void (*)(reader&, void*);
 
         constexpr field_info(std::string_view name, std::string_view key, type_id type, std::string_view type_name,
-                             std::string_view declaring_type_name, descriptor_function reflected_type,
+                             std::string_view declaring_type_name, type_id declaring_type, descriptor_function reflected_type,
                              const enum_descriptor* enumeration, attribute_list attributes, address_function address,
-                             write_function write, read_function read) noexcept
+                             write_function write, read_function read, value_child_info::getter value,
+                             bool read_only) noexcept
             : name_(name), key_(key), type_(type), type_name_(type_name), declaring_type_name_(declaring_type_name),
-              reflected_type_(reflected_type), enumeration_(enumeration), attributes_(attributes), address_(address),
-              write_(write), read_(read)
+              declaring_type_(declaring_type), reflected_type_(reflected_type), enumeration_(enumeration), attributes_(attributes), address_(address),
+              write_(write), read_(read), value_(value), read_only_(read_only)
         {
         }
 
@@ -102,12 +107,15 @@ namespace reflgen
         type_id type_;
         std::string_view type_name_;
         std::string_view declaring_type_name_;
+        type_id declaring_type_;
         descriptor_function reflected_type_;
         const enum_descriptor* enumeration_;
         attribute_list attributes_;
         address_function address_;
         write_function write_;
         read_function read_;
+        value_child_info::getter value_;
+        bool read_only_;
     };
 
     // base<B> 로 선언한 직계 부모 하나.
@@ -145,18 +153,23 @@ namespace reflgen
         // 참조·cv 를 뗀 값 타입.
         type_id type() const noexcept { return type_; }
         std::string_view type_name() const noexcept { return type_name_; }
+        const value_descriptor& value() const noexcept { return value_(); }
+        parameter_passing passing() const noexcept { return passing_; }
 
       private:
         friend struct detail::runtime_factory;
 
-        constexpr parameter_info(std::string_view name, type_id type, std::string_view type_name) noexcept
-            : name_(name), type_(type), type_name_(type_name)
+        constexpr parameter_info(std::string_view name, type_id type, std::string_view type_name,
+                                 value_child_info::getter value, parameter_passing passing) noexcept
+            : name_(name), type_(type), type_name_(type_name), value_(value), passing_(passing)
         {
         }
 
         std::string_view name_;
         type_id type_;
         std::string_view type_name_;
+        value_child_info::getter value_;
+        parameter_passing passing_;
     };
 
     // 서술된 멤버 함수 하나(생성기: [[reflgen::reflect]] 를 단 메서드, 레시피: reflgen::method<&T::f>).
@@ -166,12 +179,40 @@ namespace reflgen
         std::string_view name() const noexcept { return name_; }
         // 이 메서드를 선언한 클래스(상속 메서드면 부모).
         std::string_view declaring_type_name() const noexcept { return declaring_type_name_; }
+        type_id declaring_type() const noexcept { return declaring_type_; }
         std::span<const parameter_info> parameters() const noexcept { return parameters_; }
         // 참조·cv 를 뗀 반환 타입. 반환이 없으면 type_id_of<void>().
         type_id return_type() const noexcept { return return_type_; }
         std::string_view return_type_name() const noexcept { return return_type_name_; }
+        const value_descriptor& result() const noexcept { return result_(); }
+        parameter_passing return_passing() const noexcept { return return_passing_; }
         bool is_const() const noexcept { return is_const_; }
         attribute_list attributes() const noexcept { return attributes_; }
+        bool is_invocable() const noexcept { return invoke_ != nullptr && !attributes_.contains<script_internal>(); }
+        bool is_serialized_invocable() const noexcept { return serialized_ != nullptr; }
+        std::string_view serialized_unavailable_reason() const noexcept { return serialized_reason_; }
+        // Input: argument array. Output: {"result": value-or-null, "arguments": post-call argument array}.
+        // Parse/arity validation finishes before invoking native code. Invocation/output errors may occur
+        // after native side effects; callers must not retry a failed invocation automatically.
+        void invoke_serialized(void* object, reader& arguments, writer& response) const
+        {
+            if (!object) throw std::invalid_argument("cannot invoke a method on a null object");
+            if (!serialized_) throw std::invalid_argument(std::string(serialized_reason_));
+            serialized_(object, arguments, response);
+        }
+        // Borrow only a no-argument lvalue-reference result. The caller owns the root lifetime and
+        // must invoke this again whenever resolving a path; parameter temporaries never escape.
+        bool can_borrow_result() const noexcept { return borrow_ != nullptr; }
+        value_view borrow_result(void* object) const
+        {
+            if (!object || !borrow_) throw std::invalid_argument("method has no borrowable result");
+            return borrow_(object, true);
+        }
+        value_view borrow_result(const void* object) const
+        {
+            if (!object || !borrow_ || !is_const_) throw std::invalid_argument("method has no const borrowable result");
+            return borrow_(const_cast<void*>(object), false);
+        }
 
         // object 는 이 서술자의 타입 객체다(부모의 메서드도 같다 — field_info::address 와 같은 규칙).
         // arguments[i] 는 parameters()[i] 타입의 객체를 가리킨다: 값·const 참조 파라미터는 그 객체를 읽고(값이면
@@ -181,6 +222,7 @@ namespace reflgen
         // 인자 칸으로 부를 수 없는 메서드(&& 한정자·volatile·C 가변 인자)는 methods() 에 없다.
         void invoke(void* object, std::span<void* const> arguments, void* result = nullptr) const
         {
+            if (!is_invocable()) throw std::invalid_argument("method is marked reflgen::script_internal");
             if (arguments.size() != parameters_.size())
             {
                 throw std::invalid_argument("method '" + std::string(name_) + "' expects " +
@@ -195,25 +237,36 @@ namespace reflgen
         friend struct detail::runtime_factory;
 
         using invoke_function = void (*)(void*, void* const*, void*, std::string_view);
+        using serialized_function = void (*)(void*, reader&, writer&);
+        using borrow_function = value_view (*)(void*, bool);
 
-        constexpr method_info(std::string_view name, std::string_view declaring_type_name,
+        constexpr method_info(std::string_view name, std::string_view declaring_type_name, type_id declaring_type,
                               std::span<const parameter_info> parameters, type_id return_type,
                               std::string_view return_type_name, bool is_const, attribute_list attributes,
-                              invoke_function invoke) noexcept
-            : name_(name), declaring_type_name_(declaring_type_name), parameters_(parameters),
+                              invoke_function invoke, value_child_info::getter result, parameter_passing return_passing,
+                              serialized_function serialized, std::string_view serialized_reason,
+                              borrow_function borrow) noexcept
+            : name_(name), declaring_type_name_(declaring_type_name), declaring_type_(declaring_type), parameters_(parameters),
               return_type_(return_type), return_type_name_(return_type_name), is_const_(is_const),
-              attributes_(attributes), invoke_(invoke)
+              attributes_(attributes), invoke_(invoke), result_(result), return_passing_(return_passing),
+              serialized_(serialized), serialized_reason_(serialized_reason), borrow_(borrow)
         {
         }
 
         std::string_view name_;
         std::string_view declaring_type_name_;
+        type_id declaring_type_;
         std::span<const parameter_info> parameters_;
         type_id return_type_;
         std::string_view return_type_name_;
         bool is_const_;
         attribute_list attributes_;
         invoke_function invoke_;
+        value_child_info::getter result_;
+        parameter_passing return_passing_;
+        serialized_function serialized_;
+        std::string_view serialized_reason_;
+        borrow_function borrow_;
     };
 
     class type_descriptor
@@ -226,6 +279,7 @@ namespace reflgen
         type_id id() const noexcept { return id_; }
         std::size_t size() const noexcept { return size_; }
         std::size_t alignment() const noexcept { return alignment_; }
+        const value_descriptor& value() const noexcept { return value_(); }
 
         // 상속 필드 포함, 부모 우선.
         std::span<const field_info> fields() const noexcept { return fields_; }
@@ -334,10 +388,10 @@ namespace reflgen
                                   std::span<const field_info> fields, std::span<const base_info> bases,
                                   std::span<const method_info> methods, attribute_list attributes, rtti_function rtti,
                                   create_function create, destroy_function destroy, write_function write,
-                                  read_function read) noexcept
+                                  read_function read, value_child_info::getter value) noexcept
             : name_(name), id_(id), size_(size), alignment_(alignment), fields_(fields), bases_(bases),
               methods_(methods), attributes_(attributes), rtti_(rtti), create_(create), destroy_(destroy),
-              write_(write), read_(read)
+              write_(write), read_(read), value_(value)
         {
         }
 
@@ -354,9 +408,10 @@ namespace reflgen
         destroy_function destroy_;
         write_function write_;
         read_function read_;
+        value_child_info::getter value_;
     };
 
-    template<reflectable T>
+    template<runtime_reflectable T>
     constexpr const type_descriptor& type_descriptor_of() noexcept;
 
     namespace detail
@@ -398,11 +453,11 @@ namespace reflgen
         template<class T>
         consteval auto all_fields_of()
         {
-            if constexpr (reflectable<T>)
+            if constexpr (runtime_reflectable<T>)
             {
                 return []<class... Bases>(type_list<Bases...>) {
-                    return std::tuple_cat(all_fields_of<Bases>()..., schema_of<T>.fields);
-                }(direct_bases_t<T>{});
+                    return std::tuple_cat(all_fields_of<Bases>()..., runtime_schema_of<T>.fields);
+                }(runtime_direct_bases_t<T>{});
             }
             else
             {
@@ -424,7 +479,7 @@ namespace reflgen
         constexpr auto reflected_type_getter() noexcept
         {
             using getter = const type_descriptor& (*)() noexcept;
-            if constexpr (reflectable<V>)
+            if constexpr (runtime_reflectable<V>)
             {
                 return static_cast<getter>(&type_descriptor_of<V>);
             }
@@ -447,34 +502,36 @@ namespace reflgen
             }
         }
 
-        template<class T, auto Member>
+        template<class T, class Field>
         void* field_address(void* object) noexcept
         {
-            return std::addressof(static_cast<T*>(object)->*Member);
+            return const_cast<void*>(static_cast<const void*>(std::addressof(Field::get(*static_cast<T*>(object)))));
         }
 
-        template<class T, auto Member>
+        template<class T, class Field>
         void write_field(writer& out, const void* object)
         {
-            serialize(out, static_cast<const T*>(object)->*Member);
+            runtime_serialize(out, Field::get(*static_cast<const T*>(object)));
         }
 
-        template<class T, auto Member>
+        template<class T, class Field>
         void read_field(reader& in, void* object)
         {
-            deserialize(in, static_cast<T*>(object)->*Member);
+            runtime_deserialize(in, Field::get(*static_cast<T*>(object)));
         }
 
         template<class T>
         void write_instance(writer& out, const void* object)
         {
-            serialize(out, *static_cast<const T*>(object));
+            if constexpr (reflectable<T> || has_custom_serializer<T>) serialize(out, *static_cast<const T*>(object));
+            else runtime_serialize(out, *static_cast<const T*>(object));
         }
 
         template<class T>
         void read_instance(reader& in, void* object)
         {
-            deserialize(in, *static_cast<T*>(object));
+            if constexpr (reflectable<T> || has_custom_serializer<T>) deserialize(in, *static_cast<T*>(object));
+            else runtime_deserialize(in, *static_cast<T*>(object));
         }
 
         template<class T>
@@ -514,26 +571,26 @@ namespace reflgen
             constexpr const auto& descriptor = std::get<I>(runtime_field_descriptors<T>);
             using descriptor_type = std::remove_cvref_t<decltype(descriptor)>;
             using value_type = typename descriptor_type::value_type;
-            constexpr auto member = descriptor_type::pointer;
+            using stored_type = std::remove_cv_t<value_type>;
 
             using write_function = void (*)(writer&, const void*);
             using read_function = void (*)(reader&, void*);
             write_function write = nullptr;
             read_function read = nullptr;
-            if constexpr (is_serializable<value_type>())
+            if constexpr (runtime_value_serializable<stored_type>())
             {
-                write = &write_field<T, member>;
+                write = &write_field<T, descriptor_type>;
             }
-            if constexpr (is_deserializable<value_type>())
+            if constexpr (!std::is_const_v<value_type> && runtime_value_deserializable<stored_type>())
             {
-                read = &read_field<T, member>;
+                read = &read_field<T, descriptor_type>;
             }
 
             return runtime_factory::field(
                 descriptor.name, serialized_key(descriptor), type_id_of<value_type>(), type_name_of<value_type>(),
-                type_name_of<typename descriptor_type::owner_type>(), reflected_type_getter<value_type>(),
-                enumeration_of<value_type>(), attribute_list(runtime_field_attributes<T, I>), &field_address<T, member>,
-                write, read);
+                type_name_of<typename descriptor_type::owner_type>(), type_id_of<typename descriptor_type::owner_type>(), reflected_type_getter<stored_type>(),
+                enumeration_of<stored_type>(), attribute_list(runtime_field_attributes<T, I>), &field_address<T, descriptor_type>,
+                write, read, &value_descriptor_of<std::remove_cv_t<value_type>>, std::is_const_v<value_type>);
         }
 
         template<class T>
@@ -678,11 +735,11 @@ namespace reflgen
         template<class T>
         consteval auto all_methods_of()
         {
-            if constexpr (reflectable<T>)
+            if constexpr (runtime_reflectable<T>)
             {
                 return []<class... Bases>(type_list<Bases...>) {
-                    return std::tuple_cat(all_methods_of<Bases>()..., schema_of<T>.methods);
-                }(direct_bases_t<T>{});
+                    return std::tuple_cat(all_methods_of<Bases>()..., runtime_schema_of<T>.methods);
+                }(runtime_direct_bases_t<T>{});
             }
             else
             {
@@ -717,12 +774,24 @@ namespace reflgen
         {
             return std::array<parameter_info, sizeof...(Args)>{runtime_factory::parameter(
                 parameter_name(std::get<I>(runtime_method_descriptors<T>).parameter_names, Js, sizeof...(Args)),
-                type_id_of<std::remove_cvref_t<Args>>(), type_name_of<std::remove_cvref_t<Args>>())...};
+                type_id_of<std::remove_cvref_t<Args>>(), type_name_of<std::remove_cvref_t<Args>>(),
+                &value_descriptor_of<std::remove_cvref_t<Args>>,
+                std::is_rvalue_reference_v<Args> ? parameter_passing::rvalue_reference :
+                std::is_lvalue_reference_v<Args> ? (std::is_const_v<std::remove_reference_t<Args>> ?
+                    parameter_passing::const_reference : parameter_passing::mutable_reference) :
+                    parameter_passing::value)...};
         }
 
         template<class T, std::size_t I>
         inline constexpr auto runtime_method_parameters = make_method_parameters<T, I>(
             method_arguments_at<T, I>{}, std::make_index_sequence<type_list_size<method_arguments_at<T, I>>>{});
+
+        template<class T, auto Function>
+        consteval std::string_view serialized_method_reason();
+        template<class T, auto Function>
+        void invoke_serialized_method(void* object, reader& arguments, writer& response);
+        template<class T, auto Function>
+        value_view borrow_method_result(void* object, bool writable);
 
         template<class T, std::size_t I>
         constexpr method_info make_method_info() noexcept
@@ -731,11 +800,33 @@ namespace reflgen
             using descriptor_type = std::remove_cvref_t<decltype(descriptor)>;
             using signature = method_signature_of<descriptor_type::pointer>;
             using result = std::remove_cvref_t<typename signature::result>;
+            constexpr bool internal = descriptor_type::template has_attribute<script_internal>();
+            constexpr auto reason = [] {
+                if constexpr (internal) return std::string_view("method is marked reflgen::script_internal");
+                else return serialized_method_reason<T, descriptor_type::pointer>();
+            }();
+            void (*serialized)(void*, reader&, writer&) = nullptr;
+            if constexpr (reason.empty()) serialized = &invoke_serialized_method<T, descriptor_type::pointer>;
+            value_view (*borrow)(void*, bool) = nullptr;
+            if constexpr (!internal && type_list_size<typename signature::arguments> == 0)
+            {
+                if constexpr (std::is_lvalue_reference_v<typename signature::result>)
+                    borrow = &borrow_method_result<T, descriptor_type::pointer>;
+                else if constexpr (complete_type<result> && !std::is_void_v<result>)
+                    if constexpr (std::is_move_constructible_v<result>)
+                        borrow = &borrow_method_result<T, descriptor_type::pointer>;
+            }
+            constexpr auto passing = std::is_rvalue_reference_v<typename signature::result> ? parameter_passing::rvalue_reference :
+                std::is_lvalue_reference_v<typename signature::result> ?
+                    (std::is_const_v<std::remove_reference_t<typename signature::result>> ?
+                        parameter_passing::const_reference : parameter_passing::mutable_reference) : parameter_passing::value;
             return runtime_factory::method(descriptor.name, type_name_of<typename descriptor_type::owner_type>(),
+                                           type_id_of<typename descriptor_type::owner_type>(),
                                            std::span<const parameter_info>(runtime_method_parameters<T, I>),
                                            type_id_of<result>(), type_name_of<result>(), signature::is_const,
                                            attribute_list(runtime_method_attributes<T, I>),
-                                           &invoke_method<T, descriptor_type::pointer>);
+                                           &invoke_method<T, descriptor_type::pointer>, &value_descriptor_of<result>,
+                                           passing, serialized, reason, borrow);
         }
 
         // 런타임 표에 드는 메서드의 서술 순번 — 인자 칸으로 부를 수 없는 것(runtime_invocable)을 뺀다.
@@ -787,17 +878,18 @@ namespace reflgen
         template<class T>
         inline constexpr auto runtime_bases = []<class... Bases>(type_list<Bases...>) {
             return std::array<base_info, sizeof...(Bases)>{make_base_info<T, Bases>()...};
-        }(direct_bases_t<T>{});
+        }(runtime_direct_bases_t<T>{});
 
         template<class T>
-        inline constexpr auto runtime_type_attributes = make_attribute_refs(schema_of<T>.attributes);
+        inline constexpr auto runtime_type_attributes = make_attribute_refs(runtime_schema_of<T>.attributes);
 
         // 사용자 serializer<T> 특수화가 있으면 그것이 곧 쓰기 방법이다. 없으면 필드 전부가
         // 쓰일 수 있어야 객체 전체를 쓸 수 있다.
         template<class T>
         consteval bool instance_serializable() noexcept
         {
-            if constexpr (has_custom_serializer<T>)
+            if constexpr (!reflectable<T>) return runtime_value_serializable<T>();
+            else if constexpr (has_custom_serializer<T>)
             {
                 return is_serializable<T>();
             }
@@ -810,7 +902,8 @@ namespace reflgen
         template<class T>
         consteval bool instance_deserializable() noexcept
         {
-            if constexpr (has_custom_serializer<T>)
+            if constexpr (!reflectable<T>) return runtime_value_deserializable<T>();
+            else if constexpr (has_custom_serializer<T>)
             {
                 return is_deserializable<T>();
             }
@@ -857,22 +950,24 @@ namespace reflgen
             }
 
             return runtime_factory::type(
-                schema_of<T>.name, type_id_of<T>(), sizeof(T), alignof(T),
+                runtime_schema_of<T>.name, type_id_of<T>(), sizeof(T), alignof(T),
                 std::span<const field_info>(runtime_fields<T>), std::span<const base_info>(runtime_bases<T>),
                 std::span<const method_info>(runtime_methods<T>), attribute_list(runtime_type_attributes<T>), rtti,
-                create, destroy, write, read);
+                create, destroy, write, read, &value_descriptor_of<T>);
         }
 
         template<class T>
         inline constexpr type_descriptor runtime_type = make_type_descriptor<T>();
     } // namespace detail
 
-    template<reflectable T>
+    template<runtime_reflectable T>
     constexpr const type_descriptor& type_descriptor_of() noexcept
     {
         return detail::runtime_type<T>;
     }
 } // namespace reflgen
+
+#include "reflgen/runtime/value_descriptor_impl.h"
 
 // 꼬리 include — 런타임 서술자·등록소·직렬화는 서로의 정의를 필요로 하는 한 덩어리다
 // (필드 썽크가 serialize 를, 다형 포인터 직렬화가 등록소를 부른다). 어느 헤더로

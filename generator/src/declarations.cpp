@@ -82,7 +82,8 @@ namespace reflgen::generator
         {
             return "{\"name\":" + quoted(field.name) + ",\"owner\":" + quoted(field.owner) + ",\"access\":" +
                    quoted(field.access) + ",\"source\":" + source_json(field.position) + ",\"type\":" +
-                   type_json(field.type) + ",\"attributes\":" + array(field.attributes, attribute_json) + '}';
+                   type_json(field.type) + ",\"accessor\":" + boolean(field.accessor) +
+                   ",\"attributes\":" + array(field.attributes, attribute_json) + '}';
         }
 
         std::string parameter_json(const parameter_model& parameter)
@@ -112,6 +113,7 @@ namespace reflgen::generator
             return "{\"name\":" + quoted(type.name) + ",\"qualified_name\":" + quoted(type.qualified_name) +
                    ",\"class_key\":" + quoted(type.class_key) + ",\"schema_name\":" + quoted(type.schema_name) +
                    ",\"source\":" + source_json(type.position) + ",\"nested\":" + boolean(type.nested) +
+                   ",\"runtime_only\":" + boolean(type.runtime_only) + ",\"public_fields\":" + boolean(type.public_fields) +
                    ",\"bases\":" + array(type.bases, [](const type_reference& base) {
                        return quoted(base.qualified_name);
                    }) +

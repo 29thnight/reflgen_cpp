@@ -56,7 +56,7 @@ namespace reflgen
             types_.push_back(&type);
         }
 
-        template<reflectable T>
+        template<runtime_reflectable T>
         const type_descriptor& add()
         {
             const type_descriptor& type = type_descriptor_of<T>();
@@ -113,7 +113,7 @@ namespace reflgen
         return instance;
     }
 
-    template<reflectable T>
+    template<runtime_reflectable T>
     const type_descriptor& register_type(registry& target = default_registry())
     {
         return target.add<T>();

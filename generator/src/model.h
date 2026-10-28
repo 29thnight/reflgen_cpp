@@ -72,6 +72,7 @@ namespace reflgen::generator
         declaration_type type = {};
         std::string owner = {};
         std::string access = {};
+        bool accessor = false; // runtime-only reference member; represented by an lvalue getter
     };
 
     struct method_model
@@ -130,6 +131,11 @@ namespace reflgen::generator
         bool nested = false; // 클래스 안에 선언됐다 — 전방 선언할 수 없어 원본 header 가 필요하다
         // attribute 인자가 쓰는 멤버·reflgen·std 밖의 이름 — 있으면 원본 header 가 필요하다.
         std::vector<std::string> external_names;
+        // An opt-in public method overload can name types unavailable in a forced-include header.
+        // Keep those declarations in their author's include context instead of guessing forward declarations.
+        std::string required_header_reason = {};
+        bool runtime_only = false;
+        bool public_fields = false;
     };
 
     struct enum_model

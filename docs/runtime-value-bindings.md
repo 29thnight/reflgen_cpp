@@ -1,0 +1,200 @@
+# Runtime value graphs for native scripting
+
+The runtime descriptor layer can expose a component and the types reachable from
+its bases, fields, method parameters and method results without generating a
+separate managed wrapper for every record. It supplies C++ descriptors and checked
+value operations. An engine remains responsible for object identity, threading,
+ownership, authorization of internal operations and its native transport.
+
+## Separate runtime and authoring schemas
+
+Use the header generator's `public_methods` directive to add public instance
+methods to an existing reflected type. Existing field selection and authoring
+serialization stay unchanged. Public overloads receive exact member-pointer casts;
+`ignore` continues to remove a member.
+
+```cpp
+class [[reflgen::reflect, reflgen::public_methods]] LightComponent
+{
+public:
+    float intensity = 1.0f;
+    void SetIntensity(float value);
+    void SetIntensity(float value, bool notify);
+    [[reflgen::script_internal]] void OnAddedToScene();
+};
+```
+
+Use `runtime` for a previously unreflected value type whose members scripts need
+to inspect. It selects public data and public instance methods and emits a
+`runtime_schema<T>` specialization. The type does not become `reflectable<T>` or
+gain an authoring serializer as a side effect.
+
+```cpp
+struct [[reflgen::runtime]] TerrainLayer
+{
+    std::string name;
+    float tiling = 1.0f;
+};
+
+static_assert(reflgen::runtime_reflectable<TerrainLayer>);
+static_assert(!reflgen::reflectable<TerrainLayer>);
+```
+
+`runtime("qualified.name")` sets the public schema name. `public_fields` is an
+explicit public-field filter for an existing reflected declaration; use it only
+when changing that declaration's field selection is intended. Runtime-only types
+already use that filter. The header and IFC generators support these directives;
+they are not an automatic transitive discovery policy or a claim of standard
+reflection backend parity.
+
+Handwritten adapters can specialize `runtime_schema<T>` with a normal
+`schema<T>(...)`. `runtime_schema_of<T>` chooses that schema if present and
+otherwise uses the existing authoring schema. The two schemas are independent,
+so an explicit runtime schema should list all fields intended for runtime use.
+
+Runtime-only public reference data members use
+`accessor_field<Owner, Getter>.named("member")`; the generated getter returns the
+original lvalue. This preserves reference identity without creating an invalid
+C++ pointer to a reference data member. Whole-record replacement is disabled for
+such records because copying them would retain aliases into the original object.
+
+## Descriptors and live views
+
+```cpp
+const auto& type = reflgen::type_descriptor_of<Component>();
+auto root = type.value().view(&component);
+auto gain = root.select_member("settings").select_member("gain");
+
+std::string text;
+reflgen::json::writer output(text);
+gain.serialize(output);
+
+// Validate the entire bounded document before allowing a native write.
+const std::string input_text = "0.75";
+reflgen::json::reader validation(input_text);
+validation.skip_value();
+validation.finish();
+reflgen::json::reader input(input_text);
+gain.deserialize(input);
+input.finish();
+```
+
+`value_descriptor` reports shape, child types, shape completeness, serialization
+and assignment capabilities, and unsupported reasons. `value_type_closure(roots)` walks the type
+graph with cycle detection and deterministic ordering. It keeps unsupported
+types visible, so a consumer can distinguish an opaque type from an omitted one.
+Use type IDs and declaring-type IDs for identity; a schema's public name can
+deliberately differ from its canonical C++ spelling.
+
+Views support record members, sequence/tuple indices, map keys and values, optional
+and variant contents, and explicitly supported pointer-like targets. C++23
+`expected<T,E>` exposes its active value or error. Read-only state propagates to
+children. Map keys and proxy elements such as `vector<bool>` are read-only views.
+For maps, `select_index(i)` selects the mapped value and `select_key(i)` selects
+its key. An optional, variant, or expected exposes its active object at index zero;
+an empty optional and successful `expected<void,E>` have no child storage.
+Expected snapshots use `{"value": ...}` or `{"error": ...}`, with null for void
+success, matching the existing optional `serial/expected.h` wire format.
+
+A view is a native-operation-scoped borrow. Re-resolve an engine handle and its
+entire member path before each request. Do not retain a data address over object
+removal, vector growth, scene changes or a managed reload.
+
+Custom `runtime_value_traits<T>` describe engine strings, containers and ownership
+types. A pointer adapter must explicitly provide `get`, its child type, and
+`mutable_borrow` consent. Persistent assignment and pointer-like method arguments
+are refused unless their traits explicitly permit a safe representation. Custom
+container `size`, `at` and `key` hooks support containers without STL aliases.
+`size(const T&)` returns the element count; `at(const T&, size_t)` returns a native
+const element reference, and an optional mutable overload permits child writes.
+Map `key(const T&, size_t)` returns a native key reference that is always exposed
+read-only. Declare their recursive types in `children = type_list<...>`: one type
+for a sequence, or key and mapped types for a map. These navigation hooks alone
+do not authorize container reconstruction. The default map snapshot for this
+adapter is an array of `[key, value]` pairs.
+
+Traits may provide `write(writer&, const T&)` and `read(reader&, T&)` to override
+runtime serialization without replacing authoring serializers. A custom writer
+takes precedence over the default snapshot format. Set `assignment_safe = true`
+only when copying the value creates independent mutable state and committing with
+a nonthrowing swap is safe. Pointer and owning wrappers normally keep it false.
+Traits must be visible in every canonical registration translation unit; differing
+trait visibility would create inconsistent inline descriptors.
+
+For an engine whose authoring serializers execute lifecycle or asset hooks,
+`runtime_value_traits<T>::prefer_record_fields = true` selects direct runtime
+record traversal and recursive capability checks. It bypasses those authoring
+serializers only in runtime value operations. The original `serialize`/YAML path
+is unchanged. Pointer or owner wrappers whose authoring serializers also run
+hooks should disable whole-wrapper runtime serialization and expose their checked
+borrowed target instead.
+
+## Method invocation and retained results
+
+`method_info::invoke_serialized` reads and validates the complete argument array
+before calling native code once. It returns a record containing `result` and the
+post-call `arguments`, including mutable reference outputs. String views and
+explicitly permitted C strings receive temporary owned backing for that call.
+`std::span` arguments use invocation-local vector backing; fixed extents are
+checked before calling native code and mutable elements are copied back into the
+returned argument array. Boolean and volatile span elements are unsupported.
+Assigning an entire persistent range view is disabled because copying the view
+would still alias the original storage; select a writable element instead.
+Pointers to arbitrary caller-selected addresses are never reconstructed from JSON.
+
+The reader interface validates values as they are consumed; it cannot guarantee
+that a caller's stream has no trailing document. Validate the entire bounded JSON
+input, including `reader.finish()`, before invoking or assigning to native storage.
+Calling `finish()` only after assignment or invocation is too late to prevent
+side effects from a valid value followed by malformed trailing input. After the
+native call begins, exceptions do not roll back arbitrary native side effects;
+the transport must not retry a call automatically to obtain its response.
+
+`script_internal` keeps a method in metadata while refusing erased calls,
+serialized calls and result borrowing. Engine lifecycle, identity replacement,
+ownership transfer and serialization callbacks are typical uses. It does not
+affect ordinary C++ calls or authoring serialization.
+
+`can_borrow_result()` identifies no-argument getters whose result can be inspected
+as a view. Lvalue-reference returns preserve the referent. Movable value returns
+are retained in an owned, read-only snapshot. An owner wrapper can explicitly opt
+into `retained_borrow` so its pointee remains navigable and mutable according to
+the pointee's constness. A detached record return is never presented as a writable
+alias of the engine's original record.
+
+When chaining a getter after an owned result, retain the parent view with
+`value_view::retain_parent` as well as the returned storage. A reference into a
+snapshot must not outlive its backing object during the request. Ordinary member,
+index and dereference navigation propagates that storage automatically.
+
+```cpp
+auto next = getter.borrow_result(current.data()); // const getter on a readonly view
+next.retain_parent(current);
+current = std::move(next);
+```
+
+The legacy runtime method list still requires an lvalue-invocable member
+signature. Volatile, rvalue-qualified (`&&`), and C-varargs methods remain outside
+that list. A source inventory must account for those exclusions when a consumer
+claims to expose every public native API. Within the list, unsupported serialized
+arguments/results and `script_internal` methods remain visible with capability
+flags and a reason.
+
+Writes stage a separate value before committing with a nonthrowing swap. Records
+with read-only children, reference fields or unsafe pointer-bearing graphs refuse
+whole-value replacement; select a writable child instead. The engine must still
+perform its property-change notifications and revalidate object liveness after
+native calls.
+
+## CreatorEngine integration
+
+CreatorEngine appends Execute/Read/Release entries to its injected native table.
+Execute reserves a bounded response ticket before a potentially mutating call;
+Read only copies that response, so buffer sizing cannot execute a method twice.
+The F# layer builds paths and consumes copied JSON metadata. There is no C# runtime
+binding assembly between F# and this native service.
+
+This general reflection path allocates and serializes values. Existing typed
+native-table calls remain useful for per-frame hot paths. Complete Editor/Player
+behavior, object lifetime and notification correctness need engine integration
+tests in addition to this library's generated-code and runtime-value tests.

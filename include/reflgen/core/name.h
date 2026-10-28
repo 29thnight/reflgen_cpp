@@ -104,6 +104,7 @@ namespace reflgen
         //   - MSVC 가 붙이는 class/struct/enum/union 키워드 (템플릿 인자 안쪽까지)
         //   - 쉼표 뒤·"> >" 사이 공백 — 두 식별자 사이(`unsigned int`)의 공백만 뜻이 있다
         //   - MSVC 의 `__int64` 는 `long long` 으로
+        //   - GCC 의 `long long int`, `long long unsigned int` 는 같은 표준 철자로
         // 기본 템플릿 인자(MSVC 는 std::allocator 를 적고 Clang 은 생략한다)까지는 맞추지
         // 않는다. 파일에 남는 다형 태그는 .named() 로 이름을 못 박는 것이 정답이다.
         //
@@ -147,6 +148,24 @@ namespace reflgen
                     }
 
                     const std::string_view rest = raw.substr(i);
+                    constexpr std::string_view integer_spellings[][2] = {
+                        {"long long unsigned int", "unsigned long long"},
+                        {"unsigned long long int", "unsigned long long"},
+                        {"long long int", "long long"}};
+                    bool replaced = false;
+                    for (const auto& spelling : integer_spellings)
+                    {
+                        if (rest.starts_with(spelling[0]) &&
+                            (rest.size() == spelling[0].size() || !is_identifier_char(rest[spelling[0].size()])))
+                        {
+                            if (is_identifier_char(last)) emit(' ');
+                            for (const char c : spelling[1]) emit(c);
+                            i += spelling[0].size();
+                            replaced = true;
+                            break;
+                        }
+                    }
+                    if (replaced) continue;
                     if (rest.starts_with(msvc_int64) &&
                         (rest.size() == msvc_int64.size() || !is_identifier_char(rest[msvc_int64.size()])))
                     {

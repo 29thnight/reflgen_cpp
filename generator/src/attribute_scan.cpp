@@ -218,7 +218,7 @@ namespace reflgen::generator
 
     bool declares_reflection(std::string_view text)
     {
-        return declares_attribute(text, "reflect");
+        return declares_attribute(text, "reflect") || declares_attribute(text, "runtime");
     }
 
     bool declares_interop(std::string_view text)
