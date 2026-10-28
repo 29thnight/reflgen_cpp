@@ -20,7 +20,10 @@ namespace runtime_scaling
 
         static consteval auto reflect()
         {
-            return []<std::size_t... I>(std::index_sequence<I...>) {
+            // Keep schema construction inside the same immediate-function context as
+            // generated describers. MSVC 14.51 otherwise materializes the consteval
+            // call's recursively stored std::tuple inside a non-immediate lambda.
+            return []<std::size_t... I>(std::index_sequence<I...>) consteval {
                 return reflgen::schema<method_surface>(reflgen::base<Base>,
                     reflgen::method<&method_surface::template sample<I>>.named("sample")
                         .parameters("amount").with(source_slot{Start + I})...);
