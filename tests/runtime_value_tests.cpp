@@ -843,15 +843,15 @@ namespace
         check_equal(text(created.arguments[0]), std::string(R"("new state")"));
 
         auto* pointer = object.owned.get();
-        std::array<reflgen::value_view, 2> arguments{
+        std::array<reflgen::value_view, 2> native_bindings{
             reflgen::value_descriptor_of<decltype(pointer)>().view(&pointer), {}};
-        auto updated = invoke_bound(*type.find_method("update"), receiver, "[null,47]", arguments);
+        auto updated = invoke_bound(*type.find_method("update"), receiver, "[null,47]", native_bindings);
         check(!updated.result);
         check(!updated.arguments[0]);
         check_equal(text(updated.arguments[1]), std::string("47"));
         check_equal(object.owned->number, 47);
-        arguments[0] = reflgen::value_descriptor_of<runtime_values::script_only>().view(object.owned.get());
-        auto removed = invoke_bound(*type.find_method("remove"), receiver, "[null]", std::span(arguments).first(1));
+        native_bindings[0] = reflgen::value_descriptor_of<runtime_values::script_only>().view(object.owned.get());
+        auto removed = invoke_bound(*type.find_method("remove"), receiver, "[null]", std::span(native_bindings).first(1));
         check(!removed.result);
         require(removed.arguments.size() == 1);
         check(!removed.arguments[0]); // The native object was destroyed; no post-call traversal occurs.
@@ -864,14 +864,14 @@ namespace
         const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
         const auto receiver = type.value().view(static_cast<const runtime_values::bound_methods*>(&object));
         const runtime_values::script_only* missing = nullptr;
-        std::array<reflgen::value_view, 1> arguments{reflgen::value_descriptor_of<decltype(missing)>().view(&missing)};
-        auto absent = invoke_bound(*type.find_method("inspect"), receiver, "[null]", arguments);
+        std::array<reflgen::value_view, 1> native_bindings{reflgen::value_descriptor_of<decltype(missing)>().view(&missing)};
+        auto absent = invoke_bound(*type.find_method("inspect"), receiver, "[null]", native_bindings);
         check_equal(text(absent.result), std::string("-1"));
         const runtime_values::script_only value{31, "constant"};
-        arguments[0] = reflgen::value_descriptor_of<runtime_values::script_only>().view(&value);
-        auto present = invoke_bound(*type.find_method("inspect"), receiver, "[null]", arguments);
+        native_bindings[0] = reflgen::value_descriptor_of<runtime_values::script_only>().view(&value);
+        auto present = invoke_bound(*type.find_method("inspect"), receiver, "[null]", native_bindings);
         check_equal(text(present.result), std::string("31"));
-        auto copied = invoke_bound(*type.find_method("copy"), receiver, "[null]", arguments);
+        auto copied = invoke_bound(*type.find_method("copy"), receiver, "[null]", native_bindings);
         check_equal(text(copied.result.select_member("number")), std::string("31"));
         check(!copied.result.is_writable());
         check_equal(object.calls, 3);
@@ -884,7 +884,7 @@ namespace
         const auto& update = *type.find_method("update");
         runtime_values::script_only value;
         const auto writable = reflgen::value_descriptor_of<runtime_values::script_only>().view(&value);
-        const auto readonly = reflgen::value_descriptor_of<runtime_values::script_only>().view(
+        const auto readonly_value = reflgen::value_descriptor_of<runtime_values::script_only>().view(
             static_cast<const runtime_values::script_only*>(&value));
         std::array<reflgen::value_view, 2> bindings{writable, {}};
         for (const auto input : {"[]", "[null]", "[null,7,8]", "[null,{}]", "[42,7]", "[null,7] trailing"})
@@ -893,7 +893,7 @@ namespace
         check_throws<std::invalid_argument>([&] {
             invoke_bound(update, receiver, "[null,7]", std::span(bindings).first(1));
         }, "arity");
-        bindings[0] = readonly;
+        bindings[0] = readonly_value;
         check_throws<std::invalid_argument>([&] { invoke_bound(update, receiver, "[null,7]", bindings); }, "readonly");
         check_throws<std::invalid_argument>([&] {
             invoke_bound(*type.find_method("update_reference"), receiver, "[null,7]", bindings);
