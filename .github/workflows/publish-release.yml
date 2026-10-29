@@ -1,0 +1,81 @@
+name: Publish verified release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful ci run containing the verified reflgen-release artifact
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: reflgen-publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select an exact successful main-branch verification run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > run.json
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          run = json.loads(Path('run.json').read_text())
+          assert run['path'] == '.github/workflows/ci.yml', 'Expected the complete CI workflow'
+          assert run['event'] == 'push' and run['head_branch'] == 'main', 'Expected a main-branch push'
+          assert run['status'] == 'completed' and run['conclusion'] == 'success', 'CI must succeed'
+          assert run['head_repository']['full_name'] == os.environ['GITHUB_REPOSITORY'], 'Unexpected source repository'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('commit=' + run['head_sha'] + '\n')
+              output.write('run_url=' + run['html_url'] + '\n')
+          PY
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.source.outputs.commit }}
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id }}
+          name: reflgen-release
+          path: release
+      - name: Verify unchanged artifacts and publish their exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+          SOURCE_RUN: ${{ steps.source.outputs.run_url }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          manifest = json.loads(Path('release/provenance.json').read_text())
+          assert manifest['commit'] == os.environ['SOURCE_COMMIT']
+          assert manifest['run_url'] == os.environ['SOURCE_RUN']
+          for name, expected in manifest['sha256'].items():
+              assert Path(name).name == name
+              assert hashlib.sha256((Path('release') / name).read_bytes()).hexdigest() == expected
+          PY
+          python3 scripts/prepare-release.py --artifacts release --source . --commit "$SOURCE_COMMIT" --run-url "$SOURCE_RUN"
+          tag=$(python3 -c 'import json; print(json.load(open("release/provenance.json"))["tag"])')
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to replace published artifacts." >&2
+            exit 1
+          fi
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$SOURCE_COMMIT" \
+            --title "reflgen ${tag#v}: Native value graph and bound method calls" \
+            --notes-file release/RELEASE_NOTES.md \
+            "release/reflgen-${tag#v}-windows-x64.zip" "release/reflgen.${tag#v}.nupkg" \
+            release/Reflgen.VisualStudio.vsix release/SHA256SUMS.txt release/provenance.json
+          # A GITHUB_TOKEN-created release does not trigger another release event.
+          # workflow_dispatch is explicit and uses the established OIDC publisher.
+          gh workflow run publish-nuget.yml --repo "$GITHUB_REPOSITORY" --ref main -f "tag=$tag"

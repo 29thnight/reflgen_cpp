@@ -89,6 +89,12 @@ namespace reflgen
     {
     };
 
+    // Invoke explicitly once; never replay this operation while resolving a getter path.
+    // Useful for zero-argument take/consume methods whose return type resembles a getter.
+    struct script_once
+    {
+    };
+
     // 런타임 속성 한 항목 — 타입 식별자와 정본 값의 주소. 값은 schema_of<T> 안(정적
     // 저장소)에 있으므로 주소는 프로그램 수명 동안 유효하다.
     class attribute_ref

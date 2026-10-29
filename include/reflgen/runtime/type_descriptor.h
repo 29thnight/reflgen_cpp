@@ -200,6 +200,22 @@ namespace reflgen
             if (!serialized_) throw std::invalid_argument(std::string(serialized_reason_));
             serialized_(object, arguments, response);
         }
+        bool is_bound_invocable() const noexcept { return bound_ != nullptr; }
+        std::string_view bound_unavailable_reason() const noexcept { return bound_reason_; }
+        // Mix serialized values with caller-resolved native views. A native binding occupies
+        // a null placeholder in the argument array; the binding list is empty or has exact arity.
+        // Validate the entire input document before this call. Results are request-local and
+        // may be invalidated by native mutations; owning the receiver does not prevent that.
+        method_call_result invoke_bound(const value_view& object, reader& arguments,
+                                        std::span<const value_view> native_arguments = {}) const
+        {
+            if (!bound_) throw std::invalid_argument(std::string(bound_reason_));
+            if (!object) throw std::invalid_argument("cannot invoke a method on an empty runtime view");
+            if (!is_const_ && !object.is_writable()) throw std::invalid_argument("method receiver is readonly");
+            if (!native_arguments.empty() && native_arguments.size() != parameters_.size())
+                throw std::invalid_argument("native method binding array has the wrong arity");
+            return bound_(object, arguments, native_arguments);
+        }
         // The caller owns the root lifetime and resolves the method again for each path operation.
         // No-argument getters preserve existing reference/retained-wrapper access capabilities.
         // Argument-bearing lookups require a const method and produce readonly views, since the
@@ -256,6 +272,7 @@ namespace reflgen
         using serialized_function = void (*)(void*, reader&, writer&);
         using borrow_function = value_view (*)(void*, bool);
         using borrow_arguments_function = value_view (*)(void*, bool, reader&);
+        using bound_function = method_call_result (*)(const value_view&, reader&, std::span<const value_view>);
 
         constexpr method_info(std::string_view name, std::string_view declaring_type_name, type_id declaring_type,
                               std::span<const parameter_info> parameters, type_id return_type,
@@ -263,12 +280,13 @@ namespace reflgen
                               invoke_function invoke, value_child_info::getter result, parameter_passing return_passing,
                               serialized_function serialized, std::string_view serialized_reason,
                               borrow_function borrow, borrow_arguments_function borrow_arguments,
-                              std::string_view borrow_reason) noexcept
+                              std::string_view borrow_reason, bound_function bound,
+                              std::string_view bound_reason) noexcept
             : name_(name), declaring_type_name_(declaring_type_name), declaring_type_(declaring_type), parameters_(parameters),
               return_type_(return_type), return_type_name_(return_type_name), is_const_(is_const),
               attributes_(attributes), invoke_(invoke), result_(result), return_passing_(return_passing),
               serialized_(serialized), serialized_reason_(serialized_reason), borrow_(borrow),
-              borrow_arguments_(borrow_arguments), borrow_reason_(borrow_reason)
+              borrow_arguments_(borrow_arguments), borrow_reason_(borrow_reason), bound_(bound), bound_reason_(bound_reason)
         {
         }
 
@@ -288,6 +306,8 @@ namespace reflgen
         borrow_function borrow_;
         borrow_arguments_function borrow_arguments_;
         std::string_view borrow_reason_;
+        bound_function bound_;
+        std::string_view bound_reason_;
     };
 
     class type_descriptor
@@ -848,6 +868,11 @@ namespace reflgen
         consteval std::string_view borrow_method_reason();
         template<class T, auto Function>
         value_view borrow_method_result_with_arguments(void* object, bool writable, reader& arguments);
+        template<class T, auto Function>
+        consteval std::string_view bound_method_reason();
+        template<class T, auto Function>
+        method_call_result invoke_bound_method(const value_view& object, reader& arguments,
+                                               std::span<const value_view> native_arguments);
 
         template<class T, std::size_t I>
         constexpr method_info make_method_info() noexcept
@@ -865,6 +890,8 @@ namespace reflgen
             if constexpr (reason.empty()) serialized = &invoke_serialized_method<T, descriptor_type::pointer>;
             constexpr auto borrow_reason = [] {
                 if constexpr (internal) return std::string_view("method is marked reflgen::script_internal");
+                else if constexpr (descriptor_type::template has_attribute<script_once>())
+                    return std::string_view("method is marked reflgen::script_once and requires explicit invocation");
                 else return borrow_method_reason<T, descriptor_type::pointer>();
             }();
             value_view (*borrow_result_thunk)(void*, bool) = nullptr;
@@ -875,6 +902,12 @@ namespace reflgen
                 if constexpr (type_list_size<typename signature::arguments> == 0)
                     borrow_result_thunk = &borrow_method_result<T, descriptor_type::pointer>;
             }
+            constexpr auto bound_reason = [] {
+                if constexpr (internal) return std::string_view("method is marked reflgen::script_internal");
+                else return bound_method_reason<T, descriptor_type::pointer>();
+            }();
+            method_call_result (*bound)(const value_view&, reader&, std::span<const value_view>) = nullptr;
+            if constexpr (bound_reason.empty()) bound = &invoke_bound_method<T, descriptor_type::pointer>;
             constexpr auto passing = std::is_rvalue_reference_v<typename signature::result> ? parameter_passing::rvalue_reference :
                 std::is_lvalue_reference_v<typename signature::result> ?
                     (std::is_const_v<std::remove_reference_t<typename signature::result>> ?
@@ -886,7 +919,7 @@ namespace reflgen
                                            attribute_list(runtime_method_attributes<T, I>),
                                            &invoke_method<T, descriptor_type::pointer>, &value_descriptor_of<result>,
                                            passing, serialized, reason, borrow_result_thunk,
-                                           borrow_arguments_thunk, borrow_reason);
+                                           borrow_arguments_thunk, borrow_reason, bound, bound_reason);
         }
 
         // 런타임 표에 드는 메서드의 서술 순번 — 인자 칸으로 부를 수 없는 것(runtime_invocable)을 뺀다.

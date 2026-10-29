@@ -155,6 +155,12 @@ serialized calls and result borrowing. Engine lifecycle, identity replacement,
 ownership transfer and serialization callbacks are typical uses. It does not
 affect ordinary C++ calls or authoring serialization.
 
+`script_once` keeps explicit invocation available but disables both getter-borrow
+capabilities. Annotate destructive zero-argument operations such as
+`TakePreparedTextureImagePins()` with it: their pointer/owner return type must not
+make them replayable during later path reads. Serialized and bound invocation
+still execute the operation once and return its retained response.
+
 `can_borrow_result()` identifies getters whose result can be inspected as a view.
 For no-argument getters, lvalue-reference returns preserve the referent. Movable
 value returns are retained in an owned, read-only snapshot. An owner wrapper can
@@ -192,6 +198,76 @@ next.retain_parent(current);
 current = std::move(next);
 ```
 
+### Calls with resolved native arguments
+
+`method_info::invoke_bound(receiver, arguments, native_arguments)` supports a
+single synchronous native call with a mixture of serialized values and resolved
+native views. Check `is_bound_invocable()` and `bound_unavailable_reason()`;
+this capability is independent of serialized invocation and getter borrowing.
+For example, a mutating `AddState(name)` can return a native pointer even though
+it is neither a serialized-value call nor a const getter.
+
+The receiver is a `value_view` of the exact type whose method table supplied the
+descriptor. A non-const method requires a writable receiver. The optional native
+binding span is either empty or has one entry per parameter. An empty entry
+deserializes its JSON argument using the existing safe value rules. A valid entry
+occupies an explicit JSON `null` placeholder and supplies a trusted native view
+that the engine resolved from its own generation-checked handle and member path.
+The library never interprets a number as an address, ignores no conflicting
+serialized input, and performs no implicit numeric or derived-to-base conversion.
+
+```cpp
+// Engine-resolved state identity, not an address supplied by a script.
+std::array native_arguments{state_view};
+reflgen::json::reader arguments("[null]");
+auto call = remove_state.invoke_bound(component_view, arguments, native_arguments);
+arguments.finish(); // The transport must also validate the full input before the call.
+```
+
+A native `T&`/`const T&` argument requires an exact `T` view; mutable references
+require writable storage. Copyable values can be copied from exact native views
+without moving from the original object. A `T*`/`const T*` parameter accepts an
+exact pointee view, or a pointer/owner view whose adapter declares exactly that
+pointee type. Non-null targets are resolved through the explicit dereference
+adapter and `T*` requires a writable target. Empty adapted owners preserve a typed
+null; an exact typed null pointer view is accepted even without an adapter.
+Unrelated or derived pointee types are not implicitly converted. An unbound JSON `null` does
+not fabricate a native pointer. Void pointers, callbacks, pointer-to-pointer
+arguments, pointer-slot references, volatile arguments, consuming rvalue references
+and noncopyable value arguments remain unavailable. Ownership transfer needs an
+explicit engine operation with its own lifetime policy.
+
+A readonly native owner, mutable-element span, or record containing unsafe
+indirection cannot be copied or passed by const reference to recover writable
+aliases. Those graphs require a writable binding even when the C++ parameter's
+top-level type is const. Plain independently safe values and const-element spans
+retain their normal readonly input support. This check also applies to readonly
+records passed through a const object pointer.
+
+The complete argument array, its arity, the receiver type, and every native
+binding's type and constness are validated before the native method executes.
+The transport must still validate the entire bounded document before calling,
+including trailing input. Exceptions after native execution begins do not roll
+back effects and must not cause an automatic retry.
+
+The returned `method_call_result` contains `result` and `arguments`. A void result
+is an empty view. Independently materialized arguments expose retained, read-only
+post-call views, including mutable-reference outputs. Externally bound native
+argument entries are deliberately empty: a method such as `RemoveState` may have
+destroyed them, so constructing a response must not traverse those addresses.
+Returned results retain receiver ownership, native argument ownership and
+temporary string/span backing. Results with arguments are read-only, even when
+the method is mutating or returns a mutable pointer; their target may alias
+temporary input storage. No-argument results preserve the existing getter rules.
+
+These views are scoped to the native request. Retaining a receiver or its backing
+storage does not stop a method from deleting a child, reallocating a container,
+or logically destroying an engine entity. The caller must preserve the native
+API's aliasing and lifetime preconditions, reject destructive alias combinations,
+and revalidate owner liveness after mutations. Do not persist a returned raw
+pointer as a script handle. A persistent result requires an explicit engine
+adapter that supplies independently validated object identity and lifetime.
+
 The legacy runtime method list still requires an lvalue-invocable member
 signature. Volatile, rvalue-qualified (`&&`), and C-varargs methods remain outside
 that list. A source inventory must account for those exclusions when a consumer
@@ -212,6 +288,14 @@ Execute reserves a bounded response ticket before a potentially mutating call;
 Read only copies that response, so buffer sizing cannot execute a method twice.
 The F# layer builds paths and consumes copied JSON metadata. There is no C# runtime
 binding assembly between F# and this native service.
+
+CreatorEngine's native argument paths permit fields, container indices/keys and
+dereferences. Getter segments are rejected before resolving any binding: even a
+const C++ getter can invalidate an earlier argument's nested storage. The core
+`invoke_bound` API can accept independently retained native views, but the engine
+wire protocol deliberately does not infer such lifetime guarantees from a getter.
+Mutating native return values are copied once within the Execute request and
+arrive in F# as detached snapshots; persistent identity requires an engine adapter.
 
 This general reflection path allocates and serializes values. Existing typed
 native-table calls remain useful for per-frame hot paths. Complete Editor/Player

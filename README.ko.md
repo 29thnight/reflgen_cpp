@@ -7,6 +7,10 @@
 백엔드 선택·혼합 프로젝트·버전 분기: [백엔드 가이드](docs/reflection-backends.md).
 컴파일러·런타임·실제 VS 검증: [검증 기록](docs/verification-2026-10-17.md).
 
+**1.3.0**에 재귀 네이티브 값 탐색, 검증된 네이티브 인자 바인딩, 요청 수명의 반환값,
+일회성 메서드 정책을 추가했다. [1.3.0 릴리스 노트](docs/releases/1.3.0.md)와
+[런타임 값 계약](docs/runtime-value-bindings.md)을 참고한다.
+
 **1.2.0**에 네이티브 함수 포인터 표를 직접 소비하는 F# 바인딩을 추가했다. 값 형식 자동 생성,
 버전·배치·함수 서명 검사, 캐시된 typed delegate와 명시적 콜백 수명 관리를 제공한다.
 기존 개발 브랜치의 F# P/Invoke·PrSM production binding과 IFC 엔진 리플렉션 확장도 함께 포함한다.

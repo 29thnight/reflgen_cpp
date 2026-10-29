@@ -108,6 +108,15 @@ namespace reflgen
         std::shared_ptr<const void> storage_;
     };
 
+    // One synchronous native call. A missing result represents void; missing argument
+    // views represent externally bound arguments, which the call may have invalidated.
+    // Views retain temporary storage, but do not extend an engine object's logical lifetime.
+    struct method_call_result
+    {
+        value_view result;
+        std::vector<value_view> arguments;
+    };
+
     class value_descriptor
     {
       public:

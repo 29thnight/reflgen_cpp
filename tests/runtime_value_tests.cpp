@@ -130,6 +130,59 @@ namespace runtime_values
                 reflgen::method<&lookup_methods::internal>.with(reflgen::script_internal{}));
         }
     };
+    struct bound_methods
+    {
+        mutable int calls = 0;
+        std::unique_ptr<script_only> owned;
+        std::shared_ptr<leaf> shared;
+        script_only* add(const std::string& name)
+        { ++calls; owned = std::make_unique<script_only>(script_only{13, name}); return owned.get(); }
+        void remove(script_only* value)
+        { ++calls; if (owned.get() == value) owned.reset(); }
+        int inspect(const script_only* value) const { ++calls; return value ? value->number : -1; }
+        int inspect_leaf(const leaf* value) const { ++calls; return value ? value->number : -1; }
+        void update_leaf(leaf* value) { ++calls; if (value) ++value->number; }
+        void update(script_only* value, int number) { ++calls; value->number = number; }
+        script_only& update_reference(script_only& value, int number)
+        { ++calls; value.number = number; return value; }
+        const script_only& identity(const script_only& value) const { ++calls; return value; }
+        script_only copy(script_only value) const { ++calls; return value; }
+        std::string_view echo(std::string_view value) { ++calls; return value; }
+        borrowing_destructor echo_destructor(std::string_view value)
+        { ++calls; return borrowing_destructor(value); }
+        void bind_owner(std::shared_ptr<leaf> value) { ++calls; shared = std::move(value); }
+        std::shared_ptr<leaf> take_owner() { ++calls; return std::exchange(shared, {}); }
+        void update_span(std::span<int> value) { ++calls; if (!value.empty()) ++value.front(); }
+        void consume(std::unique_ptr<script_only>) { ++calls; }
+        void moved(script_only&&) { ++calls; }
+        void address(void*) { ++calls; }
+        void callback(void (*)()) { ++calls; }
+        void function(std::function<void()>) { ++calls; }
+        void pointer_slot(script_only*&) { ++calls; }
+        void internal(script_only*) { ++calls; }
+        static consteval auto reflect()
+        {
+            return reflgen::schema<bound_methods>(
+                reflgen::method<&bound_methods::add>, reflgen::method<&bound_methods::remove>,
+                reflgen::method<&bound_methods::inspect>, reflgen::method<&bound_methods::update>,
+                reflgen::method<&bound_methods::inspect_leaf>, reflgen::method<&bound_methods::update_leaf>,
+                reflgen::method<&bound_methods::update_reference>, reflgen::method<&bound_methods::identity>,
+                reflgen::method<&bound_methods::copy>, reflgen::method<&bound_methods::echo>,
+                reflgen::method<&bound_methods::echo_destructor>,
+                reflgen::method<&bound_methods::bind_owner>, reflgen::method<&bound_methods::update_span>,
+                reflgen::method<&bound_methods::take_owner>.with(reflgen::script_once{}),
+                reflgen::method<&bound_methods::consume>, reflgen::method<&bound_methods::moved>,
+                reflgen::method<&bound_methods::address>, reflgen::method<&bound_methods::callback>,
+                reflgen::method<&bound_methods::function>, reflgen::method<&bound_methods::pointer_slot>,
+                reflgen::method<&bound_methods::internal>.with(reflgen::script_internal{}));
+        }
+    };
+    struct bound_prefix { std::uint64_t padding = 0; };
+    struct bound_derived : bound_prefix, bound_methods
+    {
+        static consteval auto reflect()
+        { return reflgen::schema<bound_derived>(reflgen::base<bound_methods>); }
+    };
     struct root
     {
         leaf profile;
@@ -328,6 +381,18 @@ namespace
         auto view = method.borrow_result(object, input);
         input.finish();
         return view;
+    }
+    reflgen::method_call_result invoke_bound(const reflgen::method_info& method, const reflgen::value_view& object,
+                                             std::string_view arguments, std::span<const reflgen::value_view> bindings = {})
+    {
+        // A transport validates the entire document, including trailing input, before invoking.
+        reflgen::json::reader validation(arguments);
+        validation.skip_value();
+        validation.finish();
+        reflgen::json::reader input(arguments);
+        auto result = method.invoke_bound(object, input, bindings);
+        input.finish();
+        return result;
     }
 
     const test navigation("runtime values: records, sequences, maps and optional values preserve native identity", [] {
@@ -760,6 +825,248 @@ namespace
         check(object.value.index() == 4);
         assign(value, R"({"value":[0,null]})");
         check(std::holds_alternative<std::monostate>(object.value));
+    });
+
+    const test bound_pointer_calls("runtime values: bound invocation returns mutation results and resolves typed native pointers", [] {
+        runtime_values::bound_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        const auto receiver = type.value().view(&object);
+        const auto& add = *type.find_method("add");
+        require(add.is_bound_invocable());
+        check(!add.can_borrow_result());
+        auto created = invoke_bound(add, receiver, R"(["new state"])");
+        require(static_cast<bool>(created.result));
+        auto target = created.result.dereference();
+        check(target.data() == object.owned.get());
+        check(!target.is_writable());
+        check_equal(text(target.select_member("name")), std::string(R"("new state")"));
+        check_equal(text(created.arguments[0]), std::string(R"("new state")"));
+
+        auto* pointer = object.owned.get();
+        std::array<reflgen::value_view, 2> arguments{
+            reflgen::value_descriptor_of<decltype(pointer)>().view(&pointer), {}};
+        auto updated = invoke_bound(*type.find_method("update"), receiver, "[null,47]", arguments);
+        check(!updated.result);
+        check(!updated.arguments[0]);
+        check_equal(text(updated.arguments[1]), std::string("47"));
+        check_equal(object.owned->number, 47);
+        arguments[0] = reflgen::value_descriptor_of<runtime_values::script_only>().view(object.owned.get());
+        auto removed = invoke_bound(*type.find_method("remove"), receiver, "[null]", std::span(arguments).first(1));
+        check(!removed.result);
+        require(removed.arguments.size() == 1);
+        check(!removed.arguments[0]); // The native object was destroyed; no post-call traversal occurs.
+        check(!object.owned);
+        check_equal(object.calls, 3);
+    });
+
+    const test bound_null_and_const("runtime values: bound pointer arguments preserve exact types and const access", [] {
+        runtime_values::bound_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        const auto receiver = type.value().view(static_cast<const runtime_values::bound_methods*>(&object));
+        const runtime_values::script_only* missing = nullptr;
+        std::array<reflgen::value_view, 1> arguments{reflgen::value_descriptor_of<decltype(missing)>().view(&missing)};
+        auto absent = invoke_bound(*type.find_method("inspect"), receiver, "[null]", arguments);
+        check_equal(text(absent.result), std::string("-1"));
+        const runtime_values::script_only value{31, "constant"};
+        arguments[0] = reflgen::value_descriptor_of<runtime_values::script_only>().view(&value);
+        auto present = invoke_bound(*type.find_method("inspect"), receiver, "[null]", arguments);
+        check_equal(text(present.result), std::string("31"));
+        auto copied = invoke_bound(*type.find_method("copy"), receiver, "[null]", arguments);
+        check_equal(text(copied.result.select_member("number")), std::string("31"));
+        check(!copied.result.is_writable());
+        check_equal(object.calls, 3);
+    });
+
+    const test bound_preflight("runtime values: bound invocation rejects invalid inputs before native effects", [] {
+        runtime_values::bound_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        const auto receiver = type.value().view(&object);
+        const auto& update = *type.find_method("update");
+        runtime_values::script_only value;
+        const auto writable = reflgen::value_descriptor_of<runtime_values::script_only>().view(&value);
+        const auto readonly = reflgen::value_descriptor_of<runtime_values::script_only>().view(
+            static_cast<const runtime_values::script_only*>(&value));
+        std::array<reflgen::value_view, 2> bindings{writable, {}};
+        for (const auto input : {"[]", "[null]", "[null,7,8]", "[null,{}]", "[42,7]", "[null,7] trailing"})
+            check_throws([&] { invoke_bound(update, receiver, input, bindings); });
+        check_throws<std::invalid_argument>([&] { invoke_bound(update, receiver, "[42,7]"); }, "native value binding");
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(update, receiver, "[null,7]", std::span(bindings).first(1));
+        }, "arity");
+        bindings[0] = readonly;
+        check_throws<std::invalid_argument>([&] { invoke_bound(update, receiver, "[null,7]", bindings); }, "readonly");
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(*type.find_method("update_reference"), receiver, "[null,7]", bindings);
+        }, "readonly");
+        runtime_values::leaf wrong;
+        bindings[0] = reflgen::value_descriptor_of<runtime_values::leaf>().view(&wrong);
+        check_throws<std::invalid_argument>([&] { invoke_bound(update, receiver, "[null,7]", bindings); }, "target type");
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(*type.find_method("identity"), receiver, "[null]", std::span(bindings).first(1));
+        }, "value type");
+        runtime_values::leaf* wrong_null_type = nullptr;
+        bindings[0] = reflgen::value_descriptor_of<decltype(wrong_null_type)>().view(&wrong_null_type);
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(*type.find_method("inspect"), receiver, "[null]", std::span(bindings).first(1));
+        }, "target type");
+        const runtime_values::script_only* no_adapter = &value;
+        bindings[0] = reflgen::value_descriptor_of<decltype(no_adapter)>().view(&no_adapter);
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(*type.find_method("inspect"), receiver, "[null]", std::span(bindings).first(1));
+        }, "dereference");
+        bindings[0] = writable;
+        check_throws<std::invalid_argument>([&] { invoke_bound(update, bindings[0], "[null,7]", bindings); }, "receiver");
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(update, type.value().view(static_cast<const runtime_values::bound_methods*>(&object)), "[null,7]", bindings);
+        }, "readonly");
+        for (const auto name : {"consume", "moved", "address", "callback", "function", "pointer_slot", "internal"})
+        {
+            const auto& rejected = *type.find_method(name);
+            check(!rejected.is_bound_invocable());
+            check(!rejected.bound_unavailable_reason().empty());
+            check_throws<std::invalid_argument>([&] { invoke_bound(rejected, receiver, "[null]", std::span(bindings).first(1)); });
+        }
+        check_equal(object.calls, 0);
+        check_equal(value.number, 1);
+    });
+
+    const test bound_inheritance("runtime values: bound inherited calls validate their receiving type and adjust base offsets", [] {
+        runtime_values::bound_derived object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_derived>();
+        const auto& add = *type.find_method("add");
+        auto result = invoke_bound(add, type.value().view(&object), R"(["inherited"])");
+        check_equal(text(result.result.dereference().select_member("name")), std::string(R"("inherited")"));
+        check_equal(object.calls, 1);
+        check_equal(object.padding, std::uint64_t(0));
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(add, reflgen::value_descriptor_of<runtime_values::bound_methods>().view(
+                static_cast<runtime_values::bound_methods*>(&object)), R"(["wrong receiver"])");
+        }, "receiver");
+        check_equal(object.calls, 1);
+    });
+
+    const test bound_readonly_aliases("runtime values: readonly native owners and mutable spans cannot reopen writable aliases", [] {
+        runtime_values::bound_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        const auto receiver = type.value().view(&object);
+        auto owner = std::make_shared<runtime_values::leaf>();
+        const auto& owner_type = reflgen::value_descriptor_of<decltype(owner)>();
+        std::array<reflgen::value_view, 1> bindings{owner_type.view(static_cast<const decltype(owner)*>(&owner))};
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(*type.find_method("bind_owner"), receiver, "[null]", bindings);
+        }, "readonly");
+        check(!object.shared);
+        check_equal(object.calls, 0);
+        bindings[0] = owner_type.view(&owner);
+        invoke_bound(*type.find_method("bind_owner"), receiver, "[null]", bindings);
+        check(object.shared == owner);
+        check_equal(object.calls, 1);
+
+        std::array values{11};
+        std::span<int> span(values);
+        bindings[0] = reflgen::value_descriptor_of<decltype(span)>().view(static_cast<const decltype(span)*>(&span));
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(*type.find_method("update_span"), receiver, "[null]", bindings);
+        }, "readonly");
+        check_equal(values[0], 11);
+        check_equal(object.calls, 1);
+    });
+
+    const test bound_once("runtime values: one-shot methods cannot replay as getters and retain a single invocation result", [] {
+        runtime_values::bound_methods object;
+        object.shared = std::make_shared<runtime_values::leaf>(runtime_values::leaf{83, "taken"});
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        const auto& take = *type.find_method("take_owner");
+        check(take.is_invocable());
+        check(take.is_bound_invocable());
+        check(!take.can_borrow_result());
+        check(!take.can_borrow_result_with_arguments());
+        check(take.borrow_unavailable_reason().find("script_once") != std::string_view::npos);
+        check_throws<std::invalid_argument>([&] { take.borrow_result(&object); });
+        check_equal(object.calls, 0);
+        auto result = invoke_bound(take, type.value().view(&object), "[]");
+        check(!object.shared);
+        check_equal(text(result.result.dereference().select_member("number")), std::string("83"));
+        check_equal(text(result.result.dereference().select_member("text")), std::string(R"("taken")"));
+        check_equal(object.calls, 1);
+    });
+
+    const test bound_pointer_owners("runtime values: exact-pointee owner bindings preserve typed null and readonly targets", [] {
+        runtime_values::bound_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        const auto receiver = type.value().view(&object);
+        auto owner = std::make_shared<runtime_values::leaf>(runtime_values::leaf{41, "owner"});
+        const auto& descriptor = reflgen::value_descriptor_of<decltype(owner)>();
+        std::array<reflgen::value_view, 1> bindings{descriptor.view(&owner)};
+        auto read = invoke_bound(*type.find_method("inspect_leaf"), receiver, "[null]", bindings);
+        check_equal(text(read.result), std::string("41"));
+        invoke_bound(*type.find_method("update_leaf"), receiver, "[null]", bindings);
+        check_equal(owner->number, 42);
+        bindings[0] = descriptor.view(static_cast<const decltype(owner)*>(&owner));
+        read = invoke_bound(*type.find_method("inspect_leaf"), receiver, "[null]", bindings);
+        check_equal(text(read.result), std::string("42"));
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(*type.find_method("update_leaf"), receiver, "[null]", bindings);
+        }, "readonly");
+        check_equal(object.calls, 3);
+        check_throws<std::invalid_argument>([&] {
+            invoke_bound(*type.find_method("inspect"), receiver, "[null]", bindings);
+        }, "target type");
+        owner.reset();
+        read = invoke_bound(*type.find_method("inspect_leaf"), receiver, "[null]", bindings);
+        check_equal(text(read.result), std::string("-1"));
+        check_equal(object.calls, 4);
+    });
+
+    const test bound_reference_outputs("runtime values: bound invocation retains materialized reference outputs", [] {
+        runtime_values::bound_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        auto result = invoke_bound(*type.find_method("update_reference"), type.value().view(&object),
+            R"([{"number":1,"name":"input"},59])");
+        check_equal(text(result.arguments[0].select_member("number")), std::string("59"));
+        auto child = result.result.select_member("number");
+        check(!child.is_writable());
+        result = {};
+        check_equal(text(child), std::string("59"));
+        check_equal(object.calls, 1);
+    });
+
+    const test bound_retention("runtime values: bound results retain receiver and native argument owners", [] {
+        auto object = std::make_shared<runtime_values::bound_methods>();
+        auto argument = std::make_shared<runtime_values::script_only>(runtime_values::script_only{67, "retained"});
+        std::weak_ptr<runtime_values::bound_methods> receiver_lifetime = object;
+        std::weak_ptr<runtime_values::script_only> argument_lifetime = argument;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        reflgen::value_view receiver(type.value(), object.get(), object.get(), object);
+        std::array<reflgen::value_view, 1> bindings{reflgen::value_view(
+            reflgen::value_descriptor_of<runtime_values::script_only>(), argument.get(), nullptr, argument)};
+        auto result = invoke_bound(*type.find_method("identity"), receiver, "[null]", bindings);
+        auto child = result.result.select_member("number");
+        check(!result.arguments[0]);
+        object.reset(); argument.reset(); receiver = {}; bindings = {}; result = {};
+        check(!receiver_lifetime.expired());
+        check(!argument_lifetime.expired());
+        check_equal(text(child), std::string("67"));
+        child = {};
+        check(receiver_lifetime.expired());
+        check(argument_lifetime.expired());
+    });
+
+    const test bound_temporary_results("runtime values: bound mutable calls keep temporary-backed results alive in destruction order", [] {
+        runtime_values::bound_methods object;
+        const auto& type = reflgen::type_descriptor_of<runtime_values::bound_methods>();
+        const auto receiver = type.value().view(&object);
+        const std::string long_text(256, 'b');
+        const auto input = "[\"" + long_text + "\"]";
+        auto call = invoke_bound(*type.find_method("echo"), receiver, input);
+        auto result = call.result;
+        call = {};
+        check_equal(text(result), "\"" + long_text + "\"");
+        auto destructor = invoke_bound(*type.find_method("echo_destructor"), receiver, input);
+        runtime_values::borrowing_destructor::last_character = '\0';
+        destructor = {};
+        check_equal(runtime_values::borrowing_destructor::last_character, 'b');
+        check_equal(object.calls, 2);
     });
 
 #if defined(__cpp_lib_expected)

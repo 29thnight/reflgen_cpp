@@ -7,7 +7,11 @@ Macro-free reflection for C++20, with a serialization library whose formats you 
 Backend selection, mixed projects and version guards: [backend guide](docs/reflection-backends.md).
 Compiler, runtime and live VS validation: [verification record](docs/verification-2026-10-17.md).
 
-Version **1.2.0** adds direct F# bindings for native function-pointer tables: generated value types,
+Version **1.3.0** adds recursive native value navigation, checked native argument binding,
+request-scoped method results, and explicit one-shot getter policy. See the
+[1.3.0 release notes](docs/releases/1.3.0.md) and [runtime value contracts](docs/runtime-value-bindings.md).
+
+Version **1.2.0** introduced direct F# bindings for native function-pointer tables: generated value types,
 version/layout/signature checks, cached typed delegates and explicit callback lifetime support. It also integrates
 the F# P/Invoke, PrSM production-binding and IFC engine-reflection extensions. See the
 [1.2.0 release notes](docs/releases/1.2.0.md), [interop guide](INTEROP.md), and

@@ -5,6 +5,7 @@
 #include "reflgen/serial/detail/container.h"
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -1045,6 +1046,242 @@ namespace reflgen
                 borrowed.retain_storage(std::move(values));
                 return borrowed;
             }(*static_cast<T*>(object), writable, input, typename method_signature_of<Function>::arguments{});
+        }
+
+        template<class A>
+        consteval std::string_view bound_argument_reason()
+        {
+            using U = std::remove_cvref_t<A>;
+            if constexpr (std::is_rvalue_reference_v<A>)
+                return "bound invocation does not consume rvalue-reference arguments";
+            else if constexpr (std::is_function_v<U> || is_specialization_of_v<U, std::function>)
+                return "bound invocation does not accept native callbacks";
+            else if constexpr (std::is_volatile_v<std::remove_reference_t<A>> || std::is_member_pointer_v<U>)
+                return "bound invocation requires nonvolatile object arguments";
+            else if constexpr (std::is_pointer_v<U>)
+            {
+                using target = std::remove_pointer_t<U>;
+                if constexpr (std::is_reference_v<A>)
+                    return "bound invocation does not replace native pointer slots";
+                else if constexpr (std::is_function_v<target>)
+                    return "bound invocation does not accept native callbacks";
+                else if constexpr (std::is_void_v<target> || std::is_pointer_v<target> || std::is_volatile_v<target>)
+                    return "bound invocation requires a typed nonvolatile object pointer";
+                else return {};
+            }
+            else if constexpr (!std::is_reference_v<A>)
+            {
+                if constexpr (!complete_type<U>) return "bound value argument is incomplete";
+                else if constexpr (!std::is_copy_constructible_v<U>)
+                    return "bound invocation does not consume ownership through value arguments";
+                else return {};
+            }
+            else return {};
+        }
+
+        template<class T, auto Function>
+        consteval std::string_view bound_method_reason()
+        {
+            using signature = method_signature_of<Function>;
+            using R = typename signature::result;
+            using U = std::remove_cvref_t<R>;
+            if constexpr (std::is_rvalue_reference_v<R>)
+                return "bound invocation does not retain rvalue-reference results";
+            else if constexpr (!std::is_void_v<R> && !std::is_lvalue_reference_v<R>)
+            {
+                if constexpr (!complete_type<U>) return "bound invocation result is incomplete";
+                else if constexpr (!std::is_move_constructible_v<U>)
+                    return "bound invocation result cannot be retained";
+            }
+            return []<class... Args>(type_list<Args...>) -> std::string_view {
+                std::string_view reason;
+                ((reason.empty() ? static_cast<void>(reason = bound_argument_reason<Args>()) : static_cast<void>(0)), ...);
+                return reason;
+            }(typename signature::arguments{});
+        }
+
+        template<class U>
+        consteval bool bound_argument_materializable()
+        {
+            if constexpr (!complete_type<U>) return false;
+            else if constexpr (!serialized_argument_safe<U>() || !runtime_argument_materializable<U>()) return false;
+            else return runtime_argument_slot<U>::readable;
+        }
+
+        template<class U>
+        consteval bool bound_argument_readonly_safe()
+        {
+            // A const owner/span object can still copy a mutable pointer into native
+            // code. JSON safety assumes independent backing and is not sufficient
+            // for an already-existing span or owner that aliases a readonly path.
+            if constexpr (runtime_span<U>)
+                return std::is_const_v<typename U::element_type> &&
+                    runtime_assignment_safe<std::remove_cv_t<typename U::element_type>>();
+            else if constexpr (runtime_shape<U>() == value_shape::pointer) return false;
+            else return serialized_argument_safe<U>();
+        }
+
+        template<class A>
+        struct bound_argument_slot
+        {
+            using U = std::remove_cvref_t<A>;
+            static constexpr bool materializable = bound_argument_materializable<U>();
+            std::conditional_t<materializable, std::optional<runtime_argument_slot<U>>, std::monostate> materialized;
+            // Only raw-pointer parameters use this storage. Other parameters refer to the exact
+            // native object or their independently materialized value; neither is moved from.
+            std::conditional_t<std::is_pointer_v<U>, U, std::monostate> pointer{};
+            value_view native;
+            const U* value = nullptr;
+            U* writable = nullptr;
+
+            void read(reader& input, const value_view& binding)
+            {
+                if (binding)
+                {
+                    // Requiring an explicit placeholder prevents accidentally accepting numeric
+                    // addresses or contradictory serialized values alongside a native binding.
+                    input.read_null();
+                    bind(binding);
+                }
+                else if constexpr (materializable)
+                {
+                    materialized.emplace();
+                    materialized->read(input);
+                    writable = std::addressof(materialized->get());
+                    value = writable;
+                }
+                else throw std::invalid_argument("method argument requires a resolved native value binding");
+            }
+
+            void bind(const value_view& binding)
+            {
+                native = binding;
+                if constexpr (std::is_pointer_v<U>)
+                {
+                    using target = std::remove_pointer_t<U>;
+                    using plain_target = std::remove_cv_t<target>;
+                    if (native.descriptor().id() == type_id_of<U>() && *static_cast<const U*>(native.data()) == nullptr)
+                    {
+                        // An exact typed null is permitted even when no dereference adapter is
+                        // installed. Other wrappers are inspected only through their adapter.
+                        pointer = nullptr;
+                        value = &pointer;
+                        writable = &pointer;
+                        return;
+                    }
+                    if (native.descriptor().id() != type_id_of<plain_target>())
+                    {
+                        const auto& descriptor = native.descriptor();
+                        if (descriptor.shape() != value_shape::pointer || descriptor.children().size() != 1 ||
+                            descriptor.children()[0].value().id() != type_id_of<plain_target>())
+                            throw std::invalid_argument("native pointer argument has the wrong target type");
+                        if (!native.descriptor().can_dereference())
+                            throw std::invalid_argument("native pointer argument has no permitted dereference");
+                        if (native.size() == 0)
+                        {
+                            pointer = nullptr;
+                            value = &pointer;
+                            writable = &pointer;
+                            return;
+                        }
+                        native = native.dereference();
+                    }
+                    if (native.descriptor().id() != type_id_of<plain_target>())
+                        throw std::invalid_argument("native pointer argument has the wrong target type");
+                    if constexpr (std::is_const_v<target>)
+                    {
+                        if (!native.is_writable() && !bound_argument_readonly_safe<plain_target>())
+                            throw std::invalid_argument("readonly native argument has an unsafe indirect value graph");
+                        pointer = static_cast<const plain_target*>(native.data());
+                    }
+                    else
+                    {
+                        if (!native.is_writable()) throw std::invalid_argument("native pointer argument target is readonly");
+                        pointer = static_cast<plain_target*>(native.mutable_data());
+                    }
+                    value = &pointer;
+                    writable = &pointer;
+                }
+                else
+                {
+                    if (native.descriptor().id() != type_id_of<U>())
+                        throw std::invalid_argument("native method argument has the wrong value type");
+                    value = static_cast<const U*>(native.data());
+                    writable = static_cast<U*>(native.mutable_data());
+                    if (!writable && !bound_argument_readonly_safe<U>())
+                        throw std::invalid_argument("readonly native argument has an unsafe indirect value graph");
+                    if constexpr (std::is_lvalue_reference_v<A> && !std::is_const_v<std::remove_reference_t<A>>)
+                        if (!writable) throw std::invalid_argument("native reference argument is readonly");
+                }
+            }
+
+            decltype(auto) get() const noexcept
+            {
+                if constexpr (std::is_lvalue_reference_v<A> && !std::is_const_v<std::remove_reference_t<A>>)
+                    return *writable;
+                else return *value;
+            }
+
+            value_view output() const
+            {
+                // A native call may remove/reallocate an externally bound object. Never inspect
+                // or return that address as an output argument after executing the method.
+                if (native) return {};
+                return value_view(value_descriptor_of<U>(), value);
+            }
+        };
+
+        template<class... Args>
+        struct bound_call_storage
+        {
+            value_view receiver;
+            std::tuple<bound_argument_slot<Args>...> slots;
+        };
+
+        template<class T, auto Function>
+        method_call_result invoke_bound_method(const value_view& object, reader& input,
+                                               std::span<const value_view> native_arguments)
+        {
+            if (object.descriptor().id() != type_id_of<T>())
+                throw std::invalid_argument("native method receiver has the wrong type");
+            return []<class... Args>(const value_view& receiver, reader& arguments,
+                                     std::span<const value_view> bindings, type_list<Args...>) {
+                // Shared storage is allocated before native execution and never moved. String
+                // views/spans may address their own backing, and result destructors may use it.
+                auto storage = std::make_shared<bound_call_storage<Args...>>();
+                storage->receiver = receiver;
+                method_call_result call;
+                call.arguments.resize(sizeof...(Args));
+                static_cast<void>(arguments.begin_array());
+                [&]<std::size_t... I>(std::index_sequence<I...>) {
+                    [[maybe_unused]] const auto read_one = [&](auto& slot, std::size_t index) {
+                        if (!arguments.next_element()) throw serialization_error("method argument array has too few elements");
+                        slot.read(arguments, bindings.empty() ? value_view{} : bindings[index]);
+                    };
+                    (read_one(std::get<I>(storage->slots), I), ...);
+                }(std::index_sequence_for<Args...>{});
+                if (arguments.next_element()) throw serialization_error("method argument array has too many elements");
+                arguments.end_array();
+                using signature = method_signature_of<Function>;
+                using R = typename signature::result;
+                [&]<std::size_t... I>(std::index_sequence<I...>) {
+                    const auto invoke = [&]() -> decltype(auto) {
+                        if constexpr (signature::is_const)
+                            return (static_cast<const T*>(receiver.data())->*Function)(std::get<I>(storage->slots).get()...);
+                        else
+                            return (static_cast<T*>(receiver.mutable_data())->*Function)(std::get<I>(storage->slots).get()...);
+                    };
+                    if constexpr (std::is_void_v<R>) invoke();
+                    else
+                    {
+                        call.result = retain_borrowed_result<R>(invoke, sizeof...(Args) == 0 && receiver.is_writable());
+                        call.result.retain_storage(storage);
+                    }
+                    ((call.arguments[I] = std::get<I>(storage->slots).output(),
+                      call.arguments[I].retain_storage(storage)), ...);
+                }(std::index_sequence_for<Args...>{});
+                return call;
+            }(object, input, native_arguments, typename method_signature_of<Function>::arguments{});
         }
     }
 
