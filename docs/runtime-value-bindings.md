@@ -232,10 +232,16 @@ pointee type. Non-null targets are resolved through the explicit dereference
 adapter and `T*` requires a writable target. Empty adapted owners preserve a typed
 null; an exact typed null pointer view is accepted even without an adapter.
 Unrelated or derived pointee types are not implicitly converted. An unbound JSON `null` does
-not fabricate a native pointer. Void pointers, callbacks, pointer-to-pointer
+not fabricate a native pointer. Void pointers, raw function pointers,
+`std::function`, pointer-to-pointer
 arguments, pointer-slot references, volatile arguments, consuming rvalue references
 and noncopyable value arguments remain unavailable. Ownership transfer needs an
 explicit engine operation with its own lifetime policy.
+
+A host may resolve its own copyable callback wrapper to an exact native view.
+Such a wrapper is an ordinary bound value; the host must implement rooted
+registration, signature matching, cancellation and unload barriers. The runtime
+does not deserialize callbacks or accept function addresses from JSON.
 
 A readonly native owner, mutable-element span, or record containing unsafe
 indirection cannot be copied or passed by const reference to recover writable
